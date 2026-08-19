@@ -1,0 +1,655 @@
+[
+  {
+    "pais": "Argentina",
+    "codigo_iso": "AR",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. Ingreso permitido con Cédula de Identidad uruguaya vigente (menor a 10 años). Mercosur: derecho a residencia y trabajo sin más requisito que la nacionalidad.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Panamá",
+    "codigo_iso": "PA",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. Estadía máxima 90 días. Se puede denegar entrada o tránsito a personas con antecedentes penales.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Reino Unido",
+    "codigo_iso": "GB",
+    "requisitos": [
+      {
+        "tipo": "formulario_digital",
+        "nombre": "UK ETA (Electronic Travel Authorisation)",
+        "obligatorio": true,
+        "descripcion": "Autorización electrónica obligatoria previa al viaje. Permite estadía de hasta 6 meses (90 días si se ingresa desde Irlanda, área de viaje común).",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Jamaica",
+    "codigo_iso": "JM",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. Estadía máxima 30 días.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Curazao",
+    "codigo_iso": "CW",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. Estadía máxima 180 días (6 meses).",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "formulario_digital",
+        "nombre": "ED-Card (Embarkation/Disembarkation Card)",
+        "obligatorio": true,
+        "descripcion": "Tarjeta digital de embarque/desembarque obligatoria antes de viajar.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Finlandia",
+    "codigo_iso": "FI",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. 90 días dentro de cualquier período de 180 días en el Espacio Schengen.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": false,
+        "descripcion": "Aún no está vigente. La UE lo viene posponiendo desde 2021 (últimas fechas: 2023, 2025, 2026); la fecha estimada actual es 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "verificar"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Austria",
+    "codigo_iso": "AT",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. 90 días dentro de cualquier período de 180 días en el Espacio Schengen.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": false,
+        "descripcion": "Aún no está vigente. Fecha estimada de entrada en vigor: 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "verificar"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Portugal",
+    "codigo_iso": "PT",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. 90 días dentro de cualquier período de 180 días en el Espacio Schengen.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": false,
+        "descripcion": "Aún no está vigente. Fecha estimada de entrada en vigor: 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "verificar"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Croacia",
+    "codigo_iso": "HR",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. 90 días dentro de cualquier período de 180 días en el Espacio Schengen.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": false,
+        "descripcion": "Aún no está vigente. Fecha estimada de entrada en vigor: 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "verificar"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Colombia",
+    "codigo_iso": "CO",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. 90 días, extendible hasta 180 días dentro de un período de un año.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "formulario_digital",
+        "nombre": "Check-Mig",
+        "obligatorio": true,
+        "descripcion": "Formulario migratorio obligatorio antes de viajar a Colombia.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "México",
+    "codigo_iso": "MX",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. Estadía máxima 180 días.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Italia",
+    "codigo_iso": "IT",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. 90 días dentro de cualquier período de 180 días en el Espacio Schengen.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": false,
+        "descripcion": "Aún no está vigente. Fecha estimada de entrada en vigor: 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "verificar"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Francia",
+    "codigo_iso": "FR",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. 90 días dentro de cualquier período de 180 días en el Espacio Schengen.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": false,
+        "descripcion": "Aún no está vigente. Fecha estimada de entrada en vigor: 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "verificar"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Estados Unidos",
+    "codigo_iso": "US",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": true,
+        "descripcion": "Requiere visa. Uruguay no está en el Programa de Exención de Visa (Visa Waiver Program), por lo que no aplica ESTA. Se debe tramitar visa de turista (B1/B2) en consulado.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "República Dominicana",
+    "codigo_iso": "DO",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. Estadía máxima 30 días, extendible hasta 120 días.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "formulario_digital",
+        "nombre": "E-Ticket",
+        "obligatorio": true,
+        "descripcion": "Formulario migratorio y aduanero digital obligatorio, se completa por separado para entrada y salida. Requerido para todo viajero en cualquier aeropuerto del país.",
+        "fuente": "https://migracion.gob.do/e-ticket/",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Perú",
+    "codigo_iso": "PE",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. Ingreso permitido con Cédula de Identidad uruguaya vigente (menor a 10 años). Mercosur asociado: derecho a residencia y trabajo.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado para el ingreso al país. Si el itinerario incluye zona amazónica, se recomienda (no obligatorio) vacuna de fiebre amarilla. Verificar según destino interno específico.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "verificar"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Chile",
+    "codigo_iso": "CL",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. Ingreso permitido con Cédula de Identidad uruguaya vigente (menor a 10 años). Mercosur asociado: derecho a residencia y trabajo.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Cuba",
+    "codigo_iso": "CU",
+    "requisitos": [
+      {
+        "tipo": "formulario_digital",
+        "nombre": "Tarjeta de turista / eVisa",
+        "obligatorio": true,
+        "descripcion": "Se requiere tarjeta de turista o eVisa (no es una visa consular tradicional). Estadía de 90 días, extendible con costo adicional.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  },
+  {
+    "pais": "Paraguay",
+    "codigo_iso": "PY",
+    "requisitos": [
+      {
+        "tipo": "visa",
+        "obligatorio": false,
+        "descripcion": "No requiere visa. Ingreso permitido con Cédula de Identidad uruguaya vigente (menor a 10 años). Mercosur pleno: derecho a residencia y trabajo.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "vacuna",
+        "obligatorio": false,
+        "descripcion": "No se exige certificado de vacunación para ingresar desde Uruguay.",
+        "fuente": "https://en.wikipedia.org/wiki/Visa_requirements_for_Uruguayan_citizens",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      },
+      {
+        "tipo": "documentacion_menor",
+        "obligatorio": true,
+        "descripcion": "Si el menor viaja sin ambos padres (con uno solo, con tercero, o solo), se requiere Permiso de Menor para viajar al exterior: autorización notarial, consular o judicial de quien no viaja. Vigencia 180 días desde emisión, permite de 1 a 10 viajes. Trámite ante DNIC (si ambos padres y el menor están en Uruguay) o consulado uruguayo (si el padre/madre autorizante está en el exterior). Aplica igual para cualquier país de destino, no es un requisito del país sino de salida de Uruguay.",
+        "fuente": "https://www.gub.uy/tramites/permiso-menor-edad",
+        "fecha_verificacion": "2026-08-18",
+        "estado": "confirmado"
+      }
+    ]
+  }
+]
