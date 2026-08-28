@@ -1,0 +1,25 @@
+const Destino = require('../models/Destino.model');
+
+const getDestinos = async (req, res) => {
+  try {
+    const destinos = await Destino.find();
+    res.json(destinos);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener los destinos' });
+  }
+};
+
+const getDestinoPorCodigo = async (req, res) => {
+  try {
+    const codigo = req.params.codigo.toUpperCase();
+    const destino = await Destino.findOne({ codigo_iso: codigo });
+    if (!destino) {
+      return res.status(404).json({ error: 'Destino no encontrado' });
+    }
+    res.json(destino);
+  } catch (err) {
+    res.status(500).json({ error: 'Error al obtener el destino' });
+  }
+};
+
+module.exports = { getDestinos, getDestinoPorCodigo };
