@@ -2,7 +2,7 @@ const Destino = require('../models/Destino.model');
 
 const getDestinos = async (req, res) => {
   try {
-    const destinos = await Destino.find();
+    const destinos = await Destino.find().sort({ pais: 1 });
     res.json(destinos);
   } catch (err) {
     res.status(500).json({ error: 'Error al obtener los destinos' });

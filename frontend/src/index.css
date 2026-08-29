@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Poppins', sans-serif;
+}
+
+:root {
+  --color-primario: #0080FF;
+  --color-primario-hover: #0066cc;
+  --color-fondo-suave: #eaf4ff;
+}
+
+[data-theme="santander"] {
+  --color-primario: #EB0A00;
+  --color-primario-hover: #c00800;
+  --color-fondo-suave: #fdeceb;
+}
