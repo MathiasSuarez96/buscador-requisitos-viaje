@@ -1,4 +1,5 @@
 const Destino = require('../models/Destino.model');
+const ReglaGeneral = require('../models/ReglaGeneral.model');
 
 const getDestinos = async (req, res) => {
   try {
@@ -16,7 +17,8 @@ const getDestinoPorCodigo = async (req, res) => {
     if (!destino) {
       return res.status(404).json({ error: 'Destino no encontrado' });
     }
-    res.json(destino);
+    const reglaGeneral = await ReglaGeneral.findById('permiso_menor_uruguay');
+    res.json({ ...destino.toObject(), regla_general: reglaGeneral });
   } catch (err) {
     res.status(500).json({ error: 'Error al obtener el destino' });
   }
