@@ -1,4 +1,4 @@
-import { Fragment, useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import logoToctoc from './assets/toctoc-logo.png'
 import logoSantander from './assets/santander-logo.png'
 
@@ -112,6 +112,22 @@ function App() {
     destino.pais.toLowerCase().includes(busqueda.toLowerCase())
   )
 
+  const reglaGeneral = destinoSeleccionado?.regla_general
+  const reglaConfirmada =
+    reglaGeneral?.estado === 'confirmado' &&
+    reglaGeneral.pendiente_confirmar.length === 0
+  const requisitosMenores = destinoSeleccionado?.requisitos.filter(
+    (req) => req.tipo === 'documentacion_menor'
+  ) ?? []
+  const requisitosOrdenados = [
+    ...requisitosMenores,
+    ...(destinoSeleccionado?.requisitos.filter(
+      (req) => req.tipo !== 'documentacion_menor'
+    ) ?? []),
+  ]
+  const avisoMenores =
+    'Pendiente de verificar los requisitos específicos de menores para este destino.'
+
   const seleccionarDestino = async (destino: Destino) => {
     const solicitudActual = solicitudDetalleActual.current + 1
     solicitudDetalleActual.current = solicitudActual
@@ -181,70 +197,85 @@ function App() {
             </div>
 
             <div className="space-y-3">
-              {destinoSeleccionado.requisitos.map((req, index) => {
-                const reglaGeneral = destinoSeleccionado.regla_general
-                const reglaConfirmada =
-                  reglaGeneral?.estado === 'confirmado' &&
-                  reglaGeneral.pendiente_confirmar.length === 0
+              {reglaGeneral && (
+                <div
+                  className="bg-white rounded-xl shadow-sm p-4 border-l-4"
+                  style={{
+                    borderColor: reglaConfirmada ? '#22c55e' : '#f59e0b',
+                  }}
+                >
+                  <div className="flex flex-col md:flex-row justify-between items-start gap-2 mb-1">
+                    <span className="font-semibold text-gray-800">
+                      Salida de menores desde Uruguay
+                    </span>
+                    <span
+                      className="text-xs font-medium px-2 py-1 rounded-full"
+                      style={{
+                        backgroundColor: reglaConfirmada ? '#dcfce7' : '#fef3c7',
+                        color: reglaConfirmada ? '#166534' : '#92400e',
+                      }}
+                    >
+                      {reglaConfirmada ? 'Confirmado' : 'Verificar'}
+                    </span>
+                  </div>
+
+                  <p className="text-sm text-gray-600 mb-2">
+                    {reglaGeneral.contenido}
+                  </p>
+
+                  {reglaGeneral.pendiente_confirmar.length > 0 && (
+                    <ul className="text-sm text-gray-600 list-disc pl-5 mb-2">
+                      {reglaGeneral.pendiente_confirmar.map((pendiente, pendienteIndex) => (
+                        <li key={pendienteIndex}>
+                          {nombresPorPendiente[pendiente] ?? pendiente}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <p className="text-xs text-gray-400">
+                    Fuente:{' '}
+                    <a
+                      href={reglaGeneral.fuente}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[var(--color-primario)] underline"
+                    >
+                      {reglaGeneral.fuente}
+                    </a>
+                    {' — '}Verificado:{' '}
+                    {formatearFechaReglaGeneral(reglaGeneral.fecha_verificacion)}
+                  </p>
+                </div>
+              )}
+
+              {requisitosMenores.length === 0 && (
+                <div className="bg-white rounded-xl shadow-sm p-4 border-l-4 border-amber-500">
+                  <div className="flex flex-col md:flex-row justify-between items-start gap-2 mb-1">
+                    <span className="font-semibold text-gray-800">
+                      {nombresPorTipo.documentacion_menor}
+                    </span>
+                    <span className="text-xs font-medium px-2 py-1 rounded-full bg-amber-100 text-amber-800">
+                      Verificar
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-2">{avisoMenores}</p>
+                </div>
+              )}
+
+              {requisitosOrdenados.map((req, index) => {
+                const menorPendiente = req.tipo === 'documentacion_menor' && (
+                  (req.descripcion ?? '').trim().toLowerCase() === '' ||
+                  (req.descripcion ?? '').trim().toLowerCase() === 'verificar'
+                )
+                const requisitoConfirmado = req.estado === 'confirmado' && !menorPendiente
 
                 return (
-                  <Fragment key={index}>
-                    {req.tipo === 'documentacion_menor' && reglaGeneral && (
-                      <div
-                        className="bg-white rounded-xl shadow-sm p-4 border-l-4"
-                        style={{
-                          borderColor: reglaConfirmada ? '#22c55e' : '#f59e0b',
-                        }}
-                      >
-                        <div className="flex flex-col md:flex-row justify-between items-start gap-2 mb-1">
-                          <span className="font-semibold text-gray-800">
-                            Salida de menores desde Uruguay
-                          </span>
-                          <span
-                            className="text-xs font-medium px-2 py-1 rounded-full"
-                            style={{
-                              backgroundColor: reglaConfirmada ? '#dcfce7' : '#fef3c7',
-                              color: reglaConfirmada ? '#166534' : '#92400e',
-                            }}
-                          >
-                            {reglaConfirmada ? 'Confirmado' : 'Verificar'}
-                          </span>
-                        </div>
-
-                        <p className="text-sm text-gray-600 mb-2">
-                          {reglaGeneral.contenido}
-                        </p>
-
-                        {reglaGeneral.pendiente_confirmar.length > 0 && (
-                          <ul className="text-sm text-gray-600 list-disc pl-5 mb-2">
-                            {reglaGeneral.pendiente_confirmar.map((pendiente, pendienteIndex) => (
-                              <li key={pendienteIndex}>
-                                {nombresPorPendiente[pendiente] ?? pendiente}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-
-                        <p className="text-xs text-gray-400">
-                          Fuente:{' '}
-                          <a
-                            href={reglaGeneral.fuente}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[var(--color-primario)] underline"
-                          >
-                            {reglaGeneral.fuente}
-                          </a>
-                          {' — '}Verificado:{' '}
-                          {formatearFechaReglaGeneral(reglaGeneral.fecha_verificacion)}
-                        </p>
-                      </div>
-                    )}
-
-                    <div
+                  <div
+                    key={index}
                       className="bg-white rounded-xl shadow-sm p-4 border-l-4"
                       style={{
-                        borderColor: req.estado === 'confirmado' ? '#22c55e' : '#f59e0b',
+                        borderColor: requisitoConfirmado ? '#22c55e' : '#f59e0b',
                       }}
                     >
                   <div className="flex flex-col md:flex-row justify-between items-start gap-2 mb-1">
@@ -261,15 +292,18 @@ function App() {
                     <span
                       className="text-xs font-medium px-2 py-1 rounded-full"
                       style={{
-                        backgroundColor: req.estado === 'confirmado' ? '#dcfce7' : '#fef3c7',
-                        color: req.estado === 'confirmado' ? '#166534' : '#92400e',
+                        backgroundColor: requisitoConfirmado ? '#dcfce7' : '#fef3c7',
+                        color: requisitoConfirmado ? '#166534' : '#92400e',
                       }}
                     >
-                      {req.estado === 'confirmado' ? 'Confirmado' : 'Verificar'}
+                      {requisitoConfirmado ? 'Confirmado' : 'Verificar'}
                     </span>
                   </div>
 
                   <p className="text-sm text-gray-600 mb-2">{req.descripcion}</p>
+                  {menorPendiente && (
+                    <p className="text-sm text-gray-600 mb-2">{avisoMenores}</p>
+                  )}
 
                   {req.link && (
                     <a
@@ -292,14 +326,9 @@ function App() {
 
                   <p className="text-xs text-gray-400">
                     Fuente: {req.fuente} — Verificado:{' '}
-                    {new Date(req.fecha_verificacion).toLocaleDateString('es-UY', {
-                      day: 'numeric',
-                      month: 'short',
-                      year: 'numeric',
-                    })}
+                    {formatearFechaReglaGeneral(req.fecha_verificacion)}
                   </p>
-                    </div>
-                  </Fragment>
+                  </div>
                 )
               })}
             </div>
