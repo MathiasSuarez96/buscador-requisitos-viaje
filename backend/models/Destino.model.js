@@ -8,13 +8,23 @@ const requisitoSchema = new mongoose.Schema({
            'documentacion_menor', 'tasa_aeropuerto', 'seguro_medico']
   },
   nombre: { type: String },
-  obligatorio: { type: Boolean, required: true },
+  obligatorio: { type: String, required: true, enum: ['si', 'no', 'verificar'] },
   descripcion: { type: String, required: true },
-  fuente: { type: String, required: true },
+  fuente: {
+    type: String,
+    // Exigido solo si el requisito ya está confirmado. Red de seguridad
+    // para futuras ediciones vía .save() (Fase 3) — con updateOne +
+    // arrayFilters este validador NO se ejecuta (ver scripts de migración).
+    required: function() { return this.estado === 'confirmado'; }
+  },
   link: { type: String },
   plazo_antes_del_vuelo: { type: String },
   costo: { type: String },
-  fecha_verificacion: { type: Date, required: true },
+  fecha_verificacion: {
+    type: Date,
+    // Misma regla condicional que fuente; misma limitación con updateOne.
+    required: function() { return this.estado === 'confirmado'; }
+  },
   estado: {
     type: String,
     required: true,
