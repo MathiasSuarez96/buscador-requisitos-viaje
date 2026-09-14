@@ -5,7 +5,7 @@ import logoSantander from './assets/santander-logo.png'
 interface Requisito {
   tipo: string
   nombre: string
-  obligatorio: boolean
+  obligatorio: 'si' | 'no' | 'verificar'
   descripcion: string
   fuente: string
   link?: string
@@ -283,9 +283,14 @@ function App() {
                       <span className="font-semibold text-gray-800">
                         {req.nombre || nombresPorTipo[req.tipo]}
                       </span>
-                      {req.obligatorio && (
+                      {req.obligatorio === 'si' && (
                         <span className="text-xs font-medium text-red-600">
                           Obligatorio
+                        </span>
+                      )}
+                      {req.obligatorio === 'verificar' && (
+                        <span className="text-xs font-medium text-amber-600">
+                          Obligatoriedad a verificar
                         </span>
                       )}
                     </div>
