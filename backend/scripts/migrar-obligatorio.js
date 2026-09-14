@@ -47,7 +47,7 @@
  * ni castea nada, así que no hay riesgo ahí en ningún orden.
  */
 
-const DRY_RUN = false; // cambiar a false a mano para ejecutar de verdad en Atlas
+const DRY_RUN = true; // cambiar a false a mano para ejecutar de verdad en Atlas
 
 require('dotenv').config();
 const fs = require('fs');
