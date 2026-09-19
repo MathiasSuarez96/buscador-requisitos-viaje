@@ -681,6 +681,10 @@ async function main() {
 
       console.log(`\n=== PROPUESTA DE CAMBIO (categoría: ${resultado.categoria}) ===`);
       console.log(JSON.stringify(propuesta, null, 2));
+    } else if (resultado.categoria === 'MONEDA_DISTINTA') {
+      console.log(
+        `\nCategoría ${resultado.categoria}: hallazgo real (moneda distinta a GOV.UK), no una ambigüedad — no se genera propuesta porque este piloto no convierte entre monedas. Revisar a mano el campo "costo" de Mongo.`
+      );
     } else {
       console.warn(
         `\nCategoría ambigua (${resultado.categoria}): no se genera ninguna propuesta de valor. Hay que revisar a mano el campo "costo" de Mongo antes de asumir nada.`
