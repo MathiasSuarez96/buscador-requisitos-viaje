@@ -30,7 +30,7 @@ const requisitoSchema = new mongoose.Schema({
     required: true,
     enum: ['confirmado', 'verificar']
   }
-}, { _id: false });
+});
 
 const destinoSchema = new mongoose.Schema({
   pais: { type: String, required: true, unique: true },
