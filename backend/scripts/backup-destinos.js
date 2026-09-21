@@ -23,6 +23,14 @@
  * su propia validación de base de datos y su propio respaldo previo
  * antes de tocar datos — no se documenta acá como un snippet listo para
  * copiar/pegar.
+ *
+ * Lectura por DRIVER NATIVO (Destino.collection.find().toArray()), no
+ * por el modelo Mongoose: preserva fielmente lo que Mongo tiene
+ * guardado, sin que el schema de Mongoose oculte u omita campos que no
+ * declara. Este es un respaldo general de la colección, no exclusivo
+ * de ningún momento puntual: sirve igual antes y después de que un
+ * requisito tenga `_id` (por ejemplo, tras el backfill de Fase 2) —
+ * respalda documentos con o sin `_id` en requisitos[] tal cual estén.
  */
 
 require('dotenv').config();
@@ -52,7 +60,8 @@ async function main() {
     );
   }
 
-  const docs = await Destino.find({}).lean();
+  // Driver nativo, no el modelo Mongoose (ver nota de cabecera).
+  const docs = await Destino.collection.find({}).sort({ pais: 1 }).toArray();
   if (docs.length === 0) {
     throw new Error(
       'La colección "destinos" no devolvió documentos (0 resultados). Abortando respaldo sin escribir archivo.'
