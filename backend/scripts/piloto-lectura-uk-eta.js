@@ -38,12 +38,21 @@
  *
  * Paso adicional (SOLO LECTURA en Mongo): una vez que el costo de
  * GOV.UK quedó confirmado (overview === apply, sin ambigüedad), se lee
- * — nunca se escribe — el requisito exacto de Reino Unido en Mongo
- * (destino codigo_iso "GB", requisito con tipo === "formulario_digital"
- * Y nombre === "UK ETA"; es el único requisito de ese destino que
- * corresponde al eTA en sí, a diferencia del requisito "visa" que solo
- * lo menciona en su descripción). Se parsea el texto libre de su campo
- * `costo` (String opcional, sin contrato de formato en el schema — ver
+ * — nunca se escribe — el requisito exacto de Reino Unido en Mongo:
+ * destino codigo_iso "GB", requisito con _id === REQUISITO_ID_ETA (el
+ * valor esperado del _id estable del subdocumento — ver más abajo).
+ * Una vez encontrado, se valida ADEMÁS que tipo === "formulario_digital"
+ * y nombre === "UK ETA" — evidencia descriptiva, ya no el criterio de
+ * búsqueda, pero sigue siendo la red de seguridad que detectaría un
+ * _id mal asignado (ej. si por error apuntara al requisito "visa" del
+ * mismo destino, que solo MENCIONA el eTA en su descripción). Si el
+ * _id existe pero esa identidad semántica no coincide, se trata como
+ * fallo sospechoso (categoría "identidad_semantica_no_coincide"), no
+ * como un requisito válido (ver buscarRequisitoEtaEnMongo). El
+ * requisito_id que se reporta en el registro/propuesta es siempre el
+ * `_id` REAL leído de Mongo (String(requisito._id)), no la constante
+ * esperada. Se parsea el texto libre de su campo `costo` (String
+ * opcional, sin contrato de formato en el schema — ver
  * Destino.model.js) para separar importe y moneda, y se compara contra
  * el importe/moneda de GOV.UK (moneda siempre "GBP", porque el patrón
  * busca literalmente el símbolo "£"). El valor original de Mongo se
@@ -151,18 +160,21 @@
  *    de fallo son: GOV.UK sospechoso (overview/apply no coinciden), y
  *    el requisito de Mongo no identificable sin ambigüedad. En ningún
  *    caso de fallo se genera una propuesta.
- *  - Con fecha real, el _id real del destino en Mongo, el estado
- *    ESTRUCTURAL real del campo `costo` (ausente/nulo_explicito
- *    /presente — ver determinarEstadoValorCosto, que usa
- *    Object.hasOwn() para distinguir "la clave no existe" de
+ *  - Con fecha real, el _id real del destino en Mongo, el requisito_id
+ *    REAL del requisito (leído de Mongo, no la constante esperada
+ *    REQUISITO_ID_ETA — el subdocumento tiene _id propio desde que se
+ *    habilitó el _id por defecto en requisitoSchema, ver
+ *    Destino.model.js), el estado ESTRUCTURAL real del campo `costo`
+ *    (ausente/nulo_explicito/presente — ver determinarEstadoValorCosto,
+ *    que usa Object.hasOwn() para distinguir "la clave no existe" de
  *    "compararla contra undefined"), y los fragmentos de HTML
  *    realmente recibidos de GOV.UK alrededor del match (no todo el
  *    body, solo una ventana de contexto — ver extraerFragmento).
- *    NO incluye requisito_id: ese identificador no existe hoy, porque
- *    requisitoSchema declara `{ _id: false }` (los subdocumentos de
- *    requisitos[] no tienen _id propio en Mongo). En su lugar se deja
- *    explícito el criterio real usado para identificar el requisito:
- *    tipo + nombre, exigiendo coincidencia única (buscarRequisitoEtaEnMongo).
+ *    requisito_id es ahora la identidad primaria del requisito
+ *    (buscarRequisitoEtaEnMongo busca por _id === REQUISITO_ID_ETA);
+ *    tipo y nombre se conservan como evidencia descriptiva y se
+ *    validan contra el requisito ya encontrado, pero dejaron de ser el
+ *    criterio de búsqueda.
  *  - "propuesta de cambio": SOLO se genera si la categoría es
  *    SIN_COSTO_PREVIO_EN_MONGO o IMPORTE_NO_COINCIDE (ver
  *    debeGenerarPropuesta — hay algo real que proponer). Si la
@@ -188,8 +200,9 @@ const Destino = require('../models/Destino.model');
 
 const DB_ESPERADA = 'buscador_requisitos';
 const CODIGO_ISO_UK = 'GB';
-const TIPO_REQUISITO_ETA = 'formulario_digital';
-const NOMBRE_REQUISITO_ETA = 'UK ETA';
+const REQUISITO_ID_ETA = '6aaddd0e9f54309f9d8272dc'; // valor ESPERADO para buscar y comparar — identidad primaria. El requisito_id que se reporta en el registro/propuesta es el _id REAL leído de Mongo (ver buscarRequisitoEtaEnMongo), no esta constante.
+const TIPO_REQUISITO_ETA = 'formulario_digital'; // evidencia descriptiva, validada contra el requisito hallado por _id — ya no criterio de búsqueda
+const NOMBRE_REQUISITO_ETA = 'UK ETA'; // evidencia descriptiva, validada contra el requisito hallado por _id — ya no criterio de búsqueda
 
 const URL_ETA = 'https://www.gov.uk/api/content/eta';
 const PATRON_COSTO_GLOBAL = /£(\d+)/g;
@@ -379,32 +392,71 @@ function determinarEstadoValorCosto(requisito) {
   return 'presente';
 }
 
-// Identifica el requisito SIN usar un requisito_id: ese identificador
-// no existe hoy, porque requisitoSchema declara `{ _id: false }` (los
-// subdocumentos de requisitos[] no tienen _id propio en Mongo). El
-// criterio real es tipo + nombre, exigiendo coincidencia única (el
-// requisito "visa" del mismo destino solo MENCIONA el eTA en su
-// descripción, no es el mismo requisito). Si no hay exactamente uno,
-// no se elige ninguno. También devuelve el _id REAL del destino (ese
-// sí existe hoy en Mongo).
+// Identifica el requisito por su requisito_id ESTABLE: busca por
+// _id === REQUISITO_ID_ETA (valor esperado) y, si lo encuentra,
+// devuelve también el _id REAL leído del subdocumento
+// (String(requisito._id)) — ese valor real es el que se reporta en el
+// registro/propuesta, no la constante. requisitoSchema ya NO declara
+// `{ _id: false }` (ver Destino.model.js), así que _id es hoy el
+// identificador primario, no tipo/nombre. Exige coincidencia única por
+// _id (si hubiera más de una, sería una violación de unicidad de _id,
+// no algo esperable). Encontrado por _id, se valida ADEMÁS que
+// tipo === TIPO_REQUISITO_ETA y nombre === NOMBRE_REQUISITO_ETA: esa es
+// la evidencia descriptiva (deja de ser el criterio de búsqueda), pero
+// si el _id existe y esa identidad semántica NO coincide, es un caso
+// sospechoso distinto de "no encontrado". Cada camino de fallo trae su
+// propia `categoriaFallo` explícita — nunca un booleano genérico —:
+// 'destino_no_encontrado', 'requisito_id_no_encontrado',
+// 'requisito_id_duplicado', 'identidad_semantica_no_coincide'.
+// También devuelve el _id REAL del destino.
 async function buscarRequisitoEtaEnMongo() {
   const destino = await Destino.findOne({ codigo_iso: CODIGO_ISO_UK }).lean();
   if (!destino) {
-    return { requisito: null, destinoId: null, motivo: `No se encontró destino con codigo_iso "${CODIGO_ISO_UK}".` };
+    return {
+      requisito: null,
+      requisitoId: null,
+      destinoId: null,
+      motivo: `No se encontró destino con codigo_iso "${CODIGO_ISO_UK}".`,
+      categoriaFallo: 'destino_no_encontrado'
+    };
   }
 
   const coincidencias = (destino.requisitos || []).filter(
-    (r) => r.tipo === TIPO_REQUISITO_ETA && r.nombre === NOMBRE_REQUISITO_ETA
+    (r) => Object.hasOwn(r, '_id') && String(r._id) === REQUISITO_ID_ETA
   );
 
   if (coincidencias.length === 0) {
-    return { requisito: null, destinoId: destino._id, motivo: `No se encontró ningún requisito con tipo "${TIPO_REQUISITO_ETA}" y nombre "${NOMBRE_REQUISITO_ETA}" en ${destino.pais}.` };
+    return {
+      requisito: null,
+      requisitoId: null,
+      destinoId: destino._id,
+      motivo: `No se encontró ningún requisito con _id "${REQUISITO_ID_ETA}" en ${destino.pais}.`,
+      categoriaFallo: 'requisito_id_no_encontrado'
+    };
   }
   if (coincidencias.length > 1) {
-    return { requisito: null, destinoId: destino._id, motivo: `Se encontraron ${coincidencias.length} requisitos con tipo "${TIPO_REQUISITO_ETA}" y nombre "${NOMBRE_REQUISITO_ETA}" en ${destino.pais} (se esperaba uno solo).` };
+    return {
+      requisito: null,
+      requisitoId: null,
+      destinoId: destino._id,
+      motivo: `Se encontraron ${coincidencias.length} requisitos con _id "${REQUISITO_ID_ETA}" en ${destino.pais} (se esperaba uno solo — _id debería ser único).`,
+      categoriaFallo: 'requisito_id_duplicado'
+    };
   }
 
-  return { requisito: coincidencias[0], destinoId: destino._id, motivo: null };
+  const requisito = coincidencias[0];
+  const requisitoId = String(requisito._id);
+  if (requisito.tipo !== TIPO_REQUISITO_ETA || requisito.nombre !== NOMBRE_REQUISITO_ETA) {
+    return {
+      requisito: null,
+      requisitoId,
+      destinoId: destino._id,
+      motivo: `El requisito con _id "${requisitoId}" existe en ${destino.pais}, pero tipo="${requisito.tipo}"/nombre="${requisito.nombre}" no coincide con lo esperado (tipo="${TIPO_REQUISITO_ETA}", nombre="${NOMBRE_REQUISITO_ETA}"). El _id existe pero la identidad semántica no coincide — tratado como fallo sospechoso, no se asume el requisito.`,
+      categoriaFallo: 'identidad_semantica_no_coincide'
+    };
+  }
+
+  return { requisito, requisitoId, destinoId: destino._id, motivo: null, categoriaFallo: null };
 }
 
 // Devuelve la parte única con ese slug. Si hay más de una, o ninguna,
@@ -567,10 +619,11 @@ async function main() {
     etapaActual = 'identificacion_requisito_mongo';
     const resultadoBusqueda = await buscarRequisitoEtaEnMongo();
     const requisito = resultadoBusqueda.requisito;
+    const requisitoId = resultadoBusqueda.requisitoId;
     destinoId = resultadoBusqueda.destinoId;
 
     if (!requisito) {
-      console.warn(`SOSPECHOSO: no se pudo identificar sin ambigüedad el requisito de Mongo. ${resultadoBusqueda.motivo}`);
+      console.warn(`SOSPECHOSO (${resultadoBusqueda.categoriaFallo}): ${resultadoBusqueda.motivo}`);
       imprimirRegistroFallo({
         runId,
         fechaEjecucion,
@@ -580,14 +633,17 @@ async function main() {
           fuente_govuk: resumenFuenteGovUk(json),
           evidencia: resumenEvidencia(resultadoOverview, resultadoApply),
           comparacion_govuk: { coincide_entre_secciones: true, costo_extraido_consistente: costoOverview, moneda: 'GBP' },
-          destino_id: destinoId ? String(destinoId) : null
+          destino_id: destinoId ? String(destinoId) : null,
+          requisito_id_buscado: REQUISITO_ID_ETA,
+          requisito_id_encontrado: requisitoId,
+          requisito_id_categoria_fallo: resultadoBusqueda.categoriaFallo
         }
       });
       process.exitCode = 1;
       return;
     }
 
-    console.log(`Requisito de Mongo identificado: tipo="${requisito.tipo}", nombre="${requisito.nombre}"`);
+    console.log(`Requisito de Mongo identificado: requisito_id="${requisitoId}" (tipo="${requisito.tipo}", nombre="${requisito.nombre}" — evidencia descriptiva validada)`);
     console.log(`  costo (valor original, sin modificar): ${JSON.stringify(requisito.costo ?? null)}\n`);
 
     etapaActual = 'construccion_salida';
@@ -601,14 +657,15 @@ async function main() {
       process.exitCode = 1;
     }
 
-    // No hay requisito_id: se deja explícito el criterio real usado en
-    // su lugar (ver comentario de buscarRequisitoEtaEnMongo).
+    // requisito_id es la identidad primaria (ver comentario de
+    // buscarRequisitoEtaEnMongo); tipo/nombre quedan como evidencia
+    // descriptiva, ya validados contra el requisito encontrado por _id.
     const identificacionRequisito = {
-      criterio: 'tipo + nombre (coincidencia única exigida)',
-      tipo: TIPO_REQUISITO_ETA,
-      nombre: NOMBRE_REQUISITO_ETA,
-      nota_requisito_id:
-        'requisito_id NO existe: requisitoSchema declara { _id: false }, los subdocumentos de requisitos[] no tienen _id propio en Mongo hoy. Se identifica por (tipo, nombre) exigiendo exactamente una coincidencia.'
+      criterio: 'requisito_id (_id estable del subdocumento — ver Destino.model.js)',
+      tipo: requisito.tipo,
+      nombre: requisito.nombre,
+      nota_identidad:
+        'requisito_id es hoy el identificador primario: requisitoSchema ya NO declara { _id: false }, los subdocumentos de requisitos[] tienen _id propio en Mongo. tipo y nombre se conservan como evidencia descriptiva (validados en buscarRequisitoEtaEnMongo contra el requisito ya encontrado por _id), pero dejaron de usarse como criterio de búsqueda.'
     };
 
     const valorActual = {
@@ -631,6 +688,7 @@ async function main() {
       requisito_mongo: {
         destino_id: String(destinoId),
         destino_codigo_iso: CODIGO_ISO_UK,
+        requisito_id: requisitoId,
         identificacion_requisito: identificacionRequisito,
         campo: 'costo',
         costo_actual: valorActual
@@ -651,6 +709,7 @@ async function main() {
         fecha_propuesta: fechaEjecucion,
         destino_id: String(destinoId),
         destino_codigo_iso: CODIGO_ISO_UK,
+        requisito_id: requisitoId,
         identificacion_requisito: identificacionRequisito,
         campo: 'costo',
         valor_actual: valorActual,
