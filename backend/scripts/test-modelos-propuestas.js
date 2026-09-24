@@ -22,6 +22,9 @@ const { canonicalizarValor, hashSobreCanonico } = require('../services/propuesta
 
 function construirPayloadPropuesta({ destinoId, requisitoId, campo, runId, propuestaId, valorAnterior, valorPropuesto, fuente }) {
   return {
+    version_contrato: '1.0',
+    tipo_propuesta: 'actualizacion_campo_requisito',
+    fecha_propuesta: '2026-09-24T12:00:00.000Z',
     destino_id: String(destinoId),
     requisito_id: String(requisitoId),
     campo,

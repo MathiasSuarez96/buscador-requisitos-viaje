@@ -46,6 +46,12 @@
  * `validarValorPropuesto`, `validarFuente` más abajo) para no perder
  * esa cobertura.
  *
+ * Contrato del payload (también dentro del contenido hasheado):
+ * `version_contrato` === '1.0', `tipo_propuesta` ===
+ * 'actualizacion_campo_requisito' y `fecha_propuesta` como ISO UTC
+ * exacta (Date#toISOString). El hook rechaza cualquier otro valor
+ * (`validarContrato`); las constantes viven en el módulo compartido.
+ *
  * decision_aprobacion_id: se quitó la "immutable" funcional que existía
  * antes (evaluaba el valor YA guardado para permitir solo la primera
  * asignación). Esa función podía impedir la PRIMERA asignación de null
@@ -58,13 +64,17 @@
  *
  *   updateOne(
  *     { propuesta_id, estado: estadoEsperado, payload_hash: hashEsperado,
- *       decision_aprobacion_id: null, __v: versionEsperada },
+ *       decision_aprobacion_id: null, version_coordinacion: versionEsperada },
  *     { $set: { decision_aprobacion_id: eventoAprobacionId, estado: 'aprobada',
- *               ultimo_evento_id: eventoAprobacionId } }
+ *               ultimo_evento_id: eventoAprobacionId },
+ *       $inc: { version_coordinacion: 1 } }
  *   )
  *
- * `__v` es el versionKey por defecto de Mongoose (no deshabilitado acá)
- * y sirve como "versión esperada" para concurrencia optimista.
+ * `version_coordinacion` (arranca en 0) es la versión esperada EXPLÍCITA
+ * para concurrencia optimista: toda transición CAS la filtra y la
+ * incrementa. No se usa `__v`: es el versionKey interno de Mongoose, que
+ * solo se incrementa en ciertas rutas de save() sobre arrays y no en
+ * updateOne() — no sirve como contrato de coordinación.
  * `ultimo_evento_id` sigue siendo un puntero simple y mutable al último
  * evento (de cualquier tipo), actualizado en la misma transacción que
  * cada inserción en eventos_propuesta.
@@ -88,6 +98,9 @@ const {
   ALGORITMO_CANONICALIZACION,
   ALGORITMO_HASH,
   SHA256_HEX,
+  VERSION_CONTRATO_PROPUESTA,
+  TIPO_PROPUESTA,
+  esFechaIsoUtcExacta,
   hashSobreCanonico
 } = require('../../services/propuestas/canonicalizacion-propuestas');
 
@@ -133,6 +146,24 @@ function validarValorPropuesto(valor) {
   }
 }
 
+function validarContrato(payload) {
+  if (payload.version_contrato !== VERSION_CONTRATO_PROPUESTA) {
+    throw new Error(
+      `propuestas_cambio: payload.version_contrato debe ser "${VERSION_CONTRATO_PROPUESTA}" (recibido ${JSON.stringify(payload.version_contrato)}).`
+    );
+  }
+  if (payload.tipo_propuesta !== TIPO_PROPUESTA) {
+    throw new Error(
+      `propuestas_cambio: payload.tipo_propuesta debe ser "${TIPO_PROPUESTA}" (recibido ${JSON.stringify(payload.tipo_propuesta)}).`
+    );
+  }
+  if (!esFechaIsoUtcExacta(payload.fecha_propuesta)) {
+    throw new Error(
+      `propuestas_cambio: payload.fecha_propuesta debe ser una fecha ISO UTC exacta (Date#toISOString), recibido ${JSON.stringify(payload.fecha_propuesta)}.`
+    );
+  }
+}
+
 function validarFuente(valor) {
   if (valor === null || typeof valor !== 'object' || Array.isArray(valor)) {
     throw new Error('propuestas_cambio: payload.fuente debe ser un objeto {nombre, url, capturado_en}.');
@@ -166,6 +197,10 @@ const propuestaCambioSchema = new mongoose.Schema(
     run_id_origen: { type: String, required: true, immutable: true },
 
     estado: { type: String, required: true, enum: ESTADOS_PROPUESTA, default: 'pendiente_aprobacion' },
+
+    // Versión esperada explícita para las transiciones CAS (ver nota de
+    // cabecera); no se usa __v.
+    version_coordinacion: { type: Number, required: true, default: 0, min: 0 },
 
     // Sin `immutable` funcional (corrección: ver nota de cabecera). La
     // transición null -> UUID, una sola vez, se protege con un filtro
@@ -234,6 +269,7 @@ propuestaCambioSchema.pre('validate', function () {
 
   // valor_anterior/valor_propuesto/fuente solo existen dentro de
   // payload — se validan a mano porque Mongoose ya no los tipa.
+  validarContrato(this.payload);
   validarValorConPresencia(this.payload.valor_anterior, 'valor_anterior');
   validarValorPropuesto(this.payload.valor_propuesto);
   validarFuente(this.payload.fuente);

@@ -25,6 +25,8 @@
  * la ejecución perdedora queda vinculada a la propuesta activa
  * ganadora). `propuesta_fue_creada_por_esta_ejecucion` distingue ambos
  * casos sin dos campos opcionales mutuamente excluyentes.
+ * `valor_normalizado_coincide` persiste si esa propuesta propone el
+ * mismo valor normalizado que leyó esta ejecución.
  *
  * Política de timestamps: no se usa `{ timestamps: true }` —
  * iniciado_en/finalizado_en ya son los timestamps de negocio reales.
@@ -54,6 +56,7 @@ const ETAPAS_FALLO = [
   'comparacion_fuente',
   'conexion_mongo',
   'identificacion_requisito_mongo',
+  'construccion_salida',
   'deteccion_propuesta_existente',
   'creacion_propuesta',
   'desconocida'
@@ -72,6 +75,16 @@ const propuestaReferenciaSchema = new mongoose.Schema(
     // Referencia al `propuesta_id` (no al `_id`) de PropuestaCambio.
     propuesta_id_referenciada: { type: String, required: false },
     propuesta_fue_creada_por_esta_ejecucion: {
+      type: Boolean,
+      required: function () {
+        return this.propuesta_id_referenciada != null;
+      }
+    },
+    // Si el valor_normalizado propuesto por la propuesta referenciada es
+    // igual al que leyó esta ejecución. Siempre true cuando la creó esta
+    // ejecución; false marca una propuesta activa discrepante (no se la
+    // marca obsoleta automáticamente — queda para revisión humana).
+    valor_normalizado_coincide: {
       type: Boolean,
       required: function () {
         return this.propuesta_id_referenciada != null;

@@ -30,6 +30,12 @@
  * elegir el algoritmo de `crypto.createHash` (antes quedaba
  * hardcodeado a 'sha256' sin importar qué se recibiera, así que el
  * parámetro no tenía ningún efecto real).
+ *
+ * VERSION_CONTRATO_PROPUESTA / TIPO_PROPUESTA / esFechaIsoUtcExacta:
+ * contrato del contenido inmutable del payload (version_contrato,
+ * tipo_propuesta, fecha_propuesta). Viven acá por la misma razón que la
+ * canonicalización: el modelo los valida y el servicio los produce, y
+ * dos copias podrían divergir en silencio.
  */
 
 const crypto = require('crypto');
@@ -37,6 +43,18 @@ const crypto = require('crypto');
 const ALGORITMO_CANONICALIZACION = 'toc-v1';
 const ALGORITMO_HASH = 'sha256';
 const SHA256_HEX = /^[0-9a-f]{64}$/;
+const VERSION_CONTRATO_PROPUESTA = '1.0';
+const TIPO_PROPUESTA = 'actualizacion_campo_requisito';
+
+// ISO 8601 en UTC exactamente como lo produce Date#toISOString(): se
+// exige ida y vuelta exacta para no aceptar strings que Date.parse
+// tolera pero que canonicalizarían distinto (sin milisegundos, otra
+// zona horaria, fechas desbordadas como 30 de febrero).
+function esFechaIsoUtcExacta(valor) {
+  if (typeof valor !== 'string') return false;
+  const fecha = new Date(valor);
+  return !Number.isNaN(fecha.getTime()) && fecha.toISOString() === valor;
+}
 
 function canonicalizarValor(valor) {
   if (valor === undefined) {
@@ -84,6 +102,9 @@ module.exports = {
   ALGORITMO_CANONICALIZACION,
   ALGORITMO_HASH,
   SHA256_HEX,
+  VERSION_CONTRATO_PROPUESTA,
+  TIPO_PROPUESTA,
+  esFechaIsoUtcExacta,
   canonicalizarValor,
   hashSobreCanonico
 };
