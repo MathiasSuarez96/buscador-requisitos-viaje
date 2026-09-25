@@ -38,7 +38,8 @@ const {
   construirPropuesta,
   construirEjecucion,
   verificarListadoIndices,
-  registrarEjecucionLectura
+  registrarEjecucionLectura,
+  crearDependenciasMongoose
 } = require('../services/propuestas/registrar-ejecucion-lectura');
 
 const DESTINO_ID = '000000000000000000000001';
@@ -843,6 +844,71 @@ async function assertRechaza(promesaOFn, claseOMensaje, etiqueta) {
     verificarListadoIndices(declaradosPropuesta, comoListado(EjecucionLectura));
 
     console.log('17) ESTADOS_ACTIVOS e índices del servicio sincronizados con los schemas: OK');
+  }
+
+  // ============================================================
+  // 18) Dependencias REALES (crearDependenciasMongoose) sin índices:
+  //     el servicio se niega antes de cualquier escritura. Sin Mongo:
+  //     se reemplaza solo el listado de índices de cada colección y se
+  //     espían save() y transaction() para comprobar que nunca se llaman.
+  // ============================================================
+  {
+    const originales = {
+      indicesPropuesta: PropuestaCambio.collection.indexes,
+      indicesEjecucion: EjecucionLectura.collection.indexes,
+      savePropuesta: PropuestaCambio.prototype.save,
+      saveEjecucion: EjecucionLectura.prototype.save
+    };
+    const escrituras = [];
+    PropuestaCambio.prototype.save = async function () {
+      escrituras.push('PropuestaCambio.save');
+    };
+    EjecucionLectura.prototype.save = async function () {
+      escrituras.push('EjecucionLectura.save');
+    };
+    const conexionFalsa = {
+      transaction: async () => {
+        escrituras.push('transaction');
+      }
+    };
+    const namespaceNotFound = () => Object.assign(new Error('ns does not exist'), { code: 26 });
+    const soloId = async () => [{ name: '_id_', key: { _id: 1 } }];
+
+    const escenarios = [
+      [
+        'colecciones inexistentes (NamespaceNotFound)',
+        async () => {
+          throw namespaceNotFound();
+        },
+        async () => {
+          throw namespaceNotFound();
+        }
+      ],
+      ['colecciones solo con _id_', soloId, soloId]
+    ];
+
+    try {
+      for (const [etiqueta, listarPropuestas, listarEjecuciones] of escenarios) {
+        PropuestaCambio.collection.indexes = listarPropuestas;
+        EjecucionLectura.collection.indexes = listarEjecuciones;
+        const deps = crearDependenciasMongoose(conexionFalsa);
+        for (const entrada of [entradaOk(), entradaFallo()]) {
+          await assertRechaza(
+            registrarEjecucionLectura(entrada, deps),
+            ErrorPrecondicionIndices,
+            `${etiqueta} / ${entrada.estado_ejecucion}`
+          );
+        }
+        assert.deepStrictEqual(escrituras, [], `${etiqueta}: no debe haber ninguna escritura`);
+      }
+    } finally {
+      PropuestaCambio.collection.indexes = originales.indicesPropuesta;
+      EjecucionLectura.collection.indexes = originales.indicesEjecucion;
+      PropuestaCambio.prototype.save = originales.savePropuesta;
+      EjecucionLectura.prototype.save = originales.saveEjecucion;
+    }
+
+    console.log('18) dependencias reales sin índices → ErrorPrecondicionIndices, cero escrituras: OK');
   }
 
   console.log('\nTodas las pruebas offline del servicio pasaron (sin conexión a Mongo).');

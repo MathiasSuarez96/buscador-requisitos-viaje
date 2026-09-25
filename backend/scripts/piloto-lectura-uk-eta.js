@@ -115,9 +115,11 @@
  *  - Lectura de solo lectura en Mongo (mongoose.connect + Destino.find,
  *    sin updateOne/save/create/delete de ningún tipo) del único
  *    requisito de Reino Unido identificado arriba.
- *  - NO escribe nada en Mongo: no toca costo, no toca estado, no toca
- *    fecha_verificacion, no toca ningún otro campo del destino de
- *    Reino Unido ni de ningún otro destino.
+ *  - NO escribe nada en Mongo, salvo que se pase --registrar (ver
+ *    abajo). Incluso con --registrar, NUNCA escribe en `destinos`: no
+ *    toca costo, no toca estado, no toca fecha_verificacion, no toca
+ *    ningún otro campo del destino de Reino Unido ni de ningún otro
+ *    destino.
  *  - NO guarda fecha_verificacion: las fechas del JSON de GOV.UK
  *    (first_published_at, public_updated_at, updated_at) se imprimen
  *    solo para inspección, no se persisten. Este piloto verifica un
@@ -126,7 +128,31 @@
  *    propia corrida de migración cuando se verifique el requisito
  *    completo, no el sitio fuente ni este piloto.
  *
- * No hay modo DRY_RUN porque no hay ninguna escritura que simular.
+ * Sin --registrar no hay ninguna escritura, así que no hace falta un
+ * modo DRY_RUN.
+ *
+ * Flag --registrar (opt-in; sin él, el comportamiento es exactamente el
+ * de siempre: solo lectura + consola). Con --registrar, al terminar la
+ * corrida — en el camino ok y en CADA camino de fallo — se llama a
+ * registrarEjecucionLectura()
+ * (services/propuestas/registrar-ejecucion-lectura.js), que inserta una
+ * EjecucionLectura en ejecuciones_lectura y, si la categoría genera
+ * propuesta, una PropuestaCambio pendiente_aprobacion en
+ * propuestas_cambio, dentro de la misma transacción. Ese servicio se
+ * niega a escribir si los índices de esas dos colecciones no existen.
+ * Si GOV.UK falló antes de conectar a Mongo, se conecta igual solo para
+ * registrar el fallo (con timeout de selección de servidor, para no
+ * colgar); si ni eso se puede, se imprime el error y exitCode = 1.
+ * Los registros impresos en consola llevan
+ * `escritura_en_destinos_realizada: false` (siempre: este piloto jamás
+ * modifica `destinos`) y `registro_persistente_solicitado` (si se
+ * intentará guardar la ejecución/propuesta, es decir, --registrar).
+ *
+ * main() acepta dependencias inyectables (fetch, conexión, búsqueda del
+ * requisito, servicio de registro, desconexión) con los valores reales
+ * por defecto, para probar el flujo completo sin red ni Mongo — ver
+ * scripts/test-piloto-lectura-uk-eta.js. Devuelve un resumen de la
+ * corrida (lectura, registro, desconexión).
  *
  * Código de salida: process.exitCode = 1 SOLO cuando algo impidió
  * llegar a una conclusión confiable — sospechoso del lado de GOV.UK,
@@ -151,9 +177,10 @@
  *  - "registro de ejecución": se imprime SIEMPRE, tanto si la corrida
  *    llega a un resultado (`resultado_general: 'ok'`) como si algo
  *    falla en el camino (`resultado_general: 'fallo'`). En el caso de
- *    fallo incluye `etapa_fallo` (en qué paso se rompió: fetch_govuk,
- *    parseo_govuk, comparacion_govuk, conexion_mongo,
- *    identificacion_requisito_mongo, o desconocida), el mensaje de
+ *    fallo incluye `etapa_fallo` (en qué paso se rompió: fetch_fuente,
+ *    parseo_fuente, comparacion_fuente, conexion_mongo,
+ *    identificacion_requisito_mongo o construccion_salida — los mismos
+ *    valores del enum ETAPAS_FALLO de EjecucionLectura.model.js), el mensaje de
  *    `error`, y `datos_obtenidos` con lo que sí se llegó a conseguir
  *    antes de fallar (puede ser null/vacío si falló en el primer
  *    fetch). Los dos casos explícitos que SIEMPRE producen un registro
@@ -197,6 +224,11 @@ require('dotenv').config();
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const Destino = require('../models/Destino.model');
+const { debeGenerarPropuesta, registrarEjecucionLectura } = require('../services/propuestas/registrar-ejecucion-lectura');
+
+// Opt-in: sin este flag el piloto solo lee e imprime (ver cabecera).
+const REGISTRAR = process.argv.includes('--registrar');
+const TIMEOUT_MONGO_REGISTRO_MS = 10000; // selección de servidor al conectar SOLO para registrar
 
 const DB_ESPERADA = 'buscador_requisitos';
 const CODIGO_ISO_UK = 'GB';
@@ -205,6 +237,7 @@ const TIPO_REQUISITO_ETA = 'formulario_digital'; // evidencia descriptiva, valid
 const NOMBRE_REQUISITO_ETA = 'UK ETA'; // evidencia descriptiva, validada contra el requisito hallado por _id — ya no criterio de búsqueda
 
 const URL_ETA = 'https://www.gov.uk/api/content/eta';
+const FUENTE_NOMBRE = 'GOV.UK';
 const PATRON_COSTO_GLOBAL = /£(\d+)/g;
 const TIMEOUT_MS = 8000;
 const VENTANA_FRAGMENTO = 40; // caracteres de contexto a cada lado del match, para el fragmento real de evidencia
@@ -368,14 +401,11 @@ function compararConMongo(costoGovUk, monedaGovUk, costoOriginalMongo) {
   return { categoria: 'COINCIDE', ambiguo: false, costoOriginalMongo };
 }
 
-// SOLO estas dos categorías representan "hay algo real que proponer".
-// COINCIDE no necesita propuesta (no hay cambio), y las categorías
-// ambiguas no tienen un valor confiable para proponer.
-const CATEGORIAS_QUE_GENERAN_PROPUESTA = ['SIN_COSTO_PREVIO_EN_MONGO', 'IMPORTE_NO_COINCIDE'];
-
-function debeGenerarPropuesta(categoria) {
-  return CATEGORIAS_QUE_GENERAN_PROPUESTA.includes(categoria);
-}
+// debeGenerarPropuesta() viene del servicio de registro, que es la
+// única fuente de la lista de categorías que generan propuesta
+// (SIN_COSTO_PREVIO_EN_MONGO e IMPORTE_NO_COINCIDE): COINCIDE no
+// necesita propuesta (no hay cambio), y las categorías ambiguas no
+// tienen un valor confiable para proponer.
 
 // Estado ESTRUCTURAL real del campo `costo` en el documento — no una
 // interpretación. Usa Object.hasOwn() para comprobar la EXISTENCIA de
@@ -508,9 +538,11 @@ function resumenFuenteGovUk(json) {
   if (!json) return null;
   return {
     url: URL_ETA,
-    first_published_at: json.first_published_at,
-    public_updated_at: json.public_updated_at,
-    updated_at: json.updated_at
+    // ?? null: si GOV.UK no manda alguna fecha, no debe llegar
+    // undefined a la evidencia (la canonicalización toc-v1 lo rechaza).
+    first_published_at: json.first_published_at ?? null,
+    public_updated_at: json.public_updated_at ?? null,
+    updated_at: json.updated_at ?? null
   };
 }
 
@@ -525,7 +557,7 @@ function resumenEvidencia(resultadoOverview, resultadoApply) {
 // que algo impidió llegar a una conclusión (GOV.UK sospechoso,
 // requisito de Mongo no identificable, o un error real en cualquier
 // etapa). NUNCA acompañado de una propuesta.
-function imprimirRegistroFallo({ runId, fechaEjecucion, etapaFallo, error, datosObtenidos }) {
+function imprimirRegistroFallo({ runId, fechaEjecucion, etapaFallo, error, datosObtenidos, registroPersistenteSolicitado }) {
   const registro = {
     tipo_registro: 'ejecucion_lectura',
     run_id: runId,
@@ -534,36 +566,154 @@ function imprimirRegistroFallo({ runId, fechaEjecucion, etapaFallo, error, datos
     etapa_fallo: etapaFallo,
     error,
     datos_obtenidos: datosObtenidos,
-    escritura_realizada: false
+    escritura_en_destinos_realizada: false, // siempre: este piloto jamás modifica destinos
+    registro_persistente_solicitado: registroPersistenteSolicitado
   };
   console.log('\n=== REGISTRO DE EJECUCIÓN (FALLO) ===');
   console.log(JSON.stringify(registro, null, 2));
 }
 
-async function main() {
+// --- Entrada para registrarEjecucionLectura (solo se usa con --registrar) ---
+
+// Camino de FALLO: la evidencia es exactamente `datos_obtenidos` del
+// registro impreso. requisito_id solo se informa si el requisito quedó
+// identificado (incluida la validación de tipo/nombre).
+function construirEntradaRegistroFallo({ runId, iniciadoEn, fechaEjecucion, etapaFallo, error, datosObtenidos, destinoId, requisitoId }) {
+  return {
+    run_id: runId,
+    iniciado_en: iniciadoEn,
+    campo: 'costo',
+    fuente: { nombre: FUENTE_NOMBRE, url: URL_ETA, capturado_en: fechaEjecucion },
+    evidencia: datosObtenidos,
+    estado_ejecucion: 'fallo',
+    etapa_fallo: etapaFallo,
+    error_mensaje: error,
+    destino_id: destinoId != null ? String(destinoId) : null,
+    requisito_id: requisitoId ?? null
+  };
+}
+
+// Camino OK. valor_previo_en_mongo.presente indica si la CLAVE costo
+// existe (Object.hasOwn), así {presente: true, valor: null} sigue
+// distinguiendo "nulo explícito" de "ausente". valor_propuesto solo se
+// incluye si la categoría genera propuesta (el servicio rechaza lo
+// contrario).
+function construirEntradaRegistroOk({ runId, iniciadoEn, fechaEjecucion, json, resultadoOverview, resultadoApply, destinoId, requisitoId, requisito, resultado, costoGovUk }) {
+  const costoPresente = Object.hasOwn(requisito, 'costo');
+  return {
+    run_id: runId,
+    iniciado_en: iniciadoEn,
+    campo: 'costo',
+    fuente: { nombre: FUENTE_NOMBRE, url: URL_ETA, capturado_en: fechaEjecucion },
+    evidencia: {
+      fuente_govuk: resumenFuenteGovUk(json),
+      extraccion: resumenEvidencia(resultadoOverview, resultadoApply),
+      comparacion_govuk: { coincide_entre_secciones: true, costo_extraido_consistente: costoGovUk, moneda: 'GBP' },
+      identificacion_requisito: {
+        criterio: 'requisito_id',
+        destino_codigo_iso: CODIGO_ISO_UK,
+        tipo: requisito.tipo,
+        nombre: requisito.nombre
+      }
+    },
+    estado_ejecucion: 'ok',
+    destino_id: String(destinoId),
+    requisito_id: requisitoId,
+    valor_previo_en_mongo: { presente: costoPresente, valor: costoPresente ? requisito.costo : null },
+    resultado_comparacion: { categoria: resultado.categoria, ambiguo: resultado.ambiguo },
+    ...(debeGenerarPropuesta(resultado.categoria) && {
+      valor_propuesto: { valor: `£${costoGovUk}`, valor_normalizado: { importe: costoGovUk, moneda: 'GBP' } }
+    })
+  };
+}
+
+// Conecta y verifica la base esperada. Sin opciones se comporta igual
+// que la conexión original del piloto; al registrar se pasa un timeout
+// de selección de servidor para no colgar si Mongo no responde.
+async function conectarMongoVerificado(opciones = {}) {
+  if (mongoose.connection.readyState !== 1) {
+    await mongoose.connect(process.env.MONGODB_URI, opciones);
+  }
+  const dbName = mongoose.connection.db.databaseName;
+  if (dbName !== DB_ESPERADA) {
+    throw new Error(`Base de datos inesperada: "${dbName}" (se esperaba "${DB_ESPERADA}").`);
+  }
+}
+
+// Nunca lanza: cualquier error (conexión, índices faltantes, entrada
+// inválida, run_id duplicado) se imprime, deja exitCode = 1 y se
+// devuelve, para que el finally de main() siempre llegue a desconectar
+// y el resumen conserve tanto el error de lectura como el de registro.
+async function registrarEnMongo(entrada, { conectar, registrarEjecucion }) {
+  console.log('\n=== REGISTRO EN MONGO (--registrar) ===');
+  try {
+    await conectar({ serverSelectionTimeoutMS: TIMEOUT_MONGO_REGISTRO_MS });
+    const resultado = await registrarEjecucion(entrada);
+    console.log(JSON.stringify(resultado, null, 2));
+    if (resultado.estado_ejecucion === 'fallo') {
+      process.exitCode = 1;
+    }
+    return { resultado, error: null };
+  } catch (err) {
+    console.error(`No se pudo registrar la ejecución en Mongo: ${err.message}`);
+    process.exitCode = 1;
+    return { resultado: null, error: err.message };
+  }
+}
+
+// Dependencias inyectables con los valores reales por defecto.
+// estaConectado se consulta en el finally: cubre también una conexión
+// que se abrió y después falló (ej. base de datos inesperada).
+async function main({
+  registrar = REGISTRAR,
+  fetchJson = fetchJsonConTimeout,
+  conectar = conectarMongoVerificado,
+  buscarRequisito = buscarRequisitoEtaEnMongo,
+  registrarEjecucion = registrarEjecucionLectura,
+  desconectar = () => mongoose.disconnect(),
+  estaConectado = () => mongoose.connection.readyState !== 0
+} = {}) {
   const runId = crypto.randomUUID();
-  let etapaActual = 'fetch_govuk';
+  const iniciadoEn = new Date();
+  let etapaActual = 'fetch_fuente';
   let fechaEjecucion = null;
   let json = null;
   let resultadoOverview = { costo: null, sospechoso: false, fragmento: null };
   let resultadoApply = { costo: null, sospechoso: false, fragmento: null };
   let destinoId = null;
+  let requisitoIdIdentificado = null; // solo tras validar tipo/nombre
+  let entradaRegistro = null; // entrada para --registrar, armada en cada camino de salida
+  // Resumen devuelto por main(). Se devuelve SIEMPRE la misma referencia
+  // (incluso desde los `return` dentro del try), así lo que completa el
+  // finally (registro, desconexión) queda visible para quien lo recibe.
+  const resumen = {
+    run_id: runId,
+    lectura: { estado: null, etapa_fallo: null, error: null, categoria: null },
+    registro: { solicitado: registrar, intentado: false, resultado: null, error: null },
+    desconexion: { intentada: false, error: null }
+  };
+  const marcarFalloLectura = (etapa, error) => {
+    resumen.lectura = { estado: 'fallo', etapa_fallo: etapa, error, categoria: null };
+  };
 
   try {
+    if (registrar) {
+      console.log('Modo --registrar: al terminar se registrará la ejecución en Mongo (ejecuciones_lectura / propuestas_cambio).\n');
+    }
     console.log(`Fetch de solo lectura a: ${URL_ETA} (timeout ${TIMEOUT_MS}ms, cubre request + lectura de body)\n`);
 
-    json = await fetchJsonConTimeout(URL_ETA, TIMEOUT_MS);
+    json = await fetchJson(URL_ETA, TIMEOUT_MS);
     // fecha_ejecucion se captura apenas llega la respuesta de GOV.UK,
     // no después de comparar contra Mongo.
     fechaEjecucion = new Date().toISOString();
 
-    etapaActual = 'parseo_govuk';
+    etapaActual = 'parseo_fuente';
     const parts = json?.details?.parts;
     if (!Array.isArray(parts)) {
       throw new Error('No se encontró details.parts[] en la respuesta.');
     }
 
-    etapaActual = 'comparacion_govuk';
+    etapaActual = 'comparacion_fuente';
     const overview = seleccionarParteUnica(parts, 'overview');
     const apply = seleccionarParteUnica(parts, 'apply');
 
@@ -587,18 +737,25 @@ async function main() {
 
     if (esSospechoso) {
       console.warn('SOSPECHOSO: los costos no coinciden, falta alguno de los dos, o hubo ambigüedad en la extracción. No se lo considera un dato válido.');
-      imprimirRegistroFallo({
+      const error = 'Los costos de "overview" y "apply" no coinciden, falta alguno de los dos, o hubo ambigüedad en la extracción.';
+      const datosObtenidos = {
+        fuente_govuk: resumenFuenteGovUk(json),
+        evidencia: resumenEvidencia(resultadoOverview, resultadoApply)
+      };
+      imprimirRegistroFallo({ runId, fechaEjecucion, etapaFallo: etapaActual, error, datosObtenidos, registroPersistenteSolicitado: registrar });
+      entradaRegistro = construirEntradaRegistroFallo({
         runId,
+        iniciadoEn,
         fechaEjecucion,
         etapaFallo: etapaActual,
-        error: 'Los costos de "overview" y "apply" no coinciden, falta alguno de los dos, o hubo ambigüedad en la extracción.',
-        datosObtenidos: {
-          fuente_govuk: resumenFuenteGovUk(json),
-          evidencia: resumenEvidencia(resultadoOverview, resultadoApply)
-        }
+        error,
+        datosObtenidos,
+        destinoId: null,
+        requisitoId: null
       });
+      marcarFalloLectura(etapaActual, error);
       process.exitCode = 1;
-      return;
+      return resumen;
     }
 
     console.log(`Costo extraído consistente entre secciones: £${costoOverview}\n`);
@@ -610,38 +767,50 @@ async function main() {
     etapaActual = 'conexion_mongo';
     // --- A partir de acá, TODO es lectura contra Mongo. Ningún camino
     // de esta sección hace un write. ---
-    await mongoose.connect(process.env.MONGODB_URI);
-    const dbName = mongoose.connection.db.databaseName;
-    if (dbName !== DB_ESPERADA) {
-      throw new Error(`Base de datos inesperada: "${dbName}" (se esperaba "${DB_ESPERADA}").`);
-    }
+    await conectar();
 
     etapaActual = 'identificacion_requisito_mongo';
-    const resultadoBusqueda = await buscarRequisitoEtaEnMongo();
+    const resultadoBusqueda = await buscarRequisito();
     const requisito = resultadoBusqueda.requisito;
     const requisitoId = resultadoBusqueda.requisitoId;
     destinoId = resultadoBusqueda.destinoId;
 
     if (!requisito) {
       console.warn(`SOSPECHOSO (${resultadoBusqueda.categoriaFallo}): ${resultadoBusqueda.motivo}`);
+      const datosObtenidos = {
+        fuente_govuk: resumenFuenteGovUk(json),
+        evidencia: resumenEvidencia(resultadoOverview, resultadoApply),
+        comparacion_govuk: { coincide_entre_secciones: true, costo_extraido_consistente: costoOverview, moneda: 'GBP' },
+        destino_id: destinoId ? String(destinoId) : null,
+        requisito_id_buscado: REQUISITO_ID_ETA,
+        requisito_id_encontrado: requisitoId,
+        requisito_id_categoria_fallo: resultadoBusqueda.categoriaFallo
+      };
       imprimirRegistroFallo({
         runId,
         fechaEjecucion,
         etapaFallo: etapaActual,
         error: resultadoBusqueda.motivo,
-        datosObtenidos: {
-          fuente_govuk: resumenFuenteGovUk(json),
-          evidencia: resumenEvidencia(resultadoOverview, resultadoApply),
-          comparacion_govuk: { coincide_entre_secciones: true, costo_extraido_consistente: costoOverview, moneda: 'GBP' },
-          destino_id: destinoId ? String(destinoId) : null,
-          requisito_id_buscado: REQUISITO_ID_ETA,
-          requisito_id_encontrado: requisitoId,
-          requisito_id_categoria_fallo: resultadoBusqueda.categoriaFallo
-        }
+        datosObtenidos,
+        registroPersistenteSolicitado: registrar
       });
+      // requisito_id queda null: el requisito NO quedó identificado (el
+      // _id encontrado, si lo hubo, va en la evidencia).
+      entradaRegistro = construirEntradaRegistroFallo({
+        runId,
+        iniciadoEn,
+        fechaEjecucion,
+        etapaFallo: etapaActual,
+        error: resultadoBusqueda.motivo,
+        datosObtenidos,
+        destinoId,
+        requisitoId: null
+      });
+      marcarFalloLectura(etapaActual, resultadoBusqueda.motivo);
       process.exitCode = 1;
-      return;
+      return resumen;
     }
+    requisitoIdIdentificado = requisitoId;
 
     console.log(`Requisito de Mongo identificado: requisito_id="${requisitoId}" (tipo="${requisito.tipo}", nombre="${requisito.nombre}" — evidencia descriptiva validada)`);
     console.log(`  costo (valor original, sin modificar): ${JSON.stringify(requisito.costo ?? null)}\n`);
@@ -694,7 +863,8 @@ async function main() {
         costo_actual: valorActual
       },
       resultado_comparacion: { categoria: resultado.categoria, ambiguo: resultado.ambiguo },
-      escritura_realizada: false
+      escritura_en_destinos_realizada: false, // siempre: este piloto jamás modifica destinos
+      registro_persistente_solicitado: registrar
     };
 
     console.log('\n=== REGISTRO DE EJECUCIÓN (datos reales de esta corrida) ===');
@@ -756,28 +926,103 @@ async function main() {
         ' generó ningún historial de cambio aplicado: eso sigue siendo comportamiento futuro, no' +
         ' simulado hoy.'
     );
+
+    entradaRegistro = construirEntradaRegistroOk({
+      runId,
+      iniciadoEn,
+      fechaEjecucion,
+      json,
+      resultadoOverview,
+      resultadoApply,
+      destinoId,
+      requisitoId,
+      requisito,
+      resultado,
+      costoGovUk: costoOverview
+    });
+    resumen.lectura = { estado: 'ok', etapa_fallo: null, error: null, categoria: resultado.categoria };
   } catch (err) {
     console.error('Error en el piloto de lectura:', err.message);
+    const datosObtenidos = {
+      fuente_govuk: resumenFuenteGovUk(json),
+      evidencia: resumenEvidencia(resultadoOverview, resultadoApply),
+      destino_id: destinoId ? String(destinoId) : null
+    };
     imprimirRegistroFallo({
       runId,
       fechaEjecucion,
       etapaFallo: etapaActual,
       error: err.message,
-      datosObtenidos: {
-        fuente_govuk: resumenFuenteGovUk(json),
-        evidencia: resumenEvidencia(resultadoOverview, resultadoApply),
-        destino_id: destinoId ? String(destinoId) : null
-      }
+      datosObtenidos,
+      registroPersistenteSolicitado: registrar
     });
+    entradaRegistro = construirEntradaRegistroFallo({
+      runId,
+      iniciadoEn,
+      fechaEjecucion,
+      etapaFallo: etapaActual,
+      error: err.message,
+      datosObtenidos,
+      destinoId,
+      requisitoId: requisitoIdIdentificado
+    });
+    marcarFalloLectura(etapaActual, err.message);
     process.exitCode = 1;
   } finally {
-    if (mongoose.connection.readyState !== 0) {
-      await mongoose.disconnect();
+    // Con --registrar, se registra en TODOS los caminos (ok y cada
+    // fallo), antes de desconectar. registrarEnMongo nunca lanza.
+    if (registrar && entradaRegistro) {
+      resumen.registro.intentado = true;
+      const { resultado, error } = await registrarEnMongo(entradaRegistro, { conectar, registrarEjecucion });
+      resumen.registro.resultado = resultado;
+      resumen.registro.error = error;
+    }
+    // Una sola desconexión, y solo si hay una conexión abierta (incluso
+    // una que se abrió y después falló). Un error al desconectar no se
+    // propaga: se imprime y deja exitCode = 1.
+    if (estaConectado()) {
+      resumen.desconexion.intentada = true;
+      try {
+        await desconectar();
+      } catch (err) {
+        console.error(`Error al desconectar de Mongo: ${err.message}`);
+        resumen.desconexion.error = err.message;
+        process.exitCode = 1;
+      }
     }
   }
+  return resumen;
 }
 
-main().catch((err) => {
-  console.error('Error fatal no manejado en el piloto:', err.message);
-  process.exitCode = 1;
-});
+// Etapas que este piloto puede emitir en etapa_fallo (mismos valores que
+// ETAPAS_FALLO de EjecucionLectura.model.js). test-piloto-lectura-uk-eta.js
+// verifica que coincidan con las asignaciones a etapaActual de main().
+const ETAPAS_EMITIDAS = [
+  'fetch_fuente',
+  'parseo_fuente',
+  'comparacion_fuente',
+  'conexion_mongo',
+  'identificacion_requisito_mongo',
+  'construccion_salida'
+];
+
+// Guarda: importar este archivo (desde una prueba) no dispara el fetch a
+// GOV.UK ni la conexión a Mongo.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('Error fatal no manejado en el piloto:', err.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  main,
+  REGISTRAR,
+  ETAPAS_EMITIDAS,
+  extraerCosto,
+  parsearCostoMongo,
+  compararConMongo,
+  resumenFuenteGovUk,
+  construirEntradaRegistroFallo,
+  construirEntradaRegistroOk
+};
