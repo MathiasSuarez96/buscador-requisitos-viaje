@@ -37,6 +37,7 @@ const {
   validarEntrada,
   construirPropuesta,
   construirEjecucion,
+  INDICES_REQUERIDOS,
   verificarListadoIndices,
   registrarEjecucionLectura,
   crearDependenciasMongoose
@@ -810,8 +811,26 @@ async function assertRechaza(promesaOFn, claseOMensaje, etiqueta) {
         [idRun]
       ],
       ['parcial con otra clave', [{ ...indicePropuestaActiva, key: { destino_id: 1, campo: 1 } }, idPropuesta], [idRun]],
+      ['parcial sparse', [{ ...indicePropuestaActiva, sparse: true }, idPropuesta], [idRun]],
       ['sin propuesta_id único', [indicePropuestaActiva], [idRun]],
+      ['propuesta_id no único', [indicePropuestaActiva, { ...idPropuesta, unique: false }], [idRun]],
+      ['propuesta_id sparse', [indicePropuestaActiva, { ...idPropuesta, sparse: true }], [idRun]],
+      [
+        'propuesta_id con filtro parcial',
+        [indicePropuestaActiva, { ...idPropuesta, partialFilterExpression: { propuesta_id: { $exists: true } } }],
+        [idRun]
+      ],
+      ['propuesta_id con otro nombre', [indicePropuestaActiva, { ...idPropuesta, name: 'propuesta_id_unico' }], [idRun]],
+      [
+        'propuesta_id duplicado con otro nombre',
+        [indicePropuestaActiva, idPropuesta, { ...idPropuesta, name: 'propuesta_id_unico' }],
+        [idRun]
+      ],
+      ['propuesta_id con collation', [indicePropuestaActiva, { ...idPropuesta, collation: { locale: 'es', strength: 2 } }], [idRun]],
       ['sin run_id único', [indicePropuestaActiva, idPropuesta], [idId]],
+      ['run_id sparse', [indicePropuestaActiva, idPropuesta], [{ ...idRun, sparse: true }]],
+      ['run_id con filtro parcial', [indicePropuestaActiva, idPropuesta], [{ ...idRun, partialFilterExpression: { run_id: { $type: 'string' } } }]],
+      ['run_id con clave descendente', [indicePropuestaActiva, idPropuesta], [{ ...idRun, key: { run_id: -1 } }]],
       ['colecciones inexistentes', [], []]
     ];
     for (const [etiqueta, propuestas, ejecuciones] of variantesInvalidas) {
@@ -842,6 +861,17 @@ async function assertRechaza(promesaOFn, claseOMensaje, etiqueta) {
     assert.deepStrictEqual(parcial.key, CLAVE_INDICE_PROPUESTA_ACTIVA);
 
     verificarListadoIndices(declaradosPropuesta, comoListado(EjecucionLectura));
+
+    // Las colecciones de INDICES_REQUERIDOS son las de los modelos, y
+    // cada índice requerido está declarado en su schema con el mismo nombre.
+    const porColeccion = { propuestas_cambio: PropuestaCambio, ejecuciones_lectura: EjecucionLectura };
+    assert.strictEqual(PropuestaCambio.collection.collectionName, 'propuestas_cambio');
+    assert.strictEqual(EjecucionLectura.collection.collectionName, 'ejecuciones_lectura');
+    for (const spec of INDICES_REQUERIDOS) {
+      const declarado = comoListado(porColeccion[spec.coleccion]).find((i) => i.name === spec.nombre);
+      assert.ok(declarado, `${spec.coleccion}.${spec.nombre} debe estar declarado en el schema`);
+      assert.deepStrictEqual(declarado.key, spec.clave, `${spec.nombre}: clave`);
+    }
 
     console.log('17) ESTADOS_ACTIVOS e índices del servicio sincronizados con los schemas: OK');
   }

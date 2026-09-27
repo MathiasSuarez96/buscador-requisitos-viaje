@@ -63,6 +63,26 @@ const CATEGORIAS_QUE_GENERAN_PROPUESTA = ['SIN_COSTO_PREVIO_EN_MONGO', 'IMPORTE_
 const ESTADOS_ACTIVOS = ['pendiente_aprobacion', 'aprobada', 'revision_requerida'];
 const INDICE_PROPUESTA_ACTIVA = 'uniq_propuesta_activa_por_destino_requisito_campo';
 const CLAVE_INDICE_PROPUESTA_ACTIVA = { destino_id: 1, requisito_id: 1, campo: 1 };
+
+// Forma EXACTA de los índices que se exigen antes de escribir. Única
+// fuente de verdad: scripts/crear-indices-propuestas.js crea estos
+// mismos specs y clasifica con evaluarIndice(), así que el creador y
+// este gate aceptan y rechazan exactamente las mismas formas.
+const INDICES_REQUERIDOS = [
+  { coleccion: 'ejecuciones_lectura', nombre: 'run_id_1', clave: { run_id: 1 }, partialFilterExpression: null },
+  { coleccion: 'propuestas_cambio', nombre: 'propuesta_id_1', clave: { propuesta_id: 1 }, partialFilterExpression: null },
+  {
+    coleccion: 'propuestas_cambio',
+    nombre: INDICE_PROPUESTA_ACTIVA,
+    clave: CLAVE_INDICE_PROPUESTA_ACTIVA,
+    partialFilterExpression: { estado: { $in: ESTADOS_ACTIVOS } }
+  }
+];
+// Campos que puede traer un índice de listIndexes() para contar como
+// forma exacta. Cualquier otro (sparse, collation, hidden, expireAfterSeconds...)
+// cambia la semántica y se rechaza.
+const CAMPOS_PERMITIDOS_INDICE = ['v', 'key', 'name', 'unique', 'partialFilterExpression', 'ns'];
+
 const MAX_INTENTOS = 3;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -355,28 +375,61 @@ async function listarIndices(Model) {
   }
 }
 
-// Pura (sin I/O) para poder probarla offline con listados armados a mano.
-function verificarListadoIndices(indicesPropuestas, indicesEjecuciones) {
-  const mismaForma = (a, b) => JSON.stringify(canonicalizarValor(a ?? null)) === JSON.stringify(canonicalizarValor(b));
-  const tieneUnico = (indices, clave) =>
-    indices.some((i) => i.unique === true && JSON.stringify(i.key) === JSON.stringify(clave));
+// La clave se compara SIN canonicalizar: en un índice compuesto el
+// orden de los campos es parte de la definición.
+const mismaClave = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const mismaForma = (a, b) => JSON.stringify(canonicalizarValor(a ?? null)) === JSON.stringify(canonicalizarValor(b ?? null));
 
-  const activa = indicesPropuestas.find((i) => i.name === INDICE_PROPUESTA_ACTIVA);
-  if (
-    !activa ||
-    activa.unique !== true ||
-    JSON.stringify(activa.key) !== JSON.stringify(CLAVE_INDICE_PROPUESTA_ACTIVA) ||
-    !mismaForma(activa.partialFilterExpression, { estado: { $in: ESTADOS_ACTIVOS } })
-  ) {
-    throw new ErrorPrecondicionIndices(
-      `Falta el índice ${INDICE_PROPUESTA_ACTIVA} (o difiere del declarado en el schema). No se escribe nada.`
+// Pura. Diferencias entre un índice listado y su spec ([] = forma exacta).
+function diferenciasIndice(existente, spec) {
+  const diffs = [];
+  if (existente.name !== spec.nombre) diffs.push(`name=${existente.name} (esperado ${spec.nombre})`);
+  if (!mismaClave(existente.key, spec.clave)) {
+    diffs.push(`key=${JSON.stringify(existente.key)} (esperado ${JSON.stringify(spec.clave)})`);
+  }
+  if (existente.unique !== true) diffs.push(`unique=${existente.unique} (esperado true)`);
+  if (!mismaForma(existente.partialFilterExpression, spec.partialFilterExpression)) {
+    diffs.push(
+      `partialFilterExpression=${JSON.stringify(existente.partialFilterExpression ?? null)} (esperado ${JSON.stringify(spec.partialFilterExpression)})`
     );
   }
-  if (!tieneUnico(indicesPropuestas, { propuesta_id: 1 })) {
-    throw new ErrorPrecondicionIndices('Falta el índice único propuestas_cambio.propuesta_id. No se escribe nada.');
+  for (const campo of Object.keys(existente)) {
+    if (!CAMPOS_PERMITIDOS_INDICE.includes(campo)) diffs.push(`${campo}=${JSON.stringify(existente[campo])} (no esperado)`);
   }
-  if (!tieneUnico(indicesEjecuciones, { run_id: 1 })) {
-    throw new ErrorPrecondicionIndices('Falta el índice único ejecuciones_lectura.run_id. No se escribe nada.');
+  return diffs;
+}
+
+// Pura. Clasifica un spec contra el listado de su colección:
+//  - 'ya_existe': hay un índice con ese nombre, con forma exacta, y
+//    ningún otro índice con la misma clave.
+//  - 'crear': no hay ningún índice con ese nombre ni con esa clave.
+//  - 'conflicto': cualquier otra cosa (mismo nombre con otra forma, u
+//    otro índice con la misma clave).
+function evaluarIndice(existentes, spec) {
+  const porNombre = existentes.find((i) => i.name === spec.nombre);
+  const problemas = existentes
+    .filter((i) => i.name !== spec.nombre && mismaClave(i.key, spec.clave))
+    .map((i) => `ya existe "${i.name}" con la misma clave ${JSON.stringify(spec.clave)}`);
+  if (porNombre) problemas.push(...diferenciasIndice(porNombre, spec));
+
+  if (problemas.length > 0) return { estado: 'conflicto', problemas };
+  return { estado: porNombre ? 'ya_existe' : 'crear', problemas: [] };
+}
+
+// Pura (sin I/O) para poder probarla offline con listados armados a mano.
+// Pasa solo si evaluarIndice() da 'ya_existe' para los tres índices.
+function verificarListadoIndices(indicesPropuestas, indicesEjecuciones) {
+  const listados = { propuestas_cambio: indicesPropuestas, ejecuciones_lectura: indicesEjecuciones };
+  const fallas = [];
+  for (const spec of INDICES_REQUERIDOS) {
+    const { estado, problemas } = evaluarIndice(listados[spec.coleccion], spec);
+    if (estado === 'crear') fallas.push(`falta ${spec.coleccion}.${spec.nombre}`);
+    if (estado === 'conflicto') fallas.push(`${spec.coleccion}.${spec.nombre}: ${problemas.join('; ')}`);
+  }
+  if (fallas.length > 0) {
+    throw new ErrorPrecondicionIndices(
+      `Índices ausentes o con forma distinta a la exigida. No se escribe nada.\n  - ${fallas.join('\n  - ')}`
+    );
   }
 }
 
@@ -408,6 +461,7 @@ module.exports = {
   ESTADOS_ACTIVOS,
   INDICE_PROPUESTA_ACTIVA,
   CLAVE_INDICE_PROPUESTA_ACTIVA,
+  INDICES_REQUERIDOS,
   MAX_INTENTOS,
   ErrorEntradaInvalida,
   ErrorPrecondicionIndices,
@@ -418,6 +472,8 @@ module.exports = {
   construirPayloadPropuesta,
   construirPropuesta,
   construirEjecucion,
+  diferenciasIndice,
+  evaluarIndice,
   verificarListadoIndices,
   registrarEjecucionLectura,
   crearDependenciasMongoose
