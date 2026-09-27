@@ -22,6 +22,12 @@ const {
   verificarListadoIndices
 } = require('../services/propuestas/registrar-ejecucion-lectura');
 const {
+  CONJUNTOS_INDICES,
+  INDICES_DECISION,
+  INDICES_APLICACION,
+  verificarConjuntoIndices
+} = require('../services/propuestas/indices-propuestas');
+const {
   planificar,
   hayConflictos,
   ejecutar,
@@ -346,6 +352,76 @@ async function assertRechaza(fn, mensaje, etiqueta) {
     await assertRechaza(() => ejecutar('crear', crearAtlasFalso().deps, silencio), 'Modo desconocido', 'modo desconocido');
 
     console.log('10) base equivocada, prechequeo limpio, falla a mitad y modo desconocido: OK');
+  }
+
+  // ============================================================
+  // 11) Conjuntos decision y aplicacion: planificación local, creación
+  //     sobre un Atlas con los índices de registro ya creados,
+  //     idempotencia, equivalencia con verificarConjuntoIndices() y
+  //     conjunto desconocido.
+  // ============================================================
+  {
+    assert.deepStrictEqual(Object.keys(CONJUNTOS_INDICES), ['registro', 'decision', 'aplicacion']);
+    assert.strictEqual(INDICES_DECISION.length, 4);
+    assert.strictEqual(INDICES_APLICACION.length, 10);
+    for (const spec of INDICES_DECISION) assert.ok(INDICES_APLICACION.includes(spec), `aplicacion incluye ${spec.nombre}`);
+
+    for (const [conjunto, cantidad] of [['decision', 4], ['aplicacion', 10]]) {
+      const lineas = [];
+      await ejecutar('planificacion_local', {}, (l) => lineas.push(l), conjunto);
+      assert.strictEqual(lineas.filter((l) => l.startsWith('db.')).length, cantidad, `${conjunto}: createIndex impresos`);
+    }
+
+    // Estado real de Atlas hoy: los 3 de registro ya existen.
+    const { deps, llamadas, colecciones } = crearAtlasFalso({ listados: completos() });
+    const decision = await ejecutar('creacion_real', deps, silencio, 'decision');
+    assert.deepStrictEqual(decision.plan.map((p) => `${p.estado}:${p.spec.nombre}`), [
+      'ya_existe:propuesta_id_1',
+      `ya_existe:${INDICE_PROPUESTA_ACTIVA}`,
+      'crear:evento_id_1',
+      'crear:uniq_evento_por_propuesta_version'
+    ]);
+    const aplicacion = await ejecutar('creacion_real', deps, silencio, 'aplicacion');
+    assert.deepStrictEqual(aplicacion.creados, [
+      'intentos_aplicacion.intento_id_1',
+      'intentos_aplicacion.uniq_intento_exitoso_por_propuesta',
+      'historial_cambios.historial_id_1',
+      'historial_cambios.propuesta_id_1',
+      'historial_cambios.intento_aplicacion_id_1',
+      'inicios_intento_aplicacion.intento_id_1'
+    ]);
+    assert.deepStrictEqual(
+      colecciones.intentos_aplicacion.find((i) => i.name === 'uniq_intento_exitoso_por_propuesta').partialFilterExpression,
+      { resultado: 'exito' }
+    );
+    const antes = clonar(colecciones);
+    const segunda = await ejecutar('creacion_real', deps, silencio, 'aplicacion');
+    assert.deepStrictEqual(segunda.creados, []);
+    assert.deepStrictEqual(colecciones, antes, 'segunda corrida de aplicacion no cambia nada');
+    assert.strictEqual(creaciones(llamadas).length, 8, 'solo se crearon los 8 que faltaban');
+    verificarConjuntoIndices(INDICES_APLICACION, colecciones);
+
+    // Equivalencia: el índice de intento exitoso sin filtro parcial, o con
+    // otro filtro, es conflicto para el creador Y rechazo para el gate.
+    const sinFiltro = clonar(colecciones);
+    const idx = sinFiltro.intentos_aplicacion.find((i) => i.name === 'uniq_intento_exitoso_por_propuesta');
+    idx.partialFilterExpression = { resultado: { $in: ['exito'] } };
+    const plan = planificar(sinFiltro, INDICES_APLICACION);
+    assert.ok(hayConflictos(plan));
+    assert.throws(() => verificarConjuntoIndices(INDICES_APLICACION, sinFiltro), ErrorPrecondicionIndices);
+
+    // Un índice de versión de eventos con la clave en otro orden es conflicto.
+    const versionInvertida = clonar(colecciones);
+    versionInvertida.eventos_propuesta.find((i) => i.name === 'uniq_evento_por_propuesta_version').key = {
+      version_coordinacion_nueva: 1,
+      propuesta_id: 1
+    };
+    assert.ok(hayConflictos(planificar(versionInvertida, INDICES_DECISION)));
+    assert.throws(() => verificarConjuntoIndices(INDICES_DECISION, versionInvertida), ErrorPrecondicionIndices);
+
+    await assertRechaza(() => ejecutar('planificacion_local', {}, silencio, 'todo'), 'Conjunto desconocido', 'conjunto desconocido');
+
+    console.log('11) conjuntos decision/aplicacion: planificación, creación incremental, idempotencia y equivalencia con el gate: OK');
   }
 
   console.log('\nTodas las pruebas offline de crear-indices-propuestas pasaron (sin conexión a Mongo).');

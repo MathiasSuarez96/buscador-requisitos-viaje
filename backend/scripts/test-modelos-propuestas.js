@@ -1,4 +1,4 @@
-// Pruebas offline (sin conexión a Mongo, sin red) para los 5 schemas de
+// Pruebas offline (sin conexión a Mongo, sin red) para los 6 schemas de
 // backend/models/propuestas/. Usa document.validate() (Promise), NO
 // validateSync(): en Mongoose 9.9.4 validateSync() no dispara los
 // hooks pre('validate') personalizados.
@@ -14,6 +14,23 @@ const PropuestaCambio = require('../models/propuestas/PropuestaCambio.model.js')
 const EventoPropuesta = require('../models/propuestas/EventoPropuesta.model.js');
 const IntentoAplicacion = require('../models/propuestas/IntentoAplicacion.model.js');
 const HistorialCambio = require('../models/propuestas/HistorialCambio.model.js');
+const InicioIntentoAplicacion = require('../models/propuestas/InicioIntentoAplicacion.model.js');
+const {
+  ESTADOS_PROPUESTA,
+  ESTADOS_ACTIVOS,
+  TIPOS_EVENTO,
+  TIPOS_ACTOR,
+  TRANSICIONES,
+  RESULTADOS_INTENTO,
+  TRANSICION_POR_RESULTADO,
+  RESULTADOS_CON_TRANSICION,
+  TIPOS_EVENTO_CON_INTENTO,
+  ETAPAS_INTENTO,
+  ETAPAS_POR_RESULTADO,
+  VENTANA_REVALIDACION_MS,
+  motivoTransicionInvalida
+} = require('../services/propuestas/contrato-propuestas');
+const { CONJUNTOS_INDICES } = require('../services/propuestas/indices-propuestas');
 
 // Módulo COMPARTIDO (ya no duplicado): mismo código que usa
 // PropuestaCambio.model.js para validar payload_hash, y que deberá usar
@@ -370,78 +387,63 @@ async function assertValidationError(doc, mensajeParcial, etiqueta) {
   }
 
   // ============================================================
-  // 8) EventoPropuesta: transición obligatoria + hash referenciado +
-  //    actor humano para aprobación + append-only
+  // 8) EventoPropuesta: transición permitida por la matriz del contrato
+  //    (humano decide, sistema aplica) + versión nueva + intento para
+  //    eventos de aplicación/fallo + append-only
   // ============================================================
   {
     const hashDummy = crypto.createHash('sha256').update('x').digest('hex');
+    const humano = { tipo: 'humano', identificador: 'operador-atlas' };
+    const sistema = { tipo: 'sistema', identificador: 'aplicar-propuesta@1' };
+    const evento = (extra) =>
+      new EventoPropuesta({
+        propuesta_id: crypto.randomUUID(),
+        hash_contenido_referenciado: hashDummy,
+        ocurrido_en: new Date(),
+        version_coordinacion_nueva: 1,
+        ...extra
+      });
+    const conIntento = { intento_aplicacion_id: crypto.randomUUID(), version_coordinacion_nueva: 2 };
 
-    const okAprobacion = new EventoPropuesta({
-      propuesta_id: crypto.randomUUID(),
-      tipo_evento: 'aprobacion',
-      estado_anterior: 'pendiente_aprobacion',
-      estado_nuevo: 'aprobada',
-      hash_contenido_referenciado: hashDummy,
-      ocurrido_en: new Date(),
-      actor: { tipo: 'humano', identificador: 'matisuar1899@gmail.com' }
-    });
-    await okAprobacion.validate();
+    const validos = [
+      { tipo_evento: 'aprobacion', estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'aprobada', actor: humano },
+      { tipo_evento: 'rechazo', estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'rechazada', actor: humano, motivo: 'monto no confirmado' },
+      { tipo_evento: 'cancelacion', estado_anterior: 'aprobada', estado_nuevo: 'cancelada', actor: humano, motivo: 'se retira', version_coordinacion_nueva: 2 },
+      { tipo_evento: 'cancelacion', estado_anterior: 'revision_requerida', estado_nuevo: 'cancelada', actor: humano, motivo: 'fuente ambigua', version_coordinacion_nueva: 3 },
+      { tipo_evento: 'aplicacion', estado_anterior: 'aprobada', estado_nuevo: 'aplicada', actor: sistema, ...conIntento },
+      { tipo_evento: 'entrada_revision', estado_anterior: 'aprobada', estado_nuevo: 'revision_requerida', actor: sistema, ...conIntento },
+      { tipo_evento: 'obsolescencia', estado_anterior: 'aprobada', estado_nuevo: 'obsoleta', actor: sistema, motivo: 'fuente_cambio', ...conIntento },
+      { tipo_evento: 'conflicto', estado_anterior: 'aprobada', estado_nuevo: 'conflicto', actor: sistema, motivo: 'valor_actual_cambio', ...conIntento }
+    ];
+    for (const extra of validos) await evento(extra).validate();
 
-    const aprobacionPorSistema = new EventoPropuesta({
-      propuesta_id: crypto.randomUUID(),
-      tipo_evento: 'aprobacion',
-      estado_anterior: 'pendiente_aprobacion',
-      estado_nuevo: 'aprobada',
-      hash_contenido_referenciado: hashDummy,
-      ocurrido_en: new Date(),
-      actor: { tipo: 'sistema', identificador: 'cron-nocturno' }
-    });
-    await assertValidationError(aprobacionPorSistema, 'actor.tipo', 'aprobacion-requiere-humano');
+    const casosInvalidos = [
+      ['aprobacion-requiere-humano', { tipo_evento: 'aprobacion', estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'aprobada', actor: sistema }, 'actor.tipo'],
+      ['aplicacion-por-humano', { tipo_evento: 'aplicacion', estado_anterior: 'aprobada', estado_nuevo: 'aplicada', actor: humano, ...conIntento }, 'exige actor.tipo en [sistema]'],
+      ['rechazo-requiere-motivo', { tipo_evento: 'rechazo', estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'rechazada', actor: humano }, 'motivo'],
+      ['rechazo-desde-aprobada', { tipo_evento: 'rechazo', estado_anterior: 'aprobada', estado_nuevo: 'rechazada', actor: humano, motivo: 'x' }, 'transición no permitida'],
+      ['evento-sin-estado_anterior', { tipo_evento: 'entrada_revision', estado_nuevo: 'revision_requerida', actor: sistema, ...conIntento }, 'estado_anterior'],
+      ['evento-sin-transicion-real', { tipo_evento: 'entrada_revision', estado_anterior: 'aprobada', estado_nuevo: 'aprobada', actor: sistema, ...conIntento }, 'no representa una transición real'],
+      ['cancelacion-desde-pendiente', { tipo_evento: 'cancelacion', estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'cancelada', actor: humano, motivo: 'x' }, 'transición no permitida'],
+      ['cancelacion-por-sistema', { tipo_evento: 'cancelacion', estado_anterior: 'aprobada', estado_nuevo: 'cancelada', actor: sistema, motivo: 'x' }, 'exige actor.tipo en [humano]'],
+      ['salida_revision-no-existe', { tipo_evento: 'salida_revision', estado_anterior: 'revision_requerida', estado_nuevo: 'aprobada', actor: humano }, 'no tiene ninguna transición permitida'],
+      ['entrada_revision-por-humano', { tipo_evento: 'entrada_revision', estado_anterior: 'aprobada', estado_nuevo: 'revision_requerida', actor: humano, ...conIntento }, 'exige actor.tipo'],
+      ['aplicacion-a-otro-estado', { tipo_evento: 'aplicacion', estado_anterior: 'aprobada', estado_nuevo: 'cancelada', actor: sistema, ...conIntento }, 'debe llegar a "aplicada"'],
+      ['conflicto-sin-intento', { tipo_evento: 'conflicto', estado_anterior: 'aprobada', estado_nuevo: 'conflicto', actor: sistema, motivo: 'x' }, 'intento_aplicacion_id'],
+      ['aplicacion-sin-intento', { tipo_evento: 'aplicacion', estado_anterior: 'aprobada', estado_nuevo: 'aplicada', actor: sistema }, 'intento_aplicacion_id'],
+      ['sin-version', { tipo_evento: 'aprobacion', estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'aprobada', actor: humano, version_coordinacion_nueva: undefined }, 'version_coordinacion_nueva'],
+      ['version-cero', { tipo_evento: 'aprobacion', estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'aprobada', actor: humano, version_coordinacion_nueva: 0 }, 'version_coordinacion_nueva'],
+      ['version-no-entera', { tipo_evento: 'aprobacion', estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'aprobada', actor: humano, version_coordinacion_nueva: 1.5 }, 'entero']
+    ];
+    for (const [etiqueta, extra, mensaje] of casosInvalidos) {
+      await assertValidationError(evento(extra), mensaje, etiqueta);
+    }
 
-    const rechazoSinMotivo = new EventoPropuesta({
-      propuesta_id: crypto.randomUUID(),
-      tipo_evento: 'rechazo',
-      estado_anterior: 'pendiente_aprobacion',
-      estado_nuevo: 'rechazada',
-      hash_contenido_referenciado: hashDummy,
-      ocurrido_en: new Date(),
-      actor: { tipo: 'humano', identificador: 'x' }
-    });
-    await assertValidationError(rechazoSinMotivo, 'motivo', 'rechazo-requiere-motivo');
-
-    const sinTransicion = new EventoPropuesta({
-      propuesta_id: crypto.randomUUID(),
-      tipo_evento: 'entrada_revision',
-      hash_contenido_referenciado: hashDummy,
-      ocurrido_en: new Date(),
-      actor: { tipo: 'sistema', identificador: 'job' }
-    });
-    await assertValidationError(sinTransicion, 'estado_anterior', 'evento-sin-estado_anterior');
-
-    const transicionNula = new EventoPropuesta({
-      propuesta_id: crypto.randomUUID(),
-      tipo_evento: 'entrada_revision',
-      estado_anterior: 'pendiente_aprobacion',
-      estado_nuevo: 'pendiente_aprobacion',
-      hash_contenido_referenciado: hashDummy,
-      ocurrido_en: new Date(),
-      actor: { tipo: 'sistema', identificador: 'job' }
-    });
-    await assertValidationError(transicionNula, 'no representa una transición real', 'evento-sin-transicion-real');
-
-    const existente = new EventoPropuesta({
-      propuesta_id: crypto.randomUUID(),
-      tipo_evento: 'entrada_revision',
-      estado_anterior: 'pendiente_aprobacion',
-      estado_nuevo: 'revision_requerida',
-      hash_contenido_referenciado: hashDummy,
-      ocurrido_en: new Date(),
-      actor: { tipo: 'sistema', identificador: 'job' }
-    });
+    const existente = evento({ tipo_evento: 'aprobacion', estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'aprobada', actor: humano });
     existente.isNew = false;
     await assertValidationError(existente, 'append-only', 'evento-append-only');
 
-    console.log('8) EventoPropuesta: OK');
+    console.log('8) EventoPropuesta (matriz de transiciones, versión, intento, append-only): OK');
   }
 
   // ============================================================
@@ -493,134 +495,116 @@ async function assertValidationError(doc, mensajeParcial, etiqueta) {
   }
 
   // ============================================================
-  // 10) IntentoAplicacion: campos condicionales por categoría de resultado
+  // 10) IntentoAplicacion: roles separados, etapa_fallo, y campos
+  //     condicionales según el resultado efectivo
   // ============================================================
   {
-    // exito: revalidacion (coincide:true) + precondicion + historial_id.
-    const exitoso = new IntentoAplicacion({
-      propuesta_id: crypto.randomUUID(),
-      iniciado_en: new Date(),
-      finalizado_en: new Date(),
-      resultado: 'exito',
-      evidencia_fresca: { html: '<span>£20</span>' },
-      revalidacion: { fuente_nombre: 'GOV.UK', url: 'https://www.gov.uk/api/content/eta', valor_revalidado: 20, coincide_con_propuesta: true },
-      precondicion: { presente: false, valor: null },
-      historial_id: crypto.randomUUID()
+    const hashDummy = crypto.createHash('sha256').update('x').digest('hex');
+    const revalidacion = (coincide, extra = {}) => ({
+      revalidada_en: new Date(),
+      fuente_nombre: 'GOV.UK',
+      url: 'https://www.gov.uk/api/content/eta',
+      valor_revalidado: coincide ? 20 : 25,
+      coincide_con_propuesta: coincide,
+      ...extra
     });
+    const ausente = { presente: false, valor: null };
+    const observado = { presente: true, valor: '£19' };
+    const identidad = { categoria: 'requisito_id_no_encontrado' };
+    const intento = (extra) =>
+      new IntentoAplicacion({
+        propuesta_id: crypto.randomUUID(),
+        operador: { tipo: 'humano', identificador: 'operador-atlas' },
+        proceso_aplicador: { nombre: 'aplicar-propuesta', version: '1' },
+        adaptador: { nombre: 'govuk-uk-eta', version: '1' },
+        hash_contenido_referenciado: hashDummy,
+        version_coordinacion_esperada: 1,
+        decision_aprobacion_id: crypto.randomUUID(),
+        iniciado_en: new Date(),
+        finalizado_en: new Date(),
+        evidencia_fresca: {},
+        ...extra
+      });
+    const abortadaTransicion = (resultadoNoRegistrado, extra = {}) => ({
+      resultado: 'escritura_abortada',
+      etapa_fallo: 'transicion_por_fallo',
+      resultado_no_registrado: resultadoNoRegistrado,
+      error_mensaje: 'WriteConflict al registrar la transición',
+      ...extra
+    });
+
+    const exitoso = intento({ resultado: 'exito', revalidacion: revalidacion(true), precondicion: ausente, historial_id: crypto.randomUUID() });
     await exitoso.validate();
     assert.ok(exitoso.revalidacion.revalidacion_id, 'revalidacion debe autogenerar su propio revalidacion_id');
 
-    const exitosoSinHistorial = new IntentoAplicacion({
-      propuesta_id: crypto.randomUUID(),
-      iniciado_en: new Date(),
-      finalizado_en: new Date(),
-      resultado: 'exito',
-      evidencia_fresca: {},
-      revalidacion: { fuente_nombre: 'GOV.UK', url: 'https://www.gov.uk/api/content/eta', valor_revalidado: 20, coincide_con_propuesta: true },
-      precondicion: { presente: false, valor: null }
-    });
-    await assertValidationError(exitosoSinHistorial, 'historial_id', 'intento-exito-requiere-historial');
+    const validos = [
+      ['fuente_no_disponible', { resultado: 'fuente_temporalmente_no_disponible', etapa_fallo: 'revalidacion_externa', error_mensaje: 'timeout', evidencia_fresca: { ultimoStatus: 'ETIMEDOUT' } }],
+      ['extraccion_ambigua', { resultado: 'extraccion_ambigua', etapa_fallo: 'revalidacion_externa', error_mensaje: 'dos montos' }],
+      ['fuente_cambio', { resultado: 'fuente_cambio', etapa_fallo: 'revalidacion_externa', error_mensaje: 'cambió', revalidacion: revalidacion(false) }],
+      ['valor_actual_cambio', { resultado: 'valor_actual_cambio', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'costo presente', revalidacion: revalidacion(true), precondicion: ausente, valor_observado: observado }],
+      ['identidad', { resultado: 'identidad_requisito_cambio', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'no encontrado', revalidacion: revalidacion(true), identidad_esperada_no_coincide: identidad }],
+      ['no_aplicable-precondiciones', { resultado: 'propuesta_no_aplicable', etapa_fallo: 'precondiciones_propuesta', error_mensaje: 'no aprobada', decision_aprobacion_id: null }],
+      ['no_aplicable-escritura', { resultado: 'propuesta_no_aplicable', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'versión distinta', revalidacion: revalidacion(true) }],
+      ['revalidacion_vencida', { resultado: 'revalidacion_vencida', etapa_fallo: 'escritura_aplicacion', error_mensaje: '16 minutos', revalidacion: revalidacion(true) }],
+      ['abortada-escritura', { resultado: 'escritura_abortada', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'Transient agotado', revalidacion: revalidacion(true) }],
+      ['abortada-transicion-ambigua', abortadaTransicion('extraccion_ambigua')],
+      ['abortada-transicion-fuente_cambio', abortadaTransicion('fuente_cambio', { revalidacion: revalidacion(false) })],
+      ['abortada-transicion-valor', abortadaTransicion('valor_actual_cambio', { revalidacion: revalidacion(true), precondicion: ausente, valor_observado: observado })],
+      ['abortada-transicion-identidad', abortadaTransicion('identidad_requisito_cambio', { revalidacion: revalidacion(true), identidad_esperada_no_coincide: identidad })]
+    ];
+    for (const [etiqueta, extra] of validos) {
+      const doc = intento(extra);
+      try {
+        await doc.validate();
+      } catch (err) {
+        throw new Error(`[${etiqueta}] debía ser válido: ${err.message}`);
+      }
+    }
 
-    // fuente_temporalmente_no_disponible: SIN revalidacion, SIN
-    // precondicion; evidencia_fresca parcial + error_mensaje.
-    const fuenteNoDisponible = new IntentoAplicacion({
-      propuesta_id: crypto.randomUUID(),
-      iniciado_en: new Date(),
-      finalizado_en: new Date(),
-      resultado: 'fuente_temporalmente_no_disponible',
-      error_mensaje: 'timeout tras 3 reintentos',
-      evidencia_fresca: { intentos: 3, ultimoStatus: 'ETIMEDOUT' }
-    });
-    await fuenteNoDisponible.validate(); // no debe tirar
-    assert.strictEqual(fuenteNoDisponible.revalidacion, undefined, 'fuente_temporalmente_no_disponible no debe inventar una revalidacion');
-    assert.strictEqual(fuenteNoDisponible.precondicion, undefined, 'fuente_temporalmente_no_disponible no debe exigir precondicion');
+    const casosInvalidos = [
+      ['exito-sin-historial', { resultado: 'exito', revalidacion: revalidacion(true), precondicion: ausente }, 'historial_id'],
+      ['exito-con-etapa', { resultado: 'exito', etapa_fallo: 'escritura_aplicacion', revalidacion: revalidacion(true), precondicion: ausente, historial_id: 'h' }, 'no admite etapa_fallo'],
+      ['fallo-sin-etapa', { resultado: 'extraccion_ambigua', error_mensaje: 'x' }, 'etapa_fallo'],
+      ['etapa-no-admitida', { resultado: 'fuente_cambio', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'x', revalidacion: revalidacion(false) }, 'admite etapa_fallo en [revalidacion_externa]'],
+      ['etapa-desconocida', { resultado: 'extraccion_ambigua', etapa_fallo: 'otra', error_mensaje: 'x' }, 'admite etapa_fallo en'],
+      // escritura_abortada: revalidacion solo si la revalidación externa terminó correctamente.
+      ['abortada-escritura-sin-revalidacion', { resultado: 'escritura_abortada', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'x' }, 'revalidacion'],
+      ['abortada-transicion-ambigua-con-revalidacion', abortadaTransicion('extraccion_ambigua', { revalidacion: revalidacion(true) }), 'no admite revalidacion'],
+      ['abortada-transicion-fuente_cambio-sin-revalidacion', abortadaTransicion('fuente_cambio'), 'revalidacion'],
+      ['abortada-transicion-fuente_cambio-coincide', abortadaTransicion('fuente_cambio', { revalidacion: revalidacion(true) }), 'coincide_con_propuesta === false'],
+      ['abortada-transicion-valor-sin-observado', abortadaTransicion('valor_actual_cambio', { revalidacion: revalidacion(true), precondicion: ausente }), 'valor_observado'],
+      ['abortada-transicion-sin-resultado_no_registrado', { resultado: 'escritura_abortada', etapa_fallo: 'transicion_por_fallo', error_mensaje: 'x' }, 'resultado_no_registrado'],
+      ['abortada-transicion-resultado-sin-transicion', abortadaTransicion('revalidacion_vencida', { revalidacion: revalidacion(true) }), 'is not a valid enum value'],
+      ['resultado_no_registrado-fuera-de-abortada', { resultado: 'extraccion_ambigua', etapa_fallo: 'revalidacion_externa', error_mensaje: 'x', resultado_no_registrado: 'extraccion_ambigua' }, 'resultado_no_registrado solo se admite'],
+      // revalidacion prohibida cuando la revalidación no terminó correctamente.
+      ['fuente_no_disponible-con-revalidacion', { resultado: 'fuente_temporalmente_no_disponible', etapa_fallo: 'revalidacion_externa', error_mensaje: 'x', revalidacion: revalidacion(true) }, 'no admite revalidacion'],
+      ['no_aplicable-precondiciones-con-revalidacion', { resultado: 'propuesta_no_aplicable', etapa_fallo: 'precondiciones_propuesta', error_mensaje: 'x', revalidacion: revalidacion(true) }, 'no admite revalidacion'],
+      ['no_aplicable-escritura-sin-revalidacion', { resultado: 'propuesta_no_aplicable', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'x' }, 'revalidacion'],
+      ['fuente_cambio-exige-no-coincide', { resultado: 'fuente_cambio', etapa_fallo: 'revalidacion_externa', error_mensaje: 'x', revalidacion: revalidacion(true) }, 'coincide_con_propuesta === false'],
+      ['valor_actual_cambio-sin-precondicion', { resultado: 'valor_actual_cambio', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'x', revalidacion: revalidacion(true), valor_observado: observado }, 'precondicion'],
+      ['valor_actual_cambio-sin-observado', { resultado: 'valor_actual_cambio', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'x', revalidacion: revalidacion(true), precondicion: ausente }, 'valor_observado'],
+      ['identidad-sin-identidad', { resultado: 'identidad_requisito_cambio', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'x', revalidacion: revalidacion(true) }, 'identidad_esperada_no_coincide'],
+      ['revalidacion-sin-revalidada_en', { resultado: 'revalidacion_vencida', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'x', revalidacion: revalidacion(true, { revalidada_en: undefined }) }, 'revalidada_en'],
+      ['fallo-con-historial', { resultado: 'escritura_abortada', etapa_fallo: 'escritura_aplicacion', error_mensaje: 'x', revalidacion: revalidacion(true), historial_id: 'h' }, 'solo un intento "exito"'],
+      ['exito-con-observado', { resultado: 'exito', revalidacion: revalidacion(true), precondicion: ausente, historial_id: 'h', valor_observado: observado }, 'no admite valor_observado'],
+      ['fallo-sin-decision', { resultado: 'fuente_cambio', etapa_fallo: 'revalidacion_externa', error_mensaje: 'x', revalidacion: revalidacion(false), decision_aprobacion_id: null }, 'decision_aprobacion_id'],
+      // roles separados.
+      ['sin-operador', { resultado: 'extraccion_ambigua', etapa_fallo: 'revalidacion_externa', error_mensaje: 'x', operador: undefined }, 'operador'],
+      ['operador-sistema', { resultado: 'extraccion_ambigua', etapa_fallo: 'revalidacion_externa', error_mensaje: 'x', operador: { tipo: 'sistema', identificador: 'cron' } }, 'operador.tipo'],
+      ['sin-proceso_aplicador', { resultado: 'extraccion_ambigua', etapa_fallo: 'revalidacion_externa', error_mensaje: 'x', proceso_aplicador: undefined }, 'proceso_aplicador'],
+      ['sin-adaptador', { resultado: 'extraccion_ambigua', etapa_fallo: 'revalidacion_externa', error_mensaje: 'x', adaptador: undefined }, 'adaptador'],
+      ['hash-invalido', { resultado: 'extraccion_ambigua', etapa_fallo: 'revalidacion_externa', error_mensaje: 'x', hash_contenido_referenciado: 'abc' }, 'hash_contenido_referenciado'],
+      ['version-negativa', { resultado: 'extraccion_ambigua', etapa_fallo: 'revalidacion_externa', error_mensaje: 'x', version_coordinacion_esperada: -1 }, 'version_coordinacion_esperada'],
+      ['fallo-sin-error_mensaje', { resultado: 'extraccion_ambigua', etapa_fallo: 'revalidacion_externa' }, 'error_mensaje']
+    ];
+    for (const [etiqueta, extra, mensaje] of casosInvalidos) {
+      await assertValidationError(intento(extra), mensaje, etiqueta);
+    }
 
-    // extraccion_ambigua: mismo patrón (sin revalidacion/precondicion).
-    const ambigua = new IntentoAplicacion({
-      propuesta_id: crypto.randomUUID(),
-      iniciado_en: new Date(),
-      finalizado_en: new Date(),
-      resultado: 'extraccion_ambigua',
-      error_mensaje: 'la página devolvió dos montos distintos',
-      evidencia_fresca: { html: '<span>£20</span><span>£25</span>' }
-    });
-    await ambigua.validate(); // no debe tirar
+    exitoso.isNew = false;
+    await assertValidationError(exitoso, 'append-only', 'intento-append-only');
 
-    // fuente_cambio: revalidacion requerida con coincide_con_propuesta:false.
-    const fuenteCambio = new IntentoAplicacion({
-      propuesta_id: crypto.randomUUID(),
-      iniciado_en: new Date(),
-      finalizado_en: new Date(),
-      resultado: 'fuente_cambio',
-      error_mensaje: 'la fuente ya no coincide con la propuesta',
-      evidencia_fresca: {},
-      revalidacion: { fuente_nombre: 'GOV.UK', url: 'https://www.gov.uk/api/content/eta', valor_revalidado: 25, coincide_con_propuesta: false }
-    });
-    await fuenteCambio.validate(); // no debe tirar
-    assert.strictEqual(fuenteCambio.precondicion, undefined, 'fuente_cambio no debe exigir precondicion (se aborta antes de leer Mongo)');
-
-    // fuente_cambio con coincide_con_propuesta:true -> inconsistente, rechazado.
-    const fuenteCambioInconsistente = new IntentoAplicacion({
-      propuesta_id: crypto.randomUUID(),
-      iniciado_en: new Date(),
-      finalizado_en: new Date(),
-      resultado: 'fuente_cambio',
-      error_mensaje: 'x',
-      evidencia_fresca: {},
-      revalidacion: { fuente_nombre: 'GOV.UK', url: 'https://www.gov.uk/api/content/eta', valor_revalidado: 20, coincide_con_propuesta: true }
-    });
-    await assertValidationError(fuenteCambioInconsistente, 'coincide_con_propuesta === false', 'fuente_cambio-exige-no-coincide');
-
-    // valor_actual_cambio: revalidacion (coincide:true) + precondicion.
-    const valorActualCambio = new IntentoAplicacion({
-      propuesta_id: crypto.randomUUID(),
-      iniciado_en: new Date(),
-      finalizado_en: new Date(),
-      resultado: 'valor_actual_cambio',
-      error_mensaje: 'el valor en Mongo cambió entre la lectura y el intento',
-      evidencia_fresca: {},
-      revalidacion: { fuente_nombre: 'GOV.UK', url: 'https://www.gov.uk/api/content/eta', valor_revalidado: 20, coincide_con_propuesta: true },
-      precondicion: { presente: true, valor: '£19' }
-    });
-    await valorActualCambio.validate(); // no debe tirar
-
-    const valorActualCambioSinPrecondicion = new IntentoAplicacion({
-      propuesta_id: crypto.randomUUID(),
-      iniciado_en: new Date(),
-      finalizado_en: new Date(),
-      resultado: 'valor_actual_cambio',
-      error_mensaje: 'x',
-      evidencia_fresca: {},
-      revalidacion: { fuente_nombre: 'GOV.UK', url: 'https://www.gov.uk/api/content/eta', valor_revalidado: 20, coincide_con_propuesta: true }
-    });
-    await assertValidationError(valorActualCambioSinPrecondicion, 'precondicion', 'valor_actual_cambio-requiere-precondicion');
-
-    // identidad_requisito_cambio: revalidacion (coincide:true) + identidad_esperada_no_coincide.
-    const identidadCambio = new IntentoAplicacion({
-      propuesta_id: crypto.randomUUID(),
-      iniciado_en: new Date(),
-      finalizado_en: new Date(),
-      resultado: 'identidad_requisito_cambio',
-      error_mensaje: 'el requisito_id ya no identifica el mismo requisito',
-      evidencia_fresca: {},
-      revalidacion: { fuente_nombre: 'GOV.UK', url: 'https://www.gov.uk/api/content/eta', valor_revalidado: 20, coincide_con_propuesta: true },
-      identidad_esperada_no_coincide: { categoria: 'requisito_id_no_encontrado' }
-    });
-    await identidadCambio.validate(); // no debe tirar
-    assert.strictEqual(identidadCambio.precondicion, undefined, 'identidad_requisito_cambio no exige precondicion (falla por identidad, no por valor)');
-
-    const identidadCambioSinIdentidad = new IntentoAplicacion({
-      propuesta_id: crypto.randomUUID(),
-      iniciado_en: new Date(),
-      finalizado_en: new Date(),
-      resultado: 'identidad_requisito_cambio',
-      error_mensaje: 'x',
-      evidencia_fresca: {},
-      revalidacion: { fuente_nombre: 'GOV.UK', url: 'https://www.gov.uk/api/content/eta', valor_revalidado: 20, coincide_con_propuesta: true }
-    });
-    await assertValidationError(identidadCambioSinIdentidad, 'identidad_esperada_no_coincide', 'identidad_requisito_cambio-requiere-identidad');
-
-    console.log('10) IntentoAplicacion (bloques condicionales por resultado): OK');
+    console.log(`10) IntentoAplicacion (${validos.length + 1} válidos, ${casosInvalidos.length} inválidos: roles, etapa_fallo, resultado efectivo): OK`);
   }
 
   // ============================================================
@@ -660,6 +644,163 @@ async function assertValidationError(doc, mensajeParcial, etiqueta) {
     await assertValidationError(cambio, 'append-only', 'historial-append-only');
 
     console.log('11) HistorialCambio: OK');
+  }
+
+  // ============================================================
+  // 12) Contrato compartido: matriz de transiciones verificada contra
+  //     una lista escrita a mano (no derivada de TRANSICIONES), etapas
+  //     por resultado, y enums de los modelos idénticos a los del contrato.
+  // ============================================================
+  {
+    const permitidasEsperadas = [
+      'aprobacion|pendiente_aprobacion|aprobada|humano',
+      'rechazo|pendiente_aprobacion|rechazada|humano',
+      'cancelacion|aprobada|cancelada|humano',
+      'cancelacion|revision_requerida|cancelada|humano',
+      'aplicacion|aprobada|aplicada|sistema',
+      'entrada_revision|aprobada|revision_requerida|sistema',
+      'obsolescencia|aprobada|obsoleta|sistema',
+      'conflicto|aprobada|conflicto|sistema'
+    ];
+    const permitidasReales = [];
+    for (const tipo of TIPOS_EVENTO) {
+      for (const anterior of ESTADOS_PROPUESTA) {
+        for (const nuevo of ESTADOS_PROPUESTA) {
+          for (const actor of TIPOS_ACTOR) {
+            if (motivoTransicionInvalida(tipo, anterior, nuevo, actor) === null) {
+              permitidasReales.push(`${tipo}|${anterior}|${nuevo}|${actor}`);
+            }
+          }
+        }
+      }
+    }
+    assert.deepStrictEqual(permitidasReales.sort(), [...permitidasEsperadas].sort(), 'matriz de transiciones');
+
+    // Ningún tipo de evento del contrato resulta siempre inválido.
+    assert.deepStrictEqual([...TIPOS_EVENTO].sort(), Object.keys(TRANSICIONES).sort());
+    assert.ok(!TIPOS_EVENTO.includes('salida_revision'), 'salida_revision fuera del MVP');
+    // revision_requerida tiene salida (cancelación humana).
+    assert.ok(Object.values(TRANSICIONES).some((t) => t.desde.includes('revision_requerida')));
+
+    assert.deepStrictEqual(TRANSICION_POR_RESULTADO, {
+      extraccion_ambigua: 'entrada_revision',
+      fuente_cambio: 'obsolescencia',
+      valor_actual_cambio: 'conflicto',
+      identidad_requisito_cambio: 'conflicto'
+    });
+    assert.deepStrictEqual(RESULTADOS_CON_TRANSICION, Object.keys(TRANSICION_POR_RESULTADO));
+    const sinTransicion = RESULTADOS_INTENTO.filter((r) => !(r in TRANSICION_POR_RESULTADO)).sort();
+    assert.deepStrictEqual(sinTransicion, [
+      'escritura_abortada',
+      'exito',
+      'fuente_temporalmente_no_disponible',
+      'propuesta_no_aplicable',
+      'revalidacion_vencida'
+    ]);
+    for (const tipo of Object.values(TRANSICION_POR_RESULTADO)) {
+      assert.deepStrictEqual(TRANSICIONES[tipo].actores, ['sistema'], `${tipo}: transición automática debe ser de sistema`);
+      assert.deepStrictEqual(TRANSICIONES[tipo].desde, ['aprobada'], `${tipo}: solo desde aprobada`);
+    }
+    assert.deepStrictEqual([...TIPOS_EVENTO_CON_INTENTO].sort(), ['aplicacion', 'conflicto', 'entrada_revision', 'obsolescencia']);
+
+    assert.deepStrictEqual(ETAPAS_INTENTO, ['precondiciones_propuesta', 'revalidacion_externa', 'escritura_aplicacion', 'transicion_por_fallo']);
+    assert.deepStrictEqual(Object.keys(ETAPAS_POR_RESULTADO).sort(), RESULTADOS_INTENTO.filter((r) => r !== 'exito').sort());
+    for (const etapas of Object.values(ETAPAS_POR_RESULTADO)) {
+      for (const etapa of etapas) assert.ok(ETAPAS_INTENTO.includes(etapa), etapa);
+    }
+    assert.deepStrictEqual(ETAPAS_POR_RESULTADO.escritura_abortada, ['escritura_aplicacion', 'transicion_por_fallo']);
+    assert.strictEqual(VENTANA_REVALIDACION_MS, 15 * 60 * 1000);
+
+    assert.deepStrictEqual(PropuestaCambio.schema.path('estado').enumValues, ESTADOS_PROPUESTA);
+    assert.ok(ESTADOS_PROPUESTA.includes('conflicto') && ESTADOS_PROPUESTA.includes('cancelada'));
+    assert.deepStrictEqual(ESTADOS_ACTIVOS, ['pendiente_aprobacion', 'aprobada', 'revision_requerida']);
+    assert.deepStrictEqual(EventoPropuesta.schema.path('estado_anterior').enumValues, ESTADOS_PROPUESTA);
+    assert.deepStrictEqual(EventoPropuesta.schema.path('estado_nuevo').enumValues, ESTADOS_PROPUESTA);
+    assert.deepStrictEqual(EventoPropuesta.schema.path('tipo_evento').enumValues, TIPOS_EVENTO);
+    assert.deepStrictEqual(IntentoAplicacion.schema.path('resultado').enumValues, RESULTADOS_INTENTO);
+    assert.deepStrictEqual(IntentoAplicacion.schema.path('etapa_fallo').enumValues, ETAPAS_INTENTO);
+    assert.deepStrictEqual(IntentoAplicacion.schema.path('resultado_no_registrado').enumValues, RESULTADOS_CON_TRANSICION);
+
+    console.log('12) contrato compartido: matriz, etapas por resultado y enums sincronizados: OK');
+  }
+
+  // ============================================================
+  // 13) InicioIntentoAplicacion: roles separados y campos de contexto
+  //     obligatorios, intento_id sin default, append-only
+  // ============================================================
+  {
+    const inicio = (extra) =>
+      new InicioIntentoAplicacion({
+        intento_id: crypto.randomUUID(),
+        propuesta_id: crypto.randomUUID(),
+        hash_contenido_referenciado: crypto.createHash('sha256').update('x').digest('hex'),
+        version_coordinacion_esperada: 1,
+        operador: { tipo: 'humano', identificador: 'operador-atlas' },
+        proceso_aplicador: { nombre: 'aplicar-propuesta', version: '1' },
+        adaptador: { nombre: 'govuk-uk-eta', version: '1' },
+        iniciado_en: new Date(),
+        proceso: { host: 'h', pid: 1 },
+        ...extra
+      });
+    const ok = inicio({});
+    await ok.validate();
+
+    await assertValidationError(inicio({ intento_id: undefined }), 'intento_id', 'inicio-sin-intento_id');
+    await assertValidationError(inicio({ operador: undefined }), 'operador', 'inicio-sin-operador');
+    await assertValidationError(inicio({ operador: { tipo: 'sistema', identificador: 'cron' } }), 'operador.tipo', 'inicio-operador-sistema');
+    await assertValidationError(inicio({ proceso_aplicador: undefined }), 'proceso_aplicador', 'inicio-sin-proceso_aplicador');
+    await assertValidationError(inicio({ adaptador: undefined }), 'adaptador', 'inicio-sin-adaptador');
+    await assertValidationError(inicio({ hash_contenido_referenciado: 'abc' }), 'hash_contenido_referenciado', 'inicio-hash-invalido');
+    ok.isNew = false;
+    await assertValidationError(ok, 'append-only', 'inicio-append-only');
+
+    console.log('13) InicioIntentoAplicacion: OK');
+  }
+
+  // ============================================================
+  // 14) Índices de corrección (indices-propuestas.js) declarados en los
+  //     schemas con la misma forma: nombre, clave en orden, unique y
+  //     partialFilterExpression.
+  // ============================================================
+  {
+    const modelos = [PropuestaCambio, EventoPropuesta, IntentoAplicacion, HistorialCambio, InicioIntentoAplicacion, EjecucionLectura];
+    const porColeccion = Object.fromEntries(modelos.map((M) => [M.collection.collectionName, M]));
+    const declarados = (M) =>
+      M.schema.indexes().map(([key, opciones]) => ({
+        name: opciones.name ?? Object.entries(key).map(([k, v]) => `${k}_${v}`).join('_'),
+        key,
+        unique: opciones.unique === true,
+        partialFilterExpression: opciones.partialFilterExpression ?? null
+      }));
+
+    const specs = new Map();
+    for (const conjunto of Object.values(CONJUNTOS_INDICES)) {
+      for (const spec of conjunto) specs.set(`${spec.coleccion}.${spec.nombre}`, spec);
+    }
+    for (const spec of specs.values()) {
+      const M = porColeccion[spec.coleccion];
+      assert.ok(M, `no hay modelo para la colección ${spec.coleccion}`);
+      const decl = declarados(M).find((i) => i.name === spec.nombre);
+      assert.ok(decl, `${spec.coleccion}.${spec.nombre} debe estar declarado en el schema`);
+      assert.strictEqual(JSON.stringify(decl.key), JSON.stringify(spec.clave), `${spec.nombre}: clave`);
+      assert.strictEqual(decl.unique, true, `${spec.nombre}: unique`);
+      assert.deepStrictEqual(decl.partialFilterExpression, spec.partialFilterExpression, `${spec.nombre}: partialFilterExpression`);
+    }
+    assert.strictEqual(specs.size, 11, 'cantidad de índices de corrección distintos');
+
+    // Ningún índice de rendimiento quedó como sparse sobre un campo con default null.
+    for (const [key, opciones] of PropuestaCambio.schema.indexes()) {
+      if ('decision_aprobacion_id' in key || 'ultimo_evento_id' in key) {
+        assert.ok(!opciones.sparse, 'decision_aprobacion_id/ultimo_evento_id no deben ser sparse');
+        assert.ok(opciones.partialFilterExpression, 'decision_aprobacion_id/ultimo_evento_id deben ser parciales por $type');
+      }
+    }
+    // Sin índice único por (propuesta_id, tipo_evento) en eventos.
+    for (const [key, opciones] of EventoPropuesta.schema.indexes()) {
+      assert.ok(!(opciones.unique && 'tipo_evento' in key), 'no debe existir un índice único que incluya tipo_evento');
+    }
+
+    console.log('14) índices de corrección declarados en los schemas con forma exacta: OK');
   }
 
   console.log('\nTodas las pruebas offline pasaron (sin conexión a Mongo).');

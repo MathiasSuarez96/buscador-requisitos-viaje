@@ -1,16 +1,18 @@
 /**
- * Crea en Atlas los tres índices que verificarIndices() de
- * services/propuestas/registrar-ejecucion-lectura.js exige antes de
- * escribir. Mientras falten, el servicio se niega a registrar nada.
+ * Crea en Atlas los índices de CORRECCIÓN que un servicio de propuestas
+ * exige antes de escribir. Mientras falten, ese servicio se niega a
+ * escribir.
  *
- *  - ejecuciones_lectura: run_id_1 (único)
- *  - propuestas_cambio: propuesta_id_1 (único)
- *  - propuestas_cambio: uniq_propuesta_activa_por_destino_requisito_campo
- *    (único PARCIAL sobre estados activos)
+ * CONJUNTO (se cambia a mano, ver CONJUNTOS_INDICES en
+ * services/propuestas/indices-propuestas.js):
+ *  - 'registro' (default): registro de ejecuciones de lectura
+ *    (ya creados en Atlas; re-correrlo da ya_existe).
+ *  - 'decision': aprobar / rechazar / cancelar.
+ *  - 'aplicacion': aplicación (incluye los de decisión).
  *
- * Los specs (INDICES_REQUERIDOS) y la clasificación (evaluarIndice) se
- * importan del servicio: una forma cuenta como correcta acá si y solo
- * si el gate del servicio la acepta.
+ * Los specs y la clasificación (evaluarIndice) vienen del mismo módulo
+ * que usa el gate de los servicios: una forma cuenta como correcta acá
+ * si y solo si el gate la acepta.
  *
  * MODO (se cambia a mano):
  *  - 'planificacion_local' (default): imprime los createIndex() exactos.
@@ -20,7 +22,7 @@
  *    No crea nada.
  *  - 'creacion_real': lo mismo que el prechequeo; si hay algún conflicto
  *    aborta sin crear ninguno. Si no, crea los faltantes y vuelve a
- *    verificar con listIndexes() + verificarListadoIndices() del servicio.
+ *    verificar con listIndexes() + verificarConjuntoIndices().
  *    createIndex() no es transaccional: si uno falla a mitad de camino,
  *    los anteriores quedan creados (se informa cuáles). Re-correr es
  *    seguro: los ya creados dan 'ya_existe' y se saltean.
@@ -30,17 +32,19 @@
  */
 
 const MODO = 'planificacion_local'; // 'planificacion_local' | 'prechequeo_atlas' | 'creacion_real'
+const CONJUNTO = 'registro'; // 'registro' | 'decision' | 'aplicacion'
 
 const mongoose = require('mongoose');
 const {
-  INDICES_REQUERIDOS,
+  CONJUNTOS_INDICES,
+  INDICES_REGISTRO,
   evaluarIndice,
-  verificarListadoIndices
-} = require('../services/propuestas/registrar-ejecucion-lectura');
+  coleccionesDe,
+  verificarConjuntoIndices
+} = require('../services/propuestas/indices-propuestas');
 
 const DB_ESPERADA = 'buscador_requisitos';
 const MODOS = ['planificacion_local', 'prechequeo_atlas', 'creacion_real'];
-const COLECCIONES = [...new Set(INDICES_REQUERIDOS.map((spec) => spec.coleccion))];
 
 function opcionesCreateIndex(spec) {
   const opciones = { name: spec.nombre, unique: true };
@@ -50,8 +54,8 @@ function opcionesCreateIndex(spec) {
 
 // Pura. listados: { [coleccion]: índices de listIndexes() } (una
 // colección ausente del objeto se trata como inexistente).
-function planificar(listados) {
-  return INDICES_REQUERIDOS.map((spec) => ({ spec, ...evaluarIndice(listados[spec.coleccion] ?? [], spec) }));
+function planificar(listados, specs = INDICES_REGISTRO) {
+  return specs.map((spec) => ({ spec, ...evaluarIndice(listados[spec.coleccion] ?? [], spec) }));
 }
 
 function hayConflictos(plan) {
@@ -65,9 +69,9 @@ function describirPlan(plan) {
   });
 }
 
-async function listarTodo(deps) {
+async function listarTodo(deps, specs) {
   const listados = {};
-  for (const coleccion of COLECCIONES) {
+  for (const coleccion of coleccionesDe(specs)) {
     try {
       listados[coleccion] = await deps.listarIndices(coleccion);
     } catch (err) {
@@ -79,12 +83,14 @@ async function listarTodo(deps) {
 }
 
 // deps: { conectar() -> databaseName, listarIndices(coleccion), crearIndice(coleccion, clave, opciones) }
-async function ejecutar(modo, deps, log = console.log) {
+async function ejecutar(modo, deps, log = console.log, conjunto = 'registro') {
   if (!MODOS.includes(modo)) throw new Error(`Modo desconocido "${modo}". Válidos: ${MODOS.join(', ')}.`);
-  log(`Modo: ${modo}\n`);
+  const specs = CONJUNTOS_INDICES[conjunto];
+  if (!specs) throw new Error(`Conjunto desconocido "${conjunto}". Válidos: ${Object.keys(CONJUNTOS_INDICES).join(', ')}.`);
+  log(`Modo: ${modo} — conjunto: ${conjunto}\n`);
 
   if (modo === 'planificacion_local') {
-    for (const spec of INDICES_REQUERIDOS) {
+    for (const spec of specs) {
       log(`db.${spec.coleccion}.createIndex(${JSON.stringify(spec.clave)}, ${JSON.stringify(opcionesCreateIndex(spec))})`);
     }
     log('\nNo hubo conexión a Mongo. El prechequeo de Atlas muestra qué haría la creación real.');
@@ -95,7 +101,7 @@ async function ejecutar(modo, deps, log = console.log) {
   if (dbName !== DB_ESPERADA) throw new Error(`Base de datos inesperada: "${dbName}" (se esperaba "${DB_ESPERADA}"). Abortando.`);
   log(`Conectado a "${dbName}"`);
 
-  const plan = planificar(await listarTodo(deps));
+  const plan = planificar(await listarTodo(deps, specs), specs);
   describirPlan(plan).forEach((linea) => log(linea));
 
   if (modo === 'prechequeo_atlas') {
@@ -119,10 +125,10 @@ async function ejecutar(modo, deps, log = console.log) {
   }
 
   log('\nReleyendo con listIndexes()...');
-  const listadosFinales = await listarTodo(deps);
-  describirPlan(planificar(listadosFinales)).forEach((linea) => log(linea));
-  verificarListadoIndices(listadosFinales.propuestas_cambio, listadosFinales.ejecuciones_lectura);
-  log('\nverificarListadoIndices() del servicio acepta el estado actual: el registro de propuestas ya puede escribir.');
+  const listadosFinales = await listarTodo(deps, specs);
+  describirPlan(planificar(listadosFinales, specs)).forEach((linea) => log(linea));
+  verificarConjuntoIndices(specs, listadosFinales);
+  log(`\nverificarConjuntoIndices() acepta el estado actual del conjunto "${conjunto}".`);
   return { modo, plan, creados };
 }
 
@@ -140,7 +146,7 @@ function crearDependenciasMongoose() {
 
 if (require.main === module) {
   require('dotenv').config();
-  ejecutar(MODO, crearDependenciasMongoose())
+  ejecutar(MODO, crearDependenciasMongoose(), console.log, CONJUNTO)
     .then(({ plan }) => {
       if (plan && hayConflictos(plan)) process.exitCode = 1;
     })

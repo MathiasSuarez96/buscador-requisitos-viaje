@@ -3,7 +3,7 @@
  * automáticos) sobre una propuesta. Es la fuente de verdad histórica
  * del ciclo de vida de una PropuestaCambio; `propuestas_cambio.estado`
  * es un cache denormalizado que se actualiza EN LA MISMA transacción
- * que cada inserción acá.
+ * CAS que cada inserción acá.
  *
  * `_id` es el ObjectId por defecto de Mongo; la identidad de negocio es
  * `evento_id` (UUID), campo propio y único — no un alias de `_id`.
@@ -11,27 +11,41 @@
  * `propuesta_id` referencia el `propuesta_id` (no el `_id`) de
  * PropuestaCambio.
  *
- * `tipo_evento` cubre los 8 tipos: aprobación, rechazo, cancelación,
- * obsolescencia, conflicto, entrada/salida de revisión, aplicación.
+ * Un evento debe demostrar QUÉ transición ocurrió SOBRE QUÉ contenido
+ * y EN QUÉ versión, no solo que "algo pasó":
+ *  - `estado_anterior`/`estado_nuevo`/`tipo_evento`/`actor.tipo`: la
+ *    combinación debe estar en TRANSICIONES
+ *    (../../services/propuestas/contrato-propuestas.js). Eso incluye
+ *    "aprobación, rechazo y cancelación solo por un humano", "aplicación
+ *    y transiciones por fallo solo por el proceso aplicador (sistema)" y
+ *    "nunca estado_anterior === estado_nuevo".
+ *  - `hash_contenido_referenciado`: el `payload_hash` de la
+ *    PropuestaCambio sobre la que actuó este evento.
+ *  - `version_coordinacion_nueva`: el valor de
+ *    PropuestaCambio.version_coordinacion DESPUÉS de la transición CAS
+ *    que acompaña a este evento (la anterior es esta menos 1). El
+ *    índice único (propuesta_id, version_coordinacion_nueva) garantiza
+ *    una historia LINEAL: dos eventos nunca pueden reclamar la misma
+ *    transición de versión de la misma propuesta.
  *
- * Un evento debe demostrar QUÉ transición ocurrió SOBRE QUÉ contenido,
- * no solo que "algo pasó":
- *  - `estado_anterior`/`estado_nuevo`: obligatorios SIEMPRE (no solo
- *    para algunos tipo_evento), tomados del mismo enum de estados que
- *    PropuestaCambio.estado (duplicado a propósito acá, misma
- *    convención ya usada en el proyecto para canonicalizarValor). El
- *    hook de abajo rechaza cualquier evento donde ambos sean iguales:
- *    un "evento" que no representa una transición real no es válido.
- *  - `hash_contenido_referenciado`: obligatorio SIEMPRE, el
- *    `payload_hash` (SHA-256 hex) de la PropuestaCambio sobre la que
- *    actuó este evento — así un EventoPropuesta es auto-contenido para
- *    auditoría: no hace falta ir a buscar la propuesta para saber sobre
- *    qué versión exacta del contenido se decidió.
+ * `intento_aplicacion_id`: obligatorio para los tipos que en el MVP
+ * solo nacen de un IntentoAplicacion (aplicacion y las transiciones
+ * automáticas por fallo — ver TIPOS_EVENTO_CON_INTENTO).
  *
- * Regla "una aprobación nunca se infiere por lectura, silencio o
- * tiempo": traducida como restricción estructural — el hook exige
- * actor.tipo === "humano" para tipo_evento === "aprobacion". Un proceso
- * automático no puede producir un evento de aprobación válido acá.
+ * Sin índice único (propuesta_id, tipo_evento): la unicidad de cada
+ * decisión ya la garantizan el CAS (estado esperado +
+ * decision_aprobacion_id: null para aprobar) y el índice de versión;
+ * además bloquearía ciclos legítimos futuros (p. ej. si se agrega una
+ * salida de revisión, entrar y salir de revisión más de una vez).
+ *
+ * `actor`: para eventos humanos (aprobación, rechazo, cancelación), en
+ * el MVP el identificador lo resuelve el comando administrativo a
+ * partir del usuario de Atlas autenticado (connectionStatus). Es
+ * evidencia OPERATIVA, no autenticación ni no repudio: quien tenga esa
+ * credencial puede escribir directamente en Mongo. El panel futuro
+ * deberá aportar identidad autenticada por el backend. Para eventos de
+ * sistema, el identificador es el proceso aplicador; el operador que
+ * lanzó el intento queda en el IntentoAplicacion referenciado.
  *
  * Defensa contra mutaciones (auxiliar, no garantía — ver nota extendida
  * en EjecucionLectura.model.js): el hook `pre('validate')` bloquea
@@ -44,38 +58,21 @@
 
 const mongoose = require('mongoose');
 const crypto = require('crypto');
-
-const TIPOS_EVENTO = [
-  'aprobacion',
-  'rechazo',
-  'cancelacion',
-  'obsolescencia',
-  'conflicto',
-  'entrada_revision',
-  'salida_revision',
-  'aplicacion'
-];
-
-const TIPOS_QUE_REQUIEREN_MOTIVO = ['rechazo', 'cancelacion', 'conflicto', 'obsolescencia'];
-
-// Duplicado a propósito desde PropuestaCambio.model.js.
-const ESTADOS_PROPUESTA = [
-  'pendiente_aprobacion',
-  'aprobada',
-  'rechazada',
-  'obsoleta',
-  'revision_requerida',
-  'conflicto',
-  'cancelada',
-  'aplicada'
-];
+const {
+  ESTADOS_PROPUESTA,
+  TIPOS_EVENTO,
+  TIPOS_ACTOR,
+  TIPOS_QUE_REQUIEREN_MOTIVO,
+  TIPOS_EVENTO_CON_INTENTO,
+  motivoTransicionInvalida
+} = require('../../services/propuestas/contrato-propuestas');
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 const actorSchema = new mongoose.Schema(
   {
-    tipo: { type: String, required: true, enum: ['humano', 'sistema'] },
-    identificador: { type: String, required: true } // email/usuario si es humano; nombre del proceso si es sistema
+    tipo: { type: String, required: true, enum: TIPOS_ACTOR },
+    identificador: { type: String, required: true } // usuario Atlas mapeado si es humano; nombre del proceso si es sistema
   },
   { _id: false }
 );
@@ -97,6 +94,14 @@ const eventoPropuestaSchema = new mongoose.Schema(
     estado_nuevo: { type: String, required: true, enum: ESTADOS_PROPUESTA, immutable: true },
     hash_contenido_referenciado: { type: String, required: true, match: SHA256_HEX, immutable: true },
 
+    version_coordinacion_nueva: {
+      type: Number,
+      required: true,
+      min: 1,
+      immutable: true,
+      validate: { validator: Number.isInteger, message: 'version_coordinacion_nueva debe ser entero.' }
+    },
+
     ocurrido_en: { type: Date, required: true, immutable: true },
     actor: { type: actorSchema, required: true, immutable: true },
 
@@ -111,11 +116,10 @@ const eventoPropuestaSchema = new mongoose.Schema(
     // Forma libre a propósito: contenido específico por tipo_evento.
     detalle: { type: mongoose.Schema.Types.Mixed, required: false, immutable: true },
 
-    // Solo para tipo_evento === "aplicacion".
     intento_aplicacion_id: {
       type: String,
       required: function () {
-        return this.tipo_evento === 'aplicacion';
+        return TIPOS_EVENTO_CON_INTENTO.includes(this.tipo_evento);
       },
       immutable: true
     }
@@ -131,17 +135,27 @@ const eventoPropuestaSchema = new mongoose.Schema(
 );
 
 eventoPropuestaSchema.pre('validate', function () {
+  if (!this.isNew) {
+    throw new Error('eventos_propuesta es append-only: no se puede modificar un evento ya insertado.');
+  }
   if (this.tipo_evento === 'aprobacion' && this.actor && this.actor.tipo !== 'humano') {
     throw new Error('eventos_propuesta: un evento de tipo "aprobacion" exige actor.tipo === "humano" (nunca se infiere automáticamente).');
   }
   if (this.estado_anterior != null && this.estado_nuevo != null && this.estado_anterior === this.estado_nuevo) {
     throw new Error('eventos_propuesta: estado_anterior y estado_nuevo son iguales; esto no representa una transición real.');
   }
-  if (!this.isNew) {
-    throw new Error('eventos_propuesta es append-only: no se puede modificar un evento ya insertado.');
+  if (this.tipo_evento != null && this.estado_anterior != null && this.estado_nuevo != null && this.actor) {
+    const motivo = motivoTransicionInvalida(this.tipo_evento, this.estado_anterior, this.estado_nuevo, this.actor.tipo);
+    if (motivo) throw new Error(`eventos_propuesta: transición no permitida: ${motivo}`);
   }
 });
 
+// Integridad: historia lineal, un evento por transición de versión.
+eventoPropuestaSchema.index(
+  { propuesta_id: 1, version_coordinacion_nueva: 1 },
+  { unique: true, name: 'uniq_evento_por_propuesta_version' }
+);
+// Solo rendimiento.
 eventoPropuestaSchema.index({ propuesta_id: 1, ocurrido_en: 1 });
 eventoPropuestaSchema.index({ tipo_evento: 1, ocurrido_en: -1 });
 

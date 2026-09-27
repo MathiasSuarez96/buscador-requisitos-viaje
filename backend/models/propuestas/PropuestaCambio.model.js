@@ -87,9 +87,13 @@
  * `payload` en un doc ya existente. Esto NO reemplaza la protección
  * real (servicios con operaciones permitidas + filtros CAS).
  *
- * Índice único parcial (declarado, no creado en Atlas todavía): una
- * sola propuesta ACTIVA por (destino_id, requisito_id, campo), donde
- * "activa" son pendiente_aprobacion, aprobada y revision_requerida.
+ * Índice único parcial (creado en Atlas): una sola propuesta ACTIVA
+ * por (destino_id, requisito_id, campo), donde "activa" son
+ * pendiente_aprobacion, aprobada y revision_requerida.
+ *
+ * Estados, estados activos y transiciones permitidas viven en
+ * ../../services/propuestas/contrato-propuestas.js (compartido con
+ * EventoPropuesta y los servicios).
  */
 
 const mongoose = require('mongoose');
@@ -103,19 +107,7 @@ const {
   esFechaIsoUtcExacta,
   hashSobreCanonico
 } = require('../../services/propuestas/canonicalizacion-propuestas');
-
-const ESTADOS_PROPUESTA = [
-  'pendiente_aprobacion',
-  'aprobada',
-  'rechazada',
-  'obsoleta',
-  'revision_requerida',
-  'conflicto',
-  'cancelada',
-  'aplicada'
-];
-
-const ESTADOS_ACTIVOS = ['pendiente_aprobacion', 'aprobada', 'revision_requerida'];
+const { ESTADOS_PROPUESTA, ESTADOS_ACTIVOS } = require('../../services/propuestas/contrato-propuestas');
 
 // MVP: solo 'costo'. No agregar campos sin implementar su validador
 // particular (nombre/obligatorio/fuente/link, etc. quedan afuera).
@@ -285,7 +277,8 @@ propuestaCambioSchema.pre('validate', function () {
 });
 
 // Índice único PARCIAL: una sola propuesta activa por
-// (destino_id, requisito_id, campo). Declarado, no creado en Atlas.
+// (destino_id, requisito_id, campo). Creado en Atlas con
+// scripts/crear-indices-propuestas.js.
 propuestaCambioSchema.index(
   { destino_id: 1, requisito_id: 1, campo: 1 },
   {
@@ -296,8 +289,13 @@ propuestaCambioSchema.index(
 );
 
 propuestaCambioSchema.index({ run_id_origen: 1 });
-propuestaCambioSchema.index({ decision_aprobacion_id: 1 }, { sparse: true });
-propuestaCambioSchema.index({ ultimo_evento_id: 1 }, { sparse: true });
+// Solo rendimiento. Parciales por $type y no `sparse`: ambos campos
+// tienen default null, así que siempre existen y `sparse` no excluía nada.
+propuestaCambioSchema.index(
+  { decision_aprobacion_id: 1 },
+  { partialFilterExpression: { decision_aprobacion_id: { $type: 'string' } } }
+);
+propuestaCambioSchema.index({ ultimo_evento_id: 1 }, { partialFilterExpression: { ultimo_evento_id: { $type: 'string' } } });
 propuestaCambioSchema.index({ estado: 1, createdAt: -1 });
 
 module.exports = mongoose.model('PropuestaCambio', propuestaCambioSchema);
