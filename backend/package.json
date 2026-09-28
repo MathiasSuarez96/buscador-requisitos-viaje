@@ -16,5 +16,13 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "mongoose": "^9.9.4"
+  },
+  "config": {
+    "mongodbMemoryServer": {
+      "version": "8.0.32"
+    }
+  },
+  "devDependencies": {
+    "mongodb-memory-server": "11.3.0"
   }
 }
