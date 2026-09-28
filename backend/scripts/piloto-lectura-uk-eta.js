@@ -18,6 +18,10 @@
  * decimal ("£20.50" o "£20,50") se trata como formato inesperado, no
  * como un costo con centavos.
  *
+ * extraerCosto(), el fetch con timeout y los resúmenes de evidencia
+ * viven en services/propuestas/fuentes/govuk-uk-eta.js (compartidos con
+ * el adaptador de revalidación); este piloto los importa y re-exporta.
+ *
  * extraerCosto() valida en este orden (a propósito, no al revés):
  *  1. Cuenta cuántas veces aparece el símbolo "£" en el texto CRUDO,
  *     antes de mirar el formato de ningún número. Si no hay
@@ -220,7 +224,6 @@
  *    se simula acá, ni siquiera cuando hay una propuesta.
  */
 
-require('dotenv').config();
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const Destino = require('../models/Destino.model');
@@ -231,80 +234,22 @@ const REGISTRAR = process.argv.includes('--registrar');
 const TIMEOUT_MONGO_REGISTRO_MS = 10000; // selección de servidor al conectar SOLO para registrar
 
 const DB_ESPERADA = 'buscador_requisitos';
-const CODIGO_ISO_UK = 'GB';
-const REQUISITO_ID_ETA = '6aaddd0e9f54309f9d8272dc'; // valor ESPERADO para buscar y comparar — identidad primaria. El requisito_id que se reporta en el registro/propuesta es el _id REAL leído de Mongo (ver buscarRequisitoEtaEnMongo), no esta constante.
-const TIPO_REQUISITO_ETA = 'formulario_digital'; // evidencia descriptiva, validada contra el requisito hallado por _id — ya no criterio de búsqueda
-const NOMBRE_REQUISITO_ETA = 'UK ETA'; // evidencia descriptiva, validada contra el requisito hallado por _id — ya no criterio de búsqueda
-
-const URL_ETA = 'https://www.gov.uk/api/content/eta';
-const FUENTE_NOMBRE = 'GOV.UK';
-const PATRON_COSTO_GLOBAL = /£(\d+)/g;
-const TIMEOUT_MS = 8000;
-const VENTANA_FRAGMENTO = 40; // caracteres de contexto a cada lado del match, para el fragmento real de evidencia
-
-// Recorta un fragmento REAL del HTML recibido, alrededor del match
-// (no todo el body, que puede ser muy largo) — esto es evidencia
-// verificable, no una interpretación: permite releer si el patrón de
-// extracción entendió bien el texto real de GOV.UK.
-function extraerFragmento(html, indexInicio, indexFin) {
-  const desde = Math.max(0, indexInicio - VENTANA_FRAGMENTO);
-  const hasta = Math.min(html.length, indexFin + VENTANA_FRAGMENTO);
-  return html.slice(desde, hasta);
-}
-
-// Un importe es válido solo si termina en un límite aceptable:
-//  - fin de texto, o
-//  - un carácter que no sea letra/dígito Y que, si es un punto o una
-//    coma, no esté seguido de otro dígito (para no aceptar "20.50" o
-//    "20,50" como si fueran el entero 20 — este piloto solo soporta
-//    enteros simples).
-function esLimiteValido(html, indexFinal) {
-  if (indexFinal >= html.length) return true;
-  const siguiente = html[indexFinal];
-  if (/[0-9a-zA-Z]/.test(siguiente)) return false;
-  if (siguiente === '.' || siguiente === ',') {
-    const siguienteSiguiente = html[indexFinal + 1];
-    if (siguienteSiguiente !== undefined && /\d/.test(siguienteSiguiente)) return false;
-  }
-  return true;
-}
-
-// Orden de validación deliberado (ver comentario arriba de la clase de
-// archivo): primero cuenta los símbolos "£" en crudo, y solo si hay
-// exactamente uno pasa a evaluar el formato del número que lo sigue.
-function extraerCosto(html) {
-  if (typeof html !== 'string') return { costo: null, sospechoso: false, fragmento: null };
-
-  const totalSimbolos = (html.match(/£/g) || []).length;
-
-  if (totalSimbolos === 0) {
-    return { costo: null, sospechoso: false, fragmento: null };
-  }
-  if (totalSimbolos > 1) {
-    console.warn(`SOSPECHOSO: se encontraron ${totalSimbolos} símbolos "£" en la misma sección (se esperaba exactamente uno).`);
-    return { costo: null, sospechoso: true, fragmento: null };
-  }
-
-  // Hay exactamente un "£": ahora sí se evalúa el formato del número
-  // que lo sigue.
-  const coincidencias = [...html.matchAll(PATRON_COSTO_GLOBAL)];
-  if (coincidencias.length === 0) {
-    return { costo: null, sospechoso: false, fragmento: null };
-  }
-
-  const match = coincidencias[0];
-  const indexFinal = match.index + match[0].length;
-  if (!esLimiteValido(html, indexFinal)) {
-    console.warn('SOSPECHOSO: el único "£" de la sección tiene un formato inesperado (ej. decimal o alfanumérico pegado).');
-    return { costo: null, sospechoso: true, fragmento: null };
-  }
-
-  return {
-    costo: parseInt(match[1], 10),
-    sospechoso: false,
-    fragmento: extraerFragmento(html, match.index, indexFinal)
-  };
-}
+// Fuente GOV.UK (constantes, fetch y extracción) compartida con el
+// adaptador de revalidación: services/propuestas/fuentes/govuk-uk-eta.js.
+const {
+  CODIGO_ISO_UK,
+  REQUISITO_ID_ETA, // valor ESPERADO para buscar y comparar — identidad primaria. El requisito_id que se reporta en el registro/propuesta es el _id REAL leído de Mongo (ver buscarRequisitoEtaEnMongo), no esta constante.
+  TIPO_REQUISITO_ETA, // evidencia descriptiva, validada contra el requisito hallado por _id — ya no criterio de búsqueda
+  NOMBRE_REQUISITO_ETA, // evidencia descriptiva, validada contra el requisito hallado por _id — ya no criterio de búsqueda
+  URL_ETA,
+  FUENTE_NOMBRE,
+  TIMEOUT_MS,
+  extraerCosto,
+  seleccionarParteUnica,
+  fetchJsonConTimeout,
+  resumenFuenteGovUk,
+  resumenEvidencia
+} = require('../services/propuestas/fuentes/govuk-uk-eta');
 
 // --- Comparación de solo lectura contra el requisito de Mongo ---
 
@@ -489,69 +434,7 @@ async function buscarRequisitoEtaEnMongo() {
   return { requisito, requisitoId, destinoId: destino._id, motivo: null, categoriaFallo: null };
 }
 
-// Devuelve la parte única con ese slug. Si hay más de una, o ninguna,
-// no elige nada y marca por qué (duplicado vs. ausente son casos
-// distintos, pero ambos son motivo para no confiar en el dato).
-function seleccionarParteUnica(parts, slug) {
-  const coincidencias = parts.filter((p) => p.slug === slug);
-
-  if (coincidencias.length > 1) {
-    console.warn(`SOSPECHOSO: hay ${coincidencias.length} partes con slug "${slug}" (se esperaba una sola).`);
-    return { parte: null, sospechoso: true };
-  }
-
-  if (coincidencias.length === 0) {
-    console.warn(`No se encontró la parte con slug "${slug}".`);
-    return { parte: null, sospechoso: false };
-  }
-
-  return { parte: coincidencias[0], sospechoso: false };
-}
-
-// Fetch + parseo de JSON bajo un único deadline: el timeout cubre la
-// request Y la lectura completa del body (res.json()), no solo el
-// fetch() inicial — si el timer dispara mientras se está leyendo el
-// body, el abort también corta esa lectura porque comparte el mismo
-// signal.
-async function fetchJsonConTimeout(url, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) {
-      throw new Error(`La API de GOV.UK respondió ${res.status} ${res.statusText}.`);
-    }
-    return await res.json();
-  } catch (err) {
-    if (err.name === 'AbortError') {
-      throw new Error(`Timeout de ${timeoutMs}ms haciendo fetch/lectura a ${url}.`);
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 // --- Construcción de la salida de consola (registro / propuesta) ---
-
-function resumenFuenteGovUk(json) {
-  if (!json) return null;
-  return {
-    url: URL_ETA,
-    // ?? null: si GOV.UK no manda alguna fecha, no debe llegar
-    // undefined a la evidencia (la canonicalización toc-v1 lo rechaza).
-    first_published_at: json.first_published_at ?? null,
-    public_updated_at: json.public_updated_at ?? null,
-    updated_at: json.updated_at ?? null
-  };
-}
-
-function resumenEvidencia(resultadoOverview, resultadoApply) {
-  return {
-    overview: { costo_extraido: resultadoOverview.costo, moneda: 'GBP', fragmento_html: resultadoOverview.fragmento },
-    apply: { costo_extraido: resultadoApply.costo, moneda: 'GBP', fragmento_html: resultadoApply.fragmento }
-  };
-}
 
 // Registro de ejecución para el camino de FALLO: se imprime siempre
 // que algo impidió llegar a una conclusión (GOV.UK sospechoso,
@@ -1007,8 +890,11 @@ const ETAPAS_EMITIDAS = [
 ];
 
 // Guarda: importar este archivo (desde una prueba) no dispara el fetch a
-// GOV.UK ni la conexión a Mongo.
+// GOV.UK, la conexión a Mongo ni la lectura de .env. Solo la ejecución
+// por CLI carga .env, antes de main() (MONGODB_URI se lee recién al
+// conectar, en conectarMongoVerificado).
 if (require.main === module) {
+  require('dotenv').config();
   main().catch((err) => {
     console.error('Error fatal no manejado en el piloto:', err.message);
     process.exitCode = 1;

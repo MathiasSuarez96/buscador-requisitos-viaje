@@ -1,7 +1,8 @@
-// Pruebas offline (sin conexión a Mongo, sin red) de la integración de
-// scripts/piloto-lectura-uk-eta.js con el servicio de registro. Importa
-// el piloto como módulo: la guarda `require.main === module` impide que
-// eso dispare el fetch a GOV.UK o la conexión a Mongo (prueba 0).
+// Pruebas offline (sin conexión a Mongo, sin red, sin .env) de la
+// integración de scripts/piloto-lectura-uk-eta.js con el servicio de
+// registro. Importa el piloto como módulo: la guarda
+// `require.main === module` impide que eso dispare el fetch a GOV.UK, la
+// conexión a Mongo o la lectura de .env (prueba 0).
 //
 // main() se ejecuta SOLO con dependencias falsas (fetch, conexión,
 // búsqueda del requisito, servicio de registro y desconexión): nunca
@@ -12,7 +13,24 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const Module = require('module');
 const mongoose = require('mongoose');
+
+// dotenv espía, instalado ANTES de importar el piloto: si importarlo
+// llamara a dotenv.config(), el contador lo delata (y nunca se lee .env).
+let llamadasDotenv = 0;
+{
+  const rutaDotenv = require.resolve('dotenv');
+  const espia = new Module(rutaDotenv);
+  espia.exports = {
+    config: () => {
+      llamadasDotenv++;
+      return { parsed: {} };
+    }
+  };
+  espia.loaded = true;
+  require.cache[rutaDotenv] = espia;
+}
 
 // fetch espía durante TODO el archivo (no solo en la importación): si
 // algún camino llegara a usar el fetch real en vez del inyectado, la
@@ -186,16 +204,25 @@ async function correrMain(deps) {
 
 (async () => {
   // ============================================================
-  // 0) Importar el piloto no dispara fetch ni conexión a Mongo; sin
-  //    el flag, REGISTRAR es false.
+  // 0) Importar el piloto no dispara fetch, conexión a Mongo ni
+  //    dotenv.config(); sin el flag, REGISTRAR es false. dotenv se carga
+  //    solo en la ejecución por CLI, dentro de la guarda y antes de main().
   // ============================================================
   {
     await new Promise((resolve) => setImmediate(resolve));
     assert.strictEqual(llamadasFetch, 0, 'importar el piloto no debe hacer fetch');
     assert.strictEqual(mongoose.connection.readyState, 0, 'importar el piloto no debe conectar a Mongo');
+    assert.strictEqual(llamadasDotenv, 0, 'importar el piloto no debe llamar a dotenv.config()');
     assert.strictEqual(REGISTRAR, false, 'sin --registrar en process.argv, REGISTRAR debe ser false');
 
-    console.log('0) importar el piloto no dispara fetch ni conexión; REGISTRAR false por defecto: OK');
+    const fuente = fs.readFileSync(path.join(__dirname, 'piloto-lectura-uk-eta.js'), 'utf8');
+    const usosDotenv = [...fuente.matchAll(/require\('dotenv'\)/g)];
+    assert.strictEqual(usosDotenv.length, 1, 'un solo require de dotenv en el piloto');
+    const guarda = fuente.indexOf('if (require.main === module) {');
+    const llamadaMain = fuente.indexOf('main().catch(', guarda);
+    assert.ok(guarda > 0 && usosDotenv[0].index > guarda && usosDotenv[0].index < llamadaMain, 'dotenv se carga dentro de la guarda, antes de main()');
+
+    console.log('0) importar el piloto no dispara fetch, conexión ni dotenv.config(); CLI carga .env antes de main(); REGISTRAR false: OK');
   }
 
   // ============================================================
@@ -539,6 +566,7 @@ async function correrMain(deps) {
   }
 
   assert.strictEqual(llamadasFetch, 0, 'ningún camino debe usar el fetch real (siempre el inyectado)');
+  assert.strictEqual(llamadasDotenv, 0, 'ninguna prueba llamó a dotenv.config() (.env nunca se leyó)');
 
   console.log('\nTodas las pruebas offline del piloto pasaron (sin red ni conexión a Mongo).');
 })().catch((err) => {
