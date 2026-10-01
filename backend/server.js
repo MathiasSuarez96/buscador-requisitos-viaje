@@ -1,18 +1,25 @@
-require('dotenv').config();
-const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-const destinosRoutes = require('./routes/destinos.routes');
+// Arranque del servidor. Ejecutado directamente (node server.js): carga el
+// .env ANTES que config/mongoose, la app y los modelos; después conecta a
+// Mongo y escucha. Requerido como módulo (pruebas): no carga el .env, no
+// conecta ni escucha.
+const esPrincipal = require.main === module;
+if (esPrincipal) require('dotenv').config();
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+// config/mongoose antes que la app (y con ella, los modelos).
+const mongoose = require('./config/mongoose');
+const { crearApp } = require('./app');
 
-app.use('/api/destinos', destinosRoutes);
+function iniciar(env = process.env) {
+  const app = crearApp();
 
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Conectado a MongoDB Atlas'))
-  .catch((err) => console.error('Error de conexión:', err));
+  mongoose.connect(env.MONGODB_URI)
+    .then(() => console.log('Conectado a MongoDB Atlas'))
+    .catch((err) => console.error('Error de conexión:', err));
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
+  const PORT = env.PORT || 3000;
+  return app.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
+}
+
+if (esPrincipal) iniciar();
+
+module.exports = { iniciar };

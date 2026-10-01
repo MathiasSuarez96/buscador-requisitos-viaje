@@ -4,7 +4,8 @@
  * ::1). Se bloquean y cuentan:
  *  - sockets a cualquier otro host, a "localhost" (evita la resolución
  *    DNS) y a rutas IPC;
- *  - TLS, DNS, http/https y fetch (sin excepciones);
+ *  - TLS, DNS, http/https y fetch (única excepción: dns.lookup de un
+ *    literal de loopback, que no consulta ningún DNS; ver abajo);
  *  - require('dotenv') (ningún .env se carga).
  * child_process queda permitido: mongodb-memory-server lanza mongod.
  *
@@ -55,10 +56,20 @@ net.Socket.prototype.connect = function (...args) {
 };
 
 tls.connect = () => bloquear('tls.connect');
+const lookupOriginal = dns.lookup;
 for (const f of ['lookup', 'lookupService', 'resolve', 'resolve4', 'resolve6', 'resolveSrv', 'resolveTxt', 'resolveAny']) {
   if (typeof dns[f] === 'function') dns[f] = () => bloquear(`dns.${f}`);
   if (dns.promises && typeof dns.promises[f] === 'function') dns.promises[f] = async () => bloquear(`dns.promises.${f}`);
 }
+// Única excepción: dns.lookup de un literal de loopback. net.Server#listen
+// lo llama aun con '127.0.0.1', y Node lo resuelve sin consultar ningún DNS
+// (un literal de IP no se resuelve). Cualquier nombre, incluido "localhost",
+// sigue bloqueado.
+const lookupBloqueado = dns.lookup;
+dns.lookup = function (host, ...resto) {
+  if (typeof host === 'string' && HOSTS_PERMITIDOS.has(host)) return lookupOriginal.call(this, host, ...resto);
+  return lookupBloqueado(host, ...resto);
+};
 http.request = () => bloquear('http.request');
 http.get = () => bloquear('http.get');
 https.request = () => bloquear('https.request');
