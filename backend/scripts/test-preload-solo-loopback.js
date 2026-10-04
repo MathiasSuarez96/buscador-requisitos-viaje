@@ -31,6 +31,8 @@ const probarAsync = async (nombre, fn) => { try { await fn(); resultados[nombre]
   probar('https.get', () => require('https').get('https://example.com'));
   probar('tls.connect', () => require('tls').connect(443, 'example.com'));
   await probarAsync('fetch', () => fetch('https://example.com'));
+  await probarAsync('fetch http localhost', () => fetch('http://localhost:1/'));
+  await probarAsync('fetch https 127.0.0.1', () => fetch('https://127.0.0.1:1/'));
   probar('require dotenv', () => require('dotenv'));
   resultados.lookup127 = await new Promise((r) => dns.lookup('127.0.0.1', (err, dir) => r(err ? err.message : dir)));
   // Ida y vuelta real por loopback: listen + connect.
@@ -45,8 +47,15 @@ const probarAsync = async (nombre, fn) => { try { await fn(); resultados[nombre]
     c.on('error', j);
   });
   servidor.close();
+  // fetch por http a 127.0.0.1 (p. ej. un JWKS local).
+  const http = require('http');
+  const web = http.createServer((req, res) => res.end('pong-http'));
+  await new Promise((r) => web.listen(0, '127.0.0.1', r));
+  const puertoWeb = web.address().port;
+  resultados.fetch_loopback = await (await fetch('http://127.0.0.1:' + puertoWeb + '/', { headers: { connection: 'close' } })).text();
+  web.close();
   const e = globalThis.__SOLO_LOOPBACK__;
-  resultados.estado = { permitidos: e.permitidos, destinos: [...e.destinos], bloqueados: e.bloqueados.length, puerto: port };
+  resultados.estado = { permitidos: e.permitidos, destinos: [...e.destinos].sort(), bloqueados: e.bloqueados.length, puerto: port, puertoWeb };
   process.stdout.write(JSON.stringify(resultados));
 })();
 `;
@@ -68,21 +77,25 @@ const BLOQUEADOS = [
   'https.get',
   'tls.connect',
   'fetch',
+  'fetch http localhost',
+  'fetch https 127.0.0.1',
   'require dotenv'
 ];
 for (const nombre of BLOQUEADOS) {
   assert.match(String(res[nombre]), /^SOLO-LOOPBACK: bloqueado /, `${nombre}: ${res[nombre]}`);
 }
-console.log(`1) ${BLOQUEADOS.length} vías bloqueadas (hosts externos, localhost por nombre, IPC, DNS, http/https/tls, fetch, dotenv): OK`);
+console.log(`1) ${BLOQUEADOS.length} vías bloqueadas (hosts externos, localhost por nombre, IPC, DNS, http/https/tls, fetch externo, fetch a localhost o por https, dotenv): OK`);
 
 assert.strictEqual(res.lookup127, '127.0.0.1', 'dns.lookup del literal 127.0.0.1 se resuelve localmente');
 assert.strictEqual(res.ida_y_vuelta, 'pong', 'listen + connect por 127.0.0.1');
-assert.strictEqual(res.estado.permitidos, 1, 'solo el connect a 127.0.0.1 cuenta como permitido');
-assert.deepStrictEqual(res.estado.destinos, [`127.0.0.1:${res.estado.puerto}`]);
+assert.strictEqual(res.fetch_loopback, 'pong-http', 'fetch por http a 127.0.0.1');
+const destinosEsperados = [`127.0.0.1:${res.estado.puerto}`, `127.0.0.1:${res.estado.puertoWeb}`].sort();
+assert.strictEqual(res.estado.permitidos, 2, 'solo las 2 conexiones a 127.0.0.1 cuentan como permitidas');
+assert.deepStrictEqual(res.estado.destinos, destinosEsperados, 'el fetch también pasó por el control de sockets');
 assert.strictEqual(res.estado.bloqueados, BLOQUEADOS.length);
-console.log('2) loopback permitido: dns.lookup("127.0.0.1"), listen y connect a 127.0.0.1 (1 conexión contada): OK');
+console.log('2) loopback permitido: dns.lookup("127.0.0.1"), listen/connect y fetch http a 127.0.0.1 (2 conexiones contadas): OK');
 
-assert.match(r.stderr, new RegExp(`SOLO-LOOPBACK permitidos=1 destinos=\\[127\\.0\\.0\\.1:${res.estado.puerto}\\] bloqueados=${BLOQUEADOS.length} `));
+assert.match(r.stderr, new RegExp(`SOLO-LOOPBACK permitidos=2 destinos=\\[[^\\]]*\\] bloqueados=${BLOQUEADOS.length} `));
 console.log('3) resumen en stderr al salir con los contadores correctos: OK');
 
 console.log('\nTodas las pruebas del preload de solo loopback pasaron.');

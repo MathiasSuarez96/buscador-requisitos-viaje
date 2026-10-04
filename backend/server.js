@@ -10,7 +10,7 @@ const mongoose = require('./config/mongoose');
 const { crearApp } = require('./app');
 
 function iniciar(env = process.env) {
-  const app = crearApp();
+  const app = crearApp({ panel: { env } });
 
   mongoose.connect(env.MONGODB_URI)
     .then(() => console.log('Conectado a MongoDB Atlas'))

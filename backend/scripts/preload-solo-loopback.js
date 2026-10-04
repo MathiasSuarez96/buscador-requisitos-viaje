@@ -4,8 +4,9 @@
  * ::1). Se bloquean y cuentan:
  *  - sockets a cualquier otro host, a "localhost" (evita la resolución
  *    DNS) y a rutas IPC;
- *  - TLS, DNS, http/https y fetch (única excepción: dns.lookup de un
- *    literal de loopback, que no consulta ningún DNS; ver abajo);
+ *  - TLS, DNS, http/https y fetch (excepciones: dns.lookup de un literal
+ *    de loopback, que no consulta ningún DNS, y fetch a http://127.0.0.1 o
+ *    http://[::1]; ver abajo);
  *  - require('dotenv') (ningún .env se carga).
  * child_process queda permitido: mongodb-memory-server lanza mongod.
  *
@@ -74,7 +75,21 @@ http.request = () => bloquear('http.request');
 http.get = () => bloquear('http.get');
 https.request = () => bloquear('https.request');
 https.get = () => bloquear('https.get');
-globalThis.fetch = async () => bloquear('fetch');
+// fetch solo hacia http://127.0.0.1 o http://[::1] (servidores de prueba
+// locales, p. ej. un JWKS); la conexión de fondo igual pasa por el control
+// de net.Socket#connect. Cualquier otro destino o esquema se bloquea.
+const fetchOriginal = globalThis.fetch;
+globalThis.fetch = async (recurso, ...resto) => {
+  let url;
+  try {
+    url = new URL(typeof recurso === 'string' ? recurso : recurso instanceof URL ? recurso.href : recurso?.url);
+  } catch {
+    return bloquear('fetch(url inválida)');
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  if (url.protocol === 'http:' && HOSTS_PERMITIDOS.has(host)) return fetchOriginal(recurso, ...resto);
+  return bloquear(`fetch(${url.protocol}//${url.host})`);
+};
 
 const cargarOriginal = Module._load;
 Module._load = function (pedido, ...resto) {

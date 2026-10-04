@@ -44,8 +44,15 @@
  * Un E11000 sin esa coincidencia es ErrorInconsistencia: alguien escribió
  * por fuera del servicio.
  *
- * Identidad: ver operadores-autorizados.js (evidencia operativa por
- * connectionStatus; NO es no repudio). La entrada no acepta actor.
+ * Identidad: la entrada NUNCA acepta actor ni datos de identidad. La
+ * resuelve el servicio por una de dos vías:
+ *  - deps.resolverIdentidad() inyectada (panel): devuelve
+ *    { actor, identidad_operador, comando } construido y verificado por el
+ *    servidor a partir del token OIDC (ver middleware/panel.js);
+ *  - si no se inyecta (CLI): connectionStatus + allowlist, ver
+ *    operadores-autorizados.js (evidencia operativa; NO es no repudio).
+ * En ambos casos la forma se valida (validarResolucionIdentidad) antes del
+ * gate: una resolución malformada no llega a ninguna escritura.
  *
  * Orden: validar entrada → cargar allowlist → resolver actor → gate de
  * índices (INDICES_DECISION) → generar evento_id/ocurrido_en → validar el
@@ -158,8 +165,15 @@ function construirUpdateCas(e, eventoId, ocurridoEn) {
   return { $set, $inc: { version_coordinacion: 1 } };
 }
 
+// `resolucion.comando` (obligatorio) identifica el origen de la decisión:
+// la CLI ('decidir-propuesta') o el panel ('panel-propuestas'). Sin él no
+// hay evento: nunca se atribuye una decisión a un origen por defecto.
 function construirEvento(e, eventoId, ocurridoEn, resolucion) {
-  const detalle = { identidad_operador: { ...resolucion.identidad_operador }, comando: { ...COMANDO } };
+  const { comando } = resolucion ?? {};
+  if (comando === null || typeof comando !== 'object' || typeof comando.nombre !== 'string' || typeof comando.version !== 'string') {
+    throw new TypeError('construirEvento: resolucion.comando { nombre, version } es obligatorio.');
+  }
+  const detalle = { identidad_operador: { ...resolucion.identidad_operador }, comando: { nombre: comando.nombre, version: comando.version } };
   if (e.tipo_evento === 'cancelacion') detalle.decision_aprobacion_id_cancelada = e.decision_aprobacion_id_esperado;
   const evento = {
     evento_id: eventoId,
@@ -276,10 +290,47 @@ function resultadoRegistrada(evento, causaRelectura = null) {
   };
 }
 
+const esObjetoPlano = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
+const esTexto = (v) => typeof v === 'string' && v.trim() !== '' && v === v.trim();
+
+// Pura. Valida la forma de una resolución de identidad y devuelve una copia
+// congelada. Solo actor humano; identidad_operador con `metodo` y valores
+// string; comando { nombre, version }. Una forma inválida es un error de
+// programación (TypeError): nunca se escribe con una identidad dudosa.
+function validarResolucionIdentidad(r) {
+  const falla = (m) => {
+    throw new TypeError(`decidirPropuesta: resolución de identidad inválida: ${m}`);
+  };
+  if (!esObjetoPlano(r)) falla('no es un objeto.');
+  const { actor, identidad_operador: io, comando } = r;
+  if (!esObjetoPlano(actor) || Object.keys(actor).sort().join() !== 'identificador,tipo') falla('actor debe ser { tipo, identificador }.');
+  if (actor.tipo !== 'humano') falla('actor.tipo debe ser "humano".');
+  if (!esTexto(actor.identificador)) falla('actor.identificador vacío.');
+  if (!esObjetoPlano(io) || !esTexto(io.metodo)) falla('identidad_operador debe traer metodo.');
+  if (!Object.values(io).every(esTexto)) falla('identidad_operador solo admite strings no vacíos.');
+  if (!esObjetoPlano(comando) || Object.keys(comando).sort().join() !== 'nombre,version' || !esTexto(comando.nombre) || !esTexto(comando.version)) {
+    falla('comando debe ser { nombre, version }.');
+  }
+  return Object.freeze({
+    actor: Object.freeze({ tipo: actor.tipo, identificador: actor.identificador }),
+    identidad_operador: Object.freeze({ ...io }),
+    comando: Object.freeze({ nombre: comando.nombre, version: comando.version })
+  });
+}
+
+// Vía de la CLI: connectionStatus + allowlist. La allowlist se carga antes de
+// consultar la conexión (una configuración inválida aborta primero).
+async function identidadPorConnectionStatus(deps) {
+  const operadores = deps.operadoresAutorizados();
+  const { actor, identidad_operador } = resolverActor(await deps.usuariosAutenticados(), operadores);
+  return { actor, identidad_operador, comando: { ...COMANDO } };
+}
+
 async function decidirPropuesta(entrada, deps = crearDependenciasMongoose()) {
   validarEntrada(entrada);
-  const operadores = deps.operadoresAutorizados();
-  const resolucion = resolverActor(await deps.usuariosAutenticados(), operadores);
+  const resolucion = validarResolucionIdentidad(
+    typeof deps.resolverIdentidad === 'function' ? await deps.resolverIdentidad() : await identidadPorConnectionStatus(deps)
+  );
   await deps.verificarIndices();
 
   // Una sola vez, fuera del callback: toda re-ejecución de la
@@ -427,6 +478,8 @@ module.exports = {
   ErrorActorNoAutorizado,
   ErrorPrecondicionIndices,
   validarEntrada,
+  validarResolucionIdentidad,
+  identidadPorConnectionStatus,
   construirFiltroCas,
   construirUpdateCas,
   construirEvento,

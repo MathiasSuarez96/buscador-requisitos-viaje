@@ -49,11 +49,14 @@ const {
   ErrorActorNoAutorizado,
   ErrorPrecondicionIndices,
   construirEvento,
+  validarResolucionIdentidad,
+  identidadPorConnectionStatus,
   verificarListadoIndices,
   decidirPropuesta,
   crearDependenciasMongoose
 } = require('../services/propuestas/decidir-propuesta');
 const { cargarOperadoresAutorizados, resolverActor } = require('../services/propuestas/operadores-autorizados');
+const { COMANDO_PANEL, cargarOperadoresPanel, resolverOperadorPanel } = require('../services/panel/operadores-panel');
 
 // Armado por partes para que el literal nunca aparezca en el código.
 const PROPUESTA_REAL_PROTEGIDA = ['054d03c8', 'e9ba', '4352', '8370', 'e4f88534f612'].join('-');
@@ -809,7 +812,7 @@ function hashAlterado(h) {
       const store = storeDe('aprobada');
       const [p] = foto(store).propuestas;
       const entrada = entradaDesde(p, 'cancelacion');
-      const resolucion = resolverActor([USUARIO], cargarOperadoresAutorizados(OPERADORES_JSON));
+      const resolucion = { ...resolverActor([USUARIO], cargarOperadoresAutorizados(OPERADORES_JSON)), comando: COMANDO };
       const evento = construirEvento(entrada, '33333333-3333-4333-8333-000000000001', OCURRIDO_EN, resolucion);
       const { deps } = crearEntorno(store, {
         fallas: {
@@ -874,7 +877,7 @@ function hashAlterado(h) {
       {
         const store = storeDe('aprobada');
         const entrada = entradaDesde(foto(store).propuestas[0], 'cancelacion');
-        const resolucion = resolverActor([USUARIO], cargarOperadoresAutorizados(OPERADORES_JSON));
+        const resolucion = { ...resolverActor([USUARIO], cargarOperadoresAutorizados(OPERADORES_JSON)), comando: COMANDO };
         const evento = construirEvento(entrada, '33333333-3333-4333-8333-000000000001', OCURRIDO_EN, resolucion);
         const { deps } = crearEntorno(store, {
           fallas: {
@@ -1124,6 +1127,146 @@ function hashAlterado(h) {
       EventoPropuesta.prototype.save = originales.saveEvento;
     }
     console.log('15) dependencias reales con stubs: gate, connectionStatus, opciones de transacción/updateOne/save correctas: OK');
+  }
+
+  // ============================================================
+  // 17) Identidad inyectada (panel): resolverIdentidad reemplaza a
+  //     connectionStatus, se valida antes del gate y queda en el evento
+  // ============================================================
+  {
+    const IDENTIDAD_PANEL = {
+      actor: { tipo: 'humano', identificador: 'operador.panel' },
+      identidad_operador: { metodo: 'oidc_google', sub: '1234567890', email: 'operador@example.com' },
+      comando: { nombre: 'panel-propuestas', version: '1' }
+    };
+    const conIdentidad = (store, resolver, opciones) => {
+      const entorno = crearEntorno(store, opciones);
+      entorno.llamadas.resolver = 0;
+      entorno.deps.resolverIdentidad = async () => {
+        entorno.llamadas.resolver++;
+        return typeof resolver === 'function' ? resolver() : resolver;
+      };
+      return entorno;
+    };
+
+    // a) Decisión registrada con la identidad inyectada; connectionStatus no se consulta.
+    {
+      const store = storeDe('pendiente_aprobacion');
+      const [p] = foto(store).propuestas;
+      const { deps, llamadas } = conIdentidad(store, IDENTIDAD_PANEL, { operadoresJson: undefined, usuarios: [] });
+      const r = await decidirPropuesta(entradaDesde(p, 'aprobacion'), deps);
+      assert.strictEqual(r.resultado, 'decision_registrada');
+      assert.deepStrictEqual([llamadas.resolver, llamadas.operadores, llamadas.usuarios], [1, 0, 0], 'no usa connectionStatus ni la allowlist de la CLI');
+      const ev = foto(store).eventos.at(-1);
+      assert.deepStrictEqual(ev.actor, IDENTIDAD_PANEL.actor);
+      assert.deepStrictEqual(ev.detalle, { identidad_operador: IDENTIDAD_PANEL.identidad_operador, comando: IDENTIDAD_PANEL.comando });
+      assert.deepStrictEqual(r.actor, IDENTIDAD_PANEL.actor);
+    }
+
+    // b) Rechazo con motivo, misma identidad.
+    {
+      const store = storeDe('pendiente_aprobacion');
+      const [p] = foto(store).propuestas;
+      const { deps } = conIdentidad(store, IDENTIDAD_PANEL);
+      const r = await decidirPropuesta(entradaDesde(p, 'rechazo'), deps);
+      assert.strictEqual(r.resultado, 'decision_registrada');
+      assert.strictEqual(foto(store).eventos.at(-1).detalle.comando.nombre, 'panel-propuestas');
+    }
+
+    // c) Formas inválidas → TypeError antes del gate y de toda transacción.
+    const invalidas = [
+      ['null', null],
+      ['actor sistema', { ...IDENTIDAD_PANEL, actor: { tipo: 'sistema', identificador: 'x' } }],
+      ['actor con clave extra', { ...IDENTIDAD_PANEL, actor: { ...IDENTIDAD_PANEL.actor, rol: 'admin' } }],
+      ['identificador vacío', { ...IDENTIDAD_PANEL, actor: { tipo: 'humano', identificador: ' ' } }],
+      ['sin metodo', { ...IDENTIDAD_PANEL, identidad_operador: { sub: '1' } }],
+      ['identidad con valor no string', { ...IDENTIDAD_PANEL, identidad_operador: { metodo: 'oidc_google', sub: 1 } }],
+      ['sin comando', { actor: IDENTIDAD_PANEL.actor, identidad_operador: IDENTIDAD_PANEL.identidad_operador }],
+      ['comando con clave extra', { ...IDENTIDAD_PANEL, comando: { ...IDENTIDAD_PANEL.comando, x: 'y' } }]
+    ];
+    for (const [nombre, resolucion] of invalidas) {
+      const store = storeDe('pendiente_aprobacion');
+      const antes = foto(store);
+      const { deps, llamadas } = conIdentidad(store, resolucion);
+      await assertRechaza(decidirPropuesta(entradaDesde(antes.propuestas[0], 'aprobacion'), deps), TypeError, nombre);
+      assert.deepStrictEqual([llamadas.verificarIndices, llamadas.uuid, llamadas.transacciones], [0, 0, 0], nombre);
+      assert.deepStrictEqual(foto(store), antes, nombre);
+    }
+
+    // d) resolverIdentidad que lanza (p. ej. operador no autorizado) → nada se escribe.
+    {
+      const store = storeDe('pendiente_aprobacion');
+      const antes = foto(store);
+      const { deps, llamadas } = conIdentidad(store, () => {
+        throw new ErrorActorNoAutorizado('Operador no autorizado: prueba');
+      });
+      await assertRechaza(decidirPropuesta(entradaDesde(antes.propuestas[0], 'aprobacion'), deps), ErrorActorNoAutorizado, 'resolver lanza');
+      assert.deepStrictEqual([llamadas.verificarIndices, llamadas.transacciones], [0, 0]);
+      assert.deepStrictEqual(foto(store), antes);
+    }
+
+    // e) La entrada nunca puede traer identidad, aunque haya resolverIdentidad.
+    for (const extra of [{ actor: IDENTIDAD_PANEL.actor }, { identidad_operador: IDENTIDAD_PANEL.identidad_operador }, { comando: IDENTIDAD_PANEL.comando }]) {
+      const store = storeDe('pendiente_aprobacion');
+      const { deps, llamadas } = conIdentidad(store, IDENTIDAD_PANEL);
+      await assertRechaza(decidirPropuesta(entradaDesde(foto(store).propuestas[0], 'aprobacion', extra), deps), ErrorEntradaInvalida, Object.keys(extra)[0]);
+      assert.strictEqual(llamadas.resolver, 0, 'la entrada se valida antes de resolver la identidad');
+    }
+
+    // f) La identidad devuelta queda congelada (no se puede alterar después de validarla).
+    {
+      const v = validarResolucionIdentidad(IDENTIDAD_PANEL);
+      assert.ok(Object.isFrozen(v) && Object.isFrozen(v.actor) && Object.isFrozen(v.identidad_operador) && Object.isFrozen(v.comando));
+      assert.notStrictEqual(v.actor, IDENTIDAD_PANEL.actor, 'copia, no la referencia recibida');
+    }
+
+    // g) Sin resolverIdentidad, la CLI sigue igual (connectionStatus + COMANDO de la CLI).
+    {
+      const store = storeDe('pendiente_aprobacion');
+      const r = await identidadPorConnectionStatus(crearEntorno(store).deps);
+      assert.deepStrictEqual(r.comando, COMANDO);
+      assert.strictEqual(r.identidad_operador.metodo, 'connection_status');
+    }
+    // h) Integración real: la salida EXACTA de resolverOperadorPanel() (la que
+    //    será req.operador en el panel) como resolverIdentidad.
+    {
+      const operadores = cargarOperadoresPanel(
+        JSON.stringify([{ proveedor: 'google', sub: '1000', email: 'operador@example.com', identificador: 'operador.panel', permisos: ['ver', 'decidir'] }])
+      );
+      const identidadVerificada = Object.freeze({ proveedor: 'google', iss: 'https://accounts.google.com', sub: '1000', email: 'operador@example.com', email_verificado: true });
+      const operador = resolverOperadorPanel(identidadVerificada, operadores);
+      assert.ok(operador && Object.isFrozen(operador) && Object.isFrozen(operador.comando));
+      for (const tipo of ['aprobacion', 'rechazo']) {
+        const store = storeDe('pendiente_aprobacion');
+        const { deps, llamadas } = crearEntorno(store, { operadoresJson: undefined, usuarios: [] });
+        deps.resolverIdentidad = () => operador; // tal cual, sin adaptar
+        const r = await decidirPropuesta(entradaDesde(foto(store).propuestas[0], tipo), deps);
+        assert.strictEqual(r.resultado, 'decision_registrada', tipo);
+        assert.deepStrictEqual([llamadas.operadores, llamadas.usuarios], [0, 0], `${tipo}: sin connectionStatus`);
+        const ev = foto(store).eventos.at(-1);
+        assert.deepStrictEqual(ev.detalle.comando, { nombre: 'panel-propuestas', version: '1' }, `${tipo}: comando del panel`);
+        assert.deepStrictEqual(ev.detalle.comando, { ...COMANDO_PANEL });
+        assert.notStrictEqual(ev.detalle.comando.nombre, COMANDO.nombre, `${tipo}: nunca decidir-propuesta`);
+        assert.deepStrictEqual(ev.actor, { tipo: 'humano', identificador: 'operador.panel' });
+        assert.deepStrictEqual(ev.detalle.identidad_operador, { metodo: 'oidc_google', sub: '1000', email: 'operador@example.com' });
+        assert.ok(!('permisos' in ev.detalle) && !('identificador' in ev.detalle), `${tipo}: solo actor/identidad/comando llegan al evento`);
+      }
+      assert.ok(Object.isFrozen(COMANDO_PANEL), 'COMANDO_PANEL congelado');
+    }
+
+    // i) construirEvento exige comando: nunca hay un origen por defecto.
+    {
+      const p = fixture('pendiente_aprobacion').propuesta;
+      const sinComando = resolverActor([USUARIO], cargarOperadoresAutorizados(OPERADORES_JSON));
+      assert.throws(() => construirEvento(entradaDesde(p, 'aprobacion'), '33333333-3333-4333-8333-000000000001', OCURRIDO_EN, sinComando), TypeError);
+      assert.throws(() => construirEvento(entradaDesde(p, 'aprobacion'), '33333333-3333-4333-8333-000000000001', OCURRIDO_EN, { ...sinComando, comando: { nombre: 'x' } }), TypeError);
+      const ev = construirEvento(entradaDesde(p, 'aprobacion'), '33333333-3333-4333-8333-000000000001', OCURRIDO_EN, {
+        ...sinComando,
+        comando: { nombre: 'panel-propuestas', version: '1', extra: 'x' }
+      });
+      assert.deepStrictEqual(ev.detalle.comando, { nombre: 'panel-propuestas', version: '1' }, 'solo nombre/version, sin fallback ni claves extra');
+    }
+    console.log(`17) identidad inyectada: registra actor/identidad/comando del panel sin connectionStatus; ${invalidas.length} formas inválidas, resolver que lanza y identidad en la entrada → sin escrituras; salida real de resolverOperadorPanel() → evento con panel-propuestas; construirEvento sin comando → TypeError: OK`);
   }
 
   // ============================================================

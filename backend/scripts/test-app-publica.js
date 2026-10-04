@@ -1,37 +1,20 @@
 // Pruebas de app.js: las rutas públicas responden igual que antes de
 // separar la app del arranque. La app escucha en 127.0.0.1 con un puerto
 // efímero y los modelos se reemplazan por dobles: no hay Mongo ni red
-// externa. El cliente HTTP es un socket TCP mínimo a 127.0.0.1 (compatible
-// con preload-solo-loopback.js, que bloquea http.request y fetch).
+// externa. El cliente HTTP (scripts/lib/http-prueba.js) es un socket TCP
+// mínimo a 127.0.0.1, compatible con preload-solo-loopback.js.
 //
 // Uso: node --require ./scripts/preload-solo-loopback.js scripts/test-app-publica.js
 
 const assert = require('assert');
-const net = require('net');
+const { pedir, get } = require('./lib/http-prueba');
 
 const { crearApp } = require('../app');
 const mongoose = require('mongoose');
 const Destino = require('../models/Destino.model');
+const destinosRoutes = require('../routes/destinos.routes');
 const ReglaGeneral = require('../models/ReglaGeneral.model');
 
-// GET mínimo sobre TCP: devuelve { status, headers, body }.
-function get(puerto, ruta, headers = {}) {
-  return new Promise((resolve, reject) => {
-    const socket = net.connect({ host: '127.0.0.1', port: puerto });
-    const partes = [];
-    socket.on('data', (d) => partes.push(d));
-    socket.on('error', reject);
-    socket.on('end', () => {
-      const crudo = Buffer.concat(partes).toString('utf8');
-      const fin = crudo.indexOf('\r\n\r\n');
-      const [linea, ...resto] = crudo.slice(0, fin).split('\r\n');
-      const h = Object.fromEntries(resto.map((l) => [l.slice(0, l.indexOf(':')).toLowerCase(), l.slice(l.indexOf(':') + 1).trim()]));
-      resolve({ status: Number(linea.split(' ')[1]), headers: h, body: crudo.slice(fin + 4) });
-    });
-    const extra = Object.entries(headers).map(([k, v]) => `${k}: ${v}\r\n`).join('');
-    socket.write(`GET ${ruta} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n${extra}\r\n`);
-  });
-}
 
 const DESTINOS = [
   { _id: '000000000000000000000001', pais: 'Argentina', codigo_iso: 'AR', requisitos: [] },
@@ -63,7 +46,10 @@ ReglaGeneral.findById = async (id) => {
 };
 
 (async () => {
-  const servidor = crearApp().listen(0, '127.0.0.1');
+  // Sin env: el panel queda deshabilitado (503). El aviso se captura.
+  const avisos = [];
+  const app = crearApp({ panel: { registrar: (e) => avisos.push(e) } });
+  const servidor = app.listen(0, '127.0.0.1');
   await new Promise((r) => servidor.once('listening', r));
   const { port } = servidor.address();
   try {
@@ -116,14 +102,27 @@ ReglaGeneral.findById = async (id) => {
     }
 
     // ============================================================
-    // 4) Preflight CORS público y rutas inexistentes
+    // 4) Panel sin configuración: 503 cerrado y separado del CORS público
     // ============================================================
     {
-      const r = await get(port, '/api/panel/sesion');
-      assert.strictEqual(r.status, 404, 'el panel todavía no existe');
+      for (const ruta of ['/api/panel/sesion', '/api/panel/propuestas', '/api/panel/x']) {
+        const r = await get(port, ruta, { Origin: 'https://cualquiera.example' });
+        assert.strictEqual(r.status, 503, ruta);
+        assert.strictEqual(JSON.parse(r.body).error.codigo, 'no_disponible', ruta);
+        assert.strictEqual(r.headers['cache-control'], 'no-store', `${ruta}: no-store`);
+        assert.strictEqual(r.headers['access-control-allow-origin'], undefined, `${ruta}: el CORS público no alcanza al panel`);
+      }
+      assert.deepStrictEqual(
+        avisos.filter((a) => a.evento === 'panel_deshabilitado').map((a) => a.motivo),
+        ['GOOGLE_CLIENT_ID: ausente o con forma inválida.'],
+        'un único aviso al crear la app, sin valores de variables'
+      );
+      const errores = avisos.filter((a) => a.evento === 'panel_error');
+      assert.strictEqual(errores.length, 3, 'cada pedido rechazado queda registrado');
+      assert.ok(errores.every((e) => e.status === 503 && e.codigo === 'no_disponible' && typeof e.request_id === 'string'));
       const otra = await get(port, '/api/inexistente');
       assert.strictEqual(otra.status, 404);
-      console.log('4) /api/panel/* y rutas inexistentes: 404: OK');
+      console.log('4) /api/panel/* sin configuración → 503 no_disponible, no-store y sin CORS público; rutas públicas inexistentes → 404: OK');
     }
 
     // ============================================================
@@ -134,6 +133,25 @@ ReglaGeneral.findById = async (id) => {
       assert.strictEqual(mongoose.get('autoCreate'), false);
       assert.strictEqual(mongoose.get('autoIndex'), false);
       console.log('5) la app sirvió pedidos sin conectar a Mongo; autoCreate/autoIndex en false: OK');
+    }
+
+    // ============================================================
+    // 6) Sin parser JSON global: las rutas públicas no lo necesitan
+    // ============================================================
+    {
+      // La app no monta ningún parser de body propio (el del panel vive
+      // dentro de su router).
+      const nombres = app.router.stack.map((capa) => capa.name);
+      assert.ok(!nombres.some((n) => /json|urlencoded|raw|text|bodyParser/i.test(n)), `capas de la app: ${nombres.join(', ')}`);
+      // Todas las rutas públicas son GET: ninguna lee un body.
+      const metodos = destinosRoutes.stack.flatMap((capa) => Object.keys(capa.route?.methods ?? {}));
+      assert.deepStrictEqual([...new Set(metodos)], ['get']);
+      // Un POST con JSON a la API pública no se procesa: 404, como cualquier ruta inexistente.
+      estado.llamadas = [];
+      const r = await pedir(port, 'POST', '/api/destinos', { 'Content-Type': 'application/json' }, JSON.stringify({ x: 1 }));
+      assert.strictEqual(r.status, 404);
+      assert.strictEqual(estado.llamadas.filter(([m]) => m === 'find').length, 0, 'el POST no llegó a ningún controlador');
+      console.log(`6) sin parser JSON global (capas: ${nombres.join(' → ')}); rutas públicas solo GET; POST público → 404: OK`);
     }
 
     console.log('\nTodas las pruebas de la app pública pasaron (solo 127.0.0.1, sin Mongo).');
