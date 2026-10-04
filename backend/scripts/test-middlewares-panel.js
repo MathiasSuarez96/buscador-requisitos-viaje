@@ -83,7 +83,22 @@ function assertError(r, status, codigo, etiqueta) {
   };
   const bearer = async (claims) => ({ Authorization: `Bearer ${await token(claims)}` });
 
-  const { llamar, cerrar } = await levantar({ env: envDe(), verificador });
+  // Lector de propuestas de prueba: registra cada lectura para comprobar que
+  // nada llega a él sin autenticación + autorización, ni desde /sesion.
+  const LECTURAS = [];
+  const propuestas = {
+    listar: async (c) => {
+      LECTURAS.push(['listar', c.estados.join(), c.limite]);
+      return { propuestas: [], filtro: { estados: [...c.estados] }, limite: c.limite, siguiente_cursor: null };
+    },
+    detalle: async (id, operador) => {
+      LECTURAS.push(['detalle', id, operador.identificador]);
+      return null;
+    }
+  };
+  const UUID_PROPUESTA = '11111111-1111-4111-8111-111111111111';
+
+  const { llamar, cerrar } = await levantar({ env: envDe(), verificador, propuestas });
   try {
     // ============================================================
     // 1) /sesion exige un token válido (sin autorización previa)
@@ -145,22 +160,36 @@ function assertError(r, status, codigo, etiqueta) {
       );
       assert.strictEqual(intento.status, 200);
       assert.deepStrictEqual([cuerpo(intento).identidad.sub, cuerpo(intento).autorizado, cuerpo(intento).permisos], ['9999', false, []]);
-      console.log('2) /sesion con token válido: sub desconocido → autorizado:false sin propuestas; operador → permisos; body/query/headers con identidad ignorados: OK');
+      assert.deepStrictEqual(LECTURAS, [], '/sesion no consulta propuestas');
+      console.log('2) /sesion con token válido: sub desconocido → autorizado:false sin propuestas (0 lecturas); operador → permisos; body/query/headers con identidad ignorados: OK');
     }
 
     // ============================================================
     // 3) El resto del panel exige autenticación + autorización + permiso
     // ============================================================
     {
-      for (const ruta of ['/api/panel/propuestas', '/api/panel/propuestas/x', '/api/panel/cualquier-cosa']) {
+      const rutas = ['/api/panel/propuestas', '/api/panel/propuestas/x', `/api/panel/propuestas/${UUID_PROPUESTA}`, '/api/panel/cualquier-cosa'];
+      for (const ruta of rutas) {
         assertError(await llamar('GET', ruta), 401, 'no_autenticado', `${ruta} sin token`);
         assertError(await llamar('GET', ruta, await bearer({ sub: '9999' })), 403, 'no_autorizado', `${ruta} fuera de la lista`);
         assertError(await llamar('GET', ruta, await bearer({ sub: '2000' })), 403, 'sin_permiso', `${ruta} sin permiso ver`);
-        assertError(await llamar('GET', ruta, await bearer()), 404, 'no_encontrado', `${ruta} autorizado (todavía no existe)`);
       }
+      assert.deepStrictEqual(LECTURAS, [], 'sin autenticación/autorización no se lee ninguna propuesta');
+
+      const lista = await llamar('GET', '/api/panel/propuestas', await bearer());
+      assert.strictEqual(lista.status, 200);
+      assert.strictEqual(lista.headers['cache-control'], 'no-store');
+      assert.deepStrictEqual(cuerpo(lista), { propuestas: [], filtro: { estados: ['pendiente_aprobacion'] }, limite: 20, siguiente_cursor: null });
+      assertError(await llamar('GET', '/api/panel/propuestas/x', await bearer()), 400, 'solicitud_invalida', 'propuesta_id no UUID');
+      assertError(await llamar('GET', `/api/panel/propuestas/${UUID_PROPUESTA}`, await bearer()), 404, 'no_encontrado', 'propuesta inexistente');
+      assertError(await llamar('GET', '/api/panel/cualquier-cosa', await bearer()), 404, 'no_encontrado', 'ruta inexistente autorizada');
+      assert.deepStrictEqual(LECTURAS, [
+        ['listar', 'pendiente_aprobacion', 20],
+        ['detalle', UUID_PROPUESTA, 'operador.panel']
+      ]);
       // POST /sesion no existe: también queda detrás de autenticación.
       assertError(await llamar('POST', '/api/panel/sesion', { 'Content-Type': 'application/json' }, '{}'), 401, 'no_autenticado', 'POST /sesion sin token');
-      console.log('3) /propuestas y cualquier otra ruta: sin token 401, fuera de la lista 403, sin permiso "ver" 403, autorizado 404 (bloques 3/4): OK');
+      console.log('3) /propuestas y cualquier otra ruta: sin token 401, fuera de la lista 403, sin permiso "ver" 403 (0 lecturas); autorizado: listado 200, id inválido 400, inexistente 404, otra ruta 404: OK');
     }
 
     // ============================================================

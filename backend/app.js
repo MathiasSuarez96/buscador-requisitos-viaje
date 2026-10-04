@@ -11,18 +11,24 @@
  * parser JSON global: las rutas públicas son solo GET y no leen el body.
  */
 
-require('./config/mongoose');
+const mongoose = require('./config/mongoose');
 const express = require('express');
 const cors = require('cors');
 const destinosRoutes = require('./routes/destinos.routes');
 const { crearRouterPanel } = require('./routes/panel.routes');
 const { cargarConfigPanel } = require('./services/panel/config-panel');
 const { crearVerificadorGoogle } = require('./services/panel/verificar-token-google');
+const { crearLectorPropuestas } = require('./services/panel/lectura-propuestas');
 const { crearRegistrador } = require('./utils/sanear-registro');
 
-// panel: { env, verificador?, registrar? }. Sin env, el panel queda
-// deshabilitado (503): crearApp() nunca lee process.env por su cuenta.
-function armarPanel({ env = {}, verificador, registrar = crearRegistrador() } = {}) {
+// Db nativo de la conexión de Mongoose, solo si está conectada (readyState 1).
+const dbConectada = () => (mongoose.connection.readyState === 1 ? mongoose.connection.db : null);
+
+// panel: { env, verificador?, registrar?, propuestas? }. Sin env, el panel
+// queda deshabilitado (503): crearApp() nunca lee process.env por su cuenta.
+// propuestas: lector inyectable; por defecto lee con el driver nativo de la
+// conexión de Mongoose (sin modelos de propuestas).
+function armarPanel({ env = {}, verificador, registrar = crearRegistrador(), propuestas } = {}) {
   let config = null;
   try {
     config = cargarConfigPanel(env);
@@ -30,7 +36,12 @@ function armarPanel({ env = {}, verificador, registrar = crearRegistrador() } = 
     registrar({ nivel: 'aviso', evento: 'panel_deshabilitado', motivo: err.message });
     return { config: null, verificador: null, registrar };
   }
-  return { config, verificador: verificador ?? crearVerificadorGoogle({ clientId: config.clientId }), registrar };
+  return {
+    config,
+    verificador: verificador ?? crearVerificadorGoogle({ clientId: config.clientId }),
+    registrar,
+    propuestas: propuestas ?? crearLectorPropuestas({ obtenerDb: dbConectada })
+  };
 }
 
 function crearApp({ panel } = {}) {
