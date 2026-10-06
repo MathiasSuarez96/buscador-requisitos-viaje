@@ -22,17 +22,28 @@
  *
  * DETALLE (GET /api/panel/propuestas/:propuesta_id)
  *   1. propuestas_cambio.findOne({ propuesta_id })
- *   2. hash recalculado en el servidor (hashSobreCanonico)
- *   3. destinos.findOne({ _id: ObjectId(payload.destino_id) }) con
+ *   2-4. evaluarIntegridad (la MISMA función que usa la aprobación POST):
+ *      hash recalculado en el servidor (hashSobreCanonico);
+ *      destinos.findOne({ _id: ObjectId(payload.destino_id) }) con
  *      proyección { pais, codigo_iso, requisitos }; identidad con
- *      clasificarIdentidadRequisito + validarIdentidad del adaptador
- *   4. valor actual del campo { presente, valor } contra valor_anterior
+ *      clasificarIdentidadRequisito + validarIdentidad del adaptador;
+ *      valor actual del campo { presente, valor } contra valor_anterior
  *   5. eventos_propuesta.find({ propuesta_id }) ordenado por
  *      { version_coordinacion_nueva: 1, _id: 1 }, con proyección que NO
  *      trae detalle.identidad_operador (sub, email, usuario_atlas).
- *   acciones_permitidas: ['aprobar', 'rechazar'] solo si todo coincide, el
- *   estado es pendiente_aprobacion y el operador tiene "decidir"; si no, []
- *   y motivos_sin_acciones dice por qué.
+ *   acciones_bloqueadas: { aprobar: [...], rechazar: [...] }, los motivos
+ *   por los que cada acción NO está disponible ([] = permitida):
+ *     - coordinación (ambas): payload_hash_invalido,
+ *       version_coordinacion_invalida, decision_previa_existente;
+ *     - integridad (solo aprobar): hash_no_coincide, datos_inconsistentes,
+ *       requisito_no_coincide, valor_actual_cambio;
+ *     - estado y permiso (ambas): estado_no_permite_decision,
+ *       sin_permiso_decidir.
+ *   acciones_permitidas: las de lista vacía, en orden ['aprobar', 'rechazar'].
+ *   Regla: el panel solo ofrece una decisión si puede construir un body
+ *   válido y el CAS puede coincidir con los datos actuales (payload_hash
+ *   SHA-256 hex, version_coordinacion entero seguro >= 0 y, si está
+ *   pendiente, decision_aprobacion_id null).
  *
  * Nunca se devuelve: el payload canónico, fragmento_html ni ningún otro
  * campo de la evidencia fuera de la lista blanca, identidad_operador
@@ -370,17 +381,45 @@ function evaluarRequisitoActual(p, destino, adaptador) {
   return { estado, destino: destinoSeguro, requisito, valor_actual: valorActualSeguro, valor };
 }
 
-// Pura. Acciones de decisión que el panel podría ofrecer. [] con motivos si
-// cualquier verificación falla.
-function calcularAcciones({ hash, problemas, requisitoActual, estado, operador }) {
+const ACCIONES = Object.freeze(['aprobar', 'rechazar']);
+
+// Pura. Precondiciones de COORDINACIÓN: sin ellas no se puede armar un body
+// válido o el CAS no puede coincidir con los datos actuales. Bloquean
+// aprobar y rechazar. decisionAprobacionId: el del documento, con ausente
+// como null (así lo trata el filtro CAS).
+function motivosCoordinacion({ hash, version, decisionAprobacionId, estado }) {
   const motivos = [];
-  if (!hash.coincide) motivos.push('hash_no_coincide');
+  if (hash.declarado === null) motivos.push('payload_hash_invalido');
+  if (!Number.isSafeInteger(version) || version < 0) motivos.push('version_coordinacion_invalida');
+  if (estado === 'pendiente_aprobacion' && decisionAprobacionId !== null) motivos.push('decision_previa_existente');
+  return motivos;
+}
+
+// Pura. Problemas de integridad que impiden APROBAR ([] = íntegra). Los
+// mismos códigos usa el 422 propuesta_no_decidible de la aprobación. Un
+// payload_hash inválido es de coordinación (motivosCoordinacion).
+function motivosIntegridad({ hash, problemas, requisitoActual }) {
+  const motivos = [];
+  if (hash.declarado !== null && !hash.coincide) motivos.push('hash_no_coincide');
   if (problemas.length > 0) motivos.push('datos_inconsistentes');
   if (requisitoActual.estado !== 'coincide') motivos.push('requisito_no_coincide');
   if (requisitoActual.valor !== 'coincide') motivos.push('valor_actual_cambio');
-  if (estado !== 'pendiente_aprobacion') motivos.push('estado_no_permite_decision');
-  if (!operador.permisos.includes('decidir')) motivos.push('sin_permiso_decidir');
-  return { acciones_permitidas: motivos.length === 0 ? ['aprobar', 'rechazar'] : [], motivos_sin_acciones: motivos };
+  return motivos;
+}
+
+// Pura. Motivos por los que cada acción no está disponible; permitidas son
+// las que quedan sin motivos. version/decisionAprobacionId: los del
+// documento (el detalle los pasa siempre).
+function calcularAcciones({ hash, problemas, requisitoActual, estado, operador, version = 0, decisionAprobacionId = null }) {
+  const coordinacion = motivosCoordinacion({ hash, version, decisionAprobacionId, estado });
+  const bloqueos = [];
+  if (estado !== 'pendiente_aprobacion') bloqueos.push('estado_no_permite_decision');
+  if (!operador.permisos.includes('decidir')) bloqueos.push('sin_permiso_decidir');
+  const acciones_bloqueadas = {
+    aprobar: [...coordinacion, ...motivosIntegridad({ hash, problemas, requisitoActual }), ...bloqueos],
+    rechazar: [...coordinacion, ...bloqueos]
+  };
+  return { acciones_permitidas: ACCIONES.filter((a) => acciones_bloqueadas[a].length === 0), acciones_bloqueadas };
 }
 
 // ------------------------------------------------------------------
@@ -394,6 +433,23 @@ function elegirAdaptadorOpcional(p, adaptadores) {
     if (err instanceof ErrorSinAdaptador) return null;
     throw err;
   }
+}
+
+// Lectura + evaluación de integridad de una propuesta: ÚNICA fuente para el
+// detalle GET y la aprobación POST. d: Db nativo; solo lee destinos (y solo
+// si payload.destino_id es un ObjectId válido).
+async function evaluarIntegridad(d, p, adaptadores) {
+  const hash = verificarHash(p);
+  const problemas = problemasConsistencia(p);
+  const pl = esObjeto(p.payload) ? p.payload : {};
+  let requisitoActual = { estado: 'no_evaluable', destino: null, requisito: null, valor_actual: null, valor: null };
+  if (typeof pl.destino_id === 'string' && OBJECT_ID_HEX.test(pl.destino_id)) {
+    const destino = await d
+      .collection(COLECCIONES.destinos)
+      .findOne({ _id: ObjectId.createFromHexString(pl.destino_id) }, { projection: { pais: 1, codigo_iso: 1, requisitos: 1 } });
+    requisitoActual = evaluarRequisitoActual(p, destino, elegirAdaptadorOpcional(p, adaptadores));
+  }
+  return { hash, problemas, requisitoActual, motivos: motivosIntegridad({ hash, problemas, requisitoActual }) };
 }
 
 // obtenerDb: () => Db nativo conectado, o null/undefined si no hay conexión.
@@ -424,20 +480,8 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
     const p = await d.collection(COLECCIONES.propuestas).findOne({ propuesta_id: propuestaId });
     if (!p) return null;
 
-    const hash = verificarHash(p);
-    const problemas = problemasConsistencia(p);
+    const { hash, problemas, requisitoActual } = await evaluarIntegridad(d, p, adaptadores);
     const pl = esObjeto(p.payload) ? p.payload : {};
-
-    let destino = null;
-    if (typeof pl.destino_id === 'string' && OBJECT_ID_HEX.test(pl.destino_id)) {
-      destino = await d
-        .collection(COLECCIONES.destinos)
-        .findOne({ _id: ObjectId.createFromHexString(pl.destino_id) }, { projection: { pais: 1, codigo_iso: 1, requisitos: 1 } });
-    }
-    const requisitoActual =
-      typeof pl.destino_id === 'string' && OBJECT_ID_HEX.test(pl.destino_id)
-        ? evaluarRequisitoActual(p, destino, elegirAdaptadorOpcional(p, adaptadores))
-        : { estado: 'no_evaluable', destino: null, requisito: null, valor_actual: null, valor: null };
 
     const eventos = await d
       .collection(COLECCIONES.eventos)
@@ -463,7 +507,15 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
       requisito_actual: requisitoActual,
       eventos: eventos.slice(0, MAXIMO_EVENTOS).map((e) => eventoSeguro(e, operador)),
       eventos_truncados: eventos.length > MAXIMO_EVENTOS,
-      ...calcularAcciones({ hash, problemas, requisitoActual, estado: p.estado, operador })
+      ...calcularAcciones({
+        hash,
+        problemas,
+        requisitoActual,
+        estado: p.estado,
+        operador,
+        version: p.version_coordinacion ?? null,
+        decisionAprobacionId: p.decision_aprobacion_id ?? null
+      })
     };
   }
 
@@ -490,6 +542,10 @@ module.exports = {
   eventoSeguro,
   observarValor,
   evaluarRequisitoActual,
+  ACCIONES,
+  motivosCoordinacion,
+  motivosIntegridad,
   calcularAcciones,
+  evaluarIntegridad,
   crearLectorPropuestas
 };

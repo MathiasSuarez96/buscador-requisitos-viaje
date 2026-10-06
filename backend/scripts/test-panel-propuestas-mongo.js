@@ -141,6 +141,9 @@ const P = {
   valorCambiado: propuesta('valor cambiado', { destino: D.gbConCosto }),
   ausenteVsNull: propuesta('ausente en propuesta, null en destino', { destino: D.gbNull }),
   nullVsNull: propuesta('null en propuesta y en destino', { destino: D.gbNull, valorAnterior: { presente: true, valor: null } }),
+  hashInvalido: propuesta('payload_hash no hex', { extra: { payload_hash: 'no-es-un-hash' } }),
+  versionInvalida: propuesta('version_coordinacion 1.5 (double)', { extra: { version_coordinacion: 1.5 } }),
+  decisionPrevia: propuesta('pendiente con decision_aprobacion_id', { extra: { decision_aprobacion_id: '4db810fc-d491-4166-82d1-8b88fe9b088d' } }),
   aprobada: propuesta('aprobada', { estado: 'aprobada', extra: { version_coordinacion: 1 } }),
   rechazada: propuesta('rechazada', { estado: 'rechazada', extra: { version_coordinacion: 1 } }),
   aplicada: propuesta('aplicada', { estado: 'aplicada', extra: { version_coordinacion: 2 } })
@@ -385,7 +388,7 @@ async function volcado() {
       const r = await detalle(P.valida, '1000');
       assert.strictEqual(r.status, 200);
       const d = r.json;
-      assert.deepStrictEqual(Object.keys(d), ['propuesta', 'integridad', 'requisito_actual', 'eventos', 'eventos_truncados', 'acciones_permitidas', 'motivos_sin_acciones']);
+      assert.deepStrictEqual(Object.keys(d), ['propuesta', 'integridad', 'requisito_actual', 'eventos', 'eventos_truncados', 'acciones_permitidas', 'acciones_bloqueadas']);
       assert.deepStrictEqual(d.integridad, { hash_coincide: true, hash_recalculado: P.valida.doc.payload_hash, consistente: true, problemas: [] });
       assert.deepStrictEqual(d.requisito_actual, {
         estado: 'coincide',
@@ -410,10 +413,10 @@ async function volcado() {
         avisos: []
       });
       assert.deepStrictEqual(d.acciones_permitidas, ['aprobar', 'rechazar']);
-      assert.deepStrictEqual(d.motivos_sin_acciones, []);
+      assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: [], rechazar: [] });
       assert.deepStrictEqual(d.eventos, []);
       const soloVer = await detalle(P.valida, '3000');
-      assert.deepStrictEqual([soloVer.json.acciones_permitidas, soloVer.json.motivos_sin_acciones], [[], ['sin_permiso_decidir']]);
+      assert.deepStrictEqual([soloVer.json.acciones_permitidas, soloVer.json.acciones_bloqueadas], [[], { aprobar: ['sin_permiso_decidir'], rechazar: ['sin_permiso_decidir'] }]);
       console.log('3) detalle válido: forma exacta, hash recalculado, requisito y valor coinciden → [aprobar, rechazar]; operador sin "decidir" → []: OK');
     }
 
@@ -428,21 +431,34 @@ async function volcado() {
         [P.identidadCambiada, 'identidad_semantica_no_coincide', 'coincide', ['requisito_no_coincide']],
         [P.valorCambiado, 'coincide', 'cambio', ['valor_actual_cambio']],
         [P.ausenteVsNull, 'coincide', 'cambio', ['valor_actual_cambio']],
-        [P.nullVsNull, 'coincide', 'coincide', []]
+        [P.nullVsNull, 'coincide', 'coincide', []],
+        [P.hashInvalido, 'coincide', 'coincide', ['payload_hash_invalido'], ['payload_hash_invalido']],
+        [P.versionInvalida, 'coincide', 'coincide', ['version_coordinacion_invalida'], ['version_coordinacion_invalida']],
+        [P.decisionPrevia, 'coincide', 'coincide', ['decision_previa_existente'], ['decision_previa_existente']]
       ];
-      for (const [p, estado, valor, motivos] of casos) {
+      for (const [p, estado, valor, motivos, rechazo = []] of casos) {
         const d = (await detalle(p, '1000')).json;
         assert.strictEqual(d.requisito_actual.estado, estado, `${p.nombre}: estado`);
         assert.strictEqual(d.requisito_actual.valor, valor, `${p.nombre}: valor`);
-        assert.deepStrictEqual(d.motivos_sin_acciones, motivos, `${p.nombre}: motivos`);
-        assert.deepStrictEqual(d.acciones_permitidas, motivos.length === 0 ? ['aprobar', 'rechazar'] : [], `${p.nombre}: acciones`);
+        assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: motivos, rechazar: rechazo }, `${p.nombre}: bloqueadas`);
+        // Íntegra → aprobar y rechazar; con problemas → solo rechazar; hash inválido → ninguna.
+        const esperadas = ['aprobar', 'rechazar'].filter((a) => ({ aprobar: motivos, rechazar: rechazo })[a].length === 0);
+        assert.deepStrictEqual(d.acciones_permitidas, esperadas, `${p.nombre}: acciones`);
+        // Sin permiso "decidir" → [], con el motivo en cada acción.
+        const soloVer = (await detalle(p, '3000')).json;
+        assert.deepStrictEqual(
+          [soloVer.acciones_permitidas, soloVer.acciones_bloqueadas],
+          [[], { aprobar: [...motivos, 'sin_permiso_decidir'], rechazar: [...rechazo, 'sin_permiso_decidir'] }],
+          `${p.nombre}: solo ver`
+        );
       }
+      assert.strictEqual((await detalle(P.hashInvalido, '1000')).json.propuesta.payload_hash, null, 'hash inválido no se expone');
       const h = (await detalle(P.hashAlterado, '1000')).json.integridad;
       assert.strictEqual(h.hash_coincide, false);
       assert.notStrictEqual(h.hash_recalculado, P.hashAlterado.doc.payload_hash);
       assert.deepStrictEqual((await detalle(P.ausenteVsNull, '1000')).json.requisito_actual.valor_actual, { presente: true, valor: null }, 'null explícito en el destino');
       assert.deepStrictEqual((await detalle(P.valida, '1000')).json.requisito_actual.valor_actual, { presente: false, valor: null }, 'campo ausente en el destino');
-      console.log(`4) ${casos.length} casos con BSON real: hash alterado, requisito/destino inexistente, identidad cambiada, valor cambiado, ausente ≠ null (y null = null → acciones): OK`);
+      console.log(`4) ${casos.length} casos con BSON real: hash alterado, requisito/destino inexistente, identidad cambiada, valor cambiado, ausente ≠ null → [rechazar]; null = null → [aprobar, rechazar]; payload_hash no hex, versión 1.5 y decisión previa en pendiente → [] (ambas con su motivo); los mismos sin "decidir" → []: OK`);
     }
 
     // ============================================================
@@ -450,7 +466,7 @@ async function volcado() {
     // ============================================================
     {
       const ap = (await detalle(P.aprobada, '1000')).json;
-      assert.deepStrictEqual([ap.acciones_permitidas, ap.motivos_sin_acciones], [[], ['estado_no_permite_decision']]);
+      assert.deepStrictEqual([ap.acciones_permitidas, ap.acciones_bloqueadas], [[], { aprobar: ['estado_no_permite_decision'], rechazar: ['estado_no_permite_decision'] }]);
       assert.strictEqual(ap.propuesta.decision_aprobacion_id, EVENTO_APROBACION);
       assert.deepStrictEqual(ap.eventos, [
         {

@@ -347,27 +347,145 @@ const sinProhibidos = (obj, etiqueta) => {
   }
 
   // ============================================================
-  // 7) acciones_permitidas
+  // 7) acciones_permitidas y acciones_bloqueadas
   // ============================================================
   {
-    const ok = { hash: { coincide: true }, problemas: [], requisitoActual: { estado: 'coincide', valor: 'coincide' }, estado: 'pendiente_aprobacion', operador: OP_DECIDE };
-    assert.deepStrictEqual(L.calcularAcciones(ok), { acciones_permitidas: ['aprobar', 'rechazar'], motivos_sin_acciones: [] });
-    const variantes = [
-      [{ hash: { coincide: false } }, 'hash_no_coincide'],
-      [{ problemas: ['campo_distinto'] }, 'datos_inconsistentes'],
-      [{ requisitoActual: { estado: 'requisito_id_no_encontrado', valor: null } }, 'requisito_no_coincide'],
-      [{ requisitoActual: { estado: 'identidad_semantica_no_coincide', valor: 'coincide' } }, 'requisito_no_coincide'],
-      [{ requisitoActual: { estado: 'identidad_no_verificable', valor: 'coincide' } }, 'requisito_no_coincide'],
-      [{ requisitoActual: { estado: 'coincide', valor: 'cambio' } }, 'valor_actual_cambio'],
+    const H = 'a'.repeat(64);
+    const ok = { hash: { coincide: true, declarado: H }, problemas: [], requisitoActual: { estado: 'coincide', valor: 'coincide' }, estado: 'pendiente_aprobacion', operador: OP_DECIDE };
+    const acciones = (aprobar, rechazar) => ({
+      acciones_permitidas: ['aprobar', 'rechazar'].filter((a) => ({ aprobar, rechazar })[a].length === 0),
+      acciones_bloqueadas: { aprobar, rechazar }
+    });
+    // a) pendiente e íntegra → aprobación y rechazo, nada bloqueado.
+    assert.deepStrictEqual(L.calcularAcciones(ok), { acciones_permitidas: ['aprobar', 'rechazar'], acciones_bloqueadas: { aprobar: [], rechazar: [] } });
+    assert.deepStrictEqual(L.motivosIntegridad(ok), []);
+
+    // b) pendiente con problemas de integridad → solo rechazo; aprobar
+    //    bloqueada con sus motivos específicos.
+    const integridad = [
+      [{ hash: { coincide: false, declarado: H } }, ['hash_no_coincide']],
+      [{ problemas: ['campo_distinto'] }, ['datos_inconsistentes']],
+      [{ requisitoActual: { estado: 'requisito_id_no_encontrado', valor: null } }, ['requisito_no_coincide', 'valor_actual_cambio']],
+      [{ requisitoActual: { estado: 'identidad_semantica_no_coincide', valor: 'coincide' } }, ['requisito_no_coincide']],
+      [{ requisitoActual: { estado: 'identidad_no_verificable', valor: 'coincide' } }, ['requisito_no_coincide']],
+      [{ requisitoActual: { estado: 'coincide', valor: 'cambio' } }, ['valor_actual_cambio']],
+      [{ hash: { coincide: false, declarado: H }, problemas: ['campo_distinto'], requisitoActual: { estado: 'no_evaluable', valor: null } }, ['hash_no_coincide', 'datos_inconsistentes', 'requisito_no_coincide', 'valor_actual_cambio']]
+    ];
+    for (const [cambio, motivos] of integridad) {
+      assert.deepStrictEqual(L.calcularAcciones({ ...ok, ...cambio }), acciones(motivos, []), motivos.join());
+      assert.deepStrictEqual(L.motivosIntegridad({ ...ok, ...cambio }), motivos, `motivosIntegridad: ${motivos.join()}`);
+    }
+
+    // c) payload_hash almacenado inválido → ninguna acción; ambas con
+    //    payload_hash_invalido (reemplaza a hash_no_coincide).
+    const invalido = { hash: { coincide: false, declarado: null } };
+    assert.deepStrictEqual(L.calcularAcciones({ ...ok, ...invalido }), acciones(['payload_hash_invalido'], ['payload_hash_invalido']));
+    assert.deepStrictEqual(
+      L.calcularAcciones({ ...ok, ...invalido, requisitoActual: { estado: 'coincide', valor: 'cambio' } }),
+      acciones(['payload_hash_invalido', 'valor_actual_cambio'], ['payload_hash_invalido'])
+    );
+    // verificarHash marca declarado null para cualquier forma no hex.
+    for (const malo of ['XYZ', 'A'.repeat(64), 'a'.repeat(63), null, undefined, 42]) {
+      const p = propuestaDe({}, { payload_hash: malo });
+      const h = L.verificarHash(p);
+      assert.strictEqual(h.declarado, null, `declarado de ${String(malo)}`);
+      assert.deepStrictEqual(L.calcularAcciones({ ...ok, hash: h }).acciones_permitidas, [], `sin acciones con hash ${String(malo)}`);
+    }
+
+    // d) sin permiso o estado incompatible → ninguna acción; cada lista con
+    //    sus motivos (integridad solo en aprobar; hash inválido en ambas).
+    const bloqueos = [
       [{ operador: OP_SOLO_VER }, 'sin_permiso_decidir'],
       ...ESTADOS_PROPUESTA.filter((e) => e !== 'pendiente_aprobacion').map((e) => [{ estado: e }, 'estado_no_permite_decision'])
     ];
-    for (const [cambio, motivo] of variantes) {
-      const r = L.calcularAcciones({ ...ok, ...cambio });
-      assert.deepStrictEqual(r.acciones_permitidas, [], motivo);
-      assert.ok(r.motivos_sin_acciones.includes(motivo), motivo);
+    let combinaciones = 0;
+    for (const [bloqueo, motivo] of bloqueos) {
+      for (const [problema, motivosInt] of [[{}, []], ...integridad, [invalido, ['payload_hash_invalido']]]) {
+        const r = L.calcularAcciones({ ...ok, ...problema, ...bloqueo });
+        const rechazo = problema === invalido ? ['payload_hash_invalido', motivo] : [motivo];
+        assert.deepStrictEqual(r, acciones([...motivosInt, motivo], rechazo), `${motivo} + ${motivosInt.join() || 'íntegra'}`);
+        combinaciones++;
+      }
     }
-    console.log(`7) acciones: todo coincide + pendiente + decidir → [aprobar, rechazar]; ${variantes.length} variantes (hash, datos, requisito, identidad, valor, permiso, 7 estados) → []: OK`);
+    assert.deepStrictEqual(
+      L.calcularAcciones({ ...ok, estado: 'aprobada', operador: OP_SOLO_VER }),
+      acciones(['estado_no_permite_decision', 'sin_permiso_decidir'], ['estado_no_permite_decision', 'sin_permiso_decidir'])
+    );
+    console.log(`7) acciones: íntegra → [aprobar, rechazar] sin bloqueos; ${integridad.length} variantes de integridad → [rechazar] con aprobar bloqueada por sus motivos; payload_hash inválido (6 formas) → [] con ambas en payload_hash_invalido; ${combinaciones} combinaciones sin permiso / 7 estados → [] con los motivos de cada acción: OK`);
+  }
+
+  // ============================================================
+  // 7c) Cierre de coordinación: versión inválida y decisión previa
+  // ============================================================
+  {
+    const H = 'a'.repeat(64);
+    const D = '4db810fc-d491-4166-82d1-8b88fe9b088d';
+    const ok = { hash: { coincide: true, declarado: H }, problemas: [], requisitoActual: { estado: 'coincide', valor: 'coincide' }, estado: 'pendiente_aprobacion', operador: OP_DECIDE, version: 0, decisionAprobacionId: null };
+    const acciones = (aprobar, rechazar) => ({
+      acciones_permitidas: ['aprobar', 'rechazar'].filter((a) => ({ aprobar, rechazar })[a].length === 0),
+      acciones_bloqueadas: { aprobar, rechazar }
+    });
+    const VI = 'version_coordinacion_invalida';
+    const DP = 'decision_previa_existente';
+    // Versiones válidas: no bloquean.
+    for (const v of [0, 1, 7, Number.MAX_SAFE_INTEGER]) assert.deepStrictEqual(L.calcularAcciones({ ...ok, version: v }).acciones_permitidas, ['aprobar', 'rechazar'], `versión ${v}`);
+    // Versiones inválidas: ninguna acción, ambas con version_coordinacion_invalida.
+    const invalidas = ['0', 1.5, -1, null, 2 ** 53, NaN, Infinity, true, {}];
+    for (const v of invalidas) assert.deepStrictEqual(L.calcularAcciones({ ...ok, version: v }), acciones([VI], [VI]), `versión ${String(v)}`);
+    // Decisión previa en una pendiente: ninguna acción, ambas con decision_previa_existente.
+    for (const d of [D, '', 'x', 0]) assert.deepStrictEqual(L.calcularAcciones({ ...ok, decisionAprobacionId: d }), acciones([DP], [DP]), `decisión ${JSON.stringify(d)}`);
+    // Fuera de pendiente, la decisión previa es legítima: solo bloquea el estado.
+    assert.deepStrictEqual(
+      L.calcularAcciones({ ...ok, estado: 'aprobada', decisionAprobacionId: D, version: 1 }),
+      acciones(['estado_no_permite_decision'], ['estado_no_permite_decision'])
+    );
+    // Combinados: coordinación primero, integridad solo en aprobar, luego estado/permiso.
+    assert.deepStrictEqual(
+      L.calcularAcciones({ ...ok, hash: { coincide: false, declarado: null }, version: 1.5, decisionAprobacionId: D, requisitoActual: { estado: 'coincide', valor: 'cambio' }, operador: OP_SOLO_VER }),
+      acciones(['payload_hash_invalido', VI, DP, 'valor_actual_cambio', 'sin_permiso_decidir'], ['payload_hash_invalido', VI, DP, 'sin_permiso_decidir'])
+    );
+    assert.deepStrictEqual(L.motivosCoordinacion({ hash: { declarado: H }, version: 0, decisionAprobacionId: null, estado: 'pendiente_aprobacion' }), []);
+
+    // Detalle con el documento: campo ausente frente a null.
+    const destinos = [destinoDe([requisitoEta()])];
+    const detalleDe = async (doc) => L.crearLectorPropuestas({ obtenerDb: () => dbFalso({ propuestas: [doc], destinos }).db }).detalle(PID, OP_DECIDE);
+    const sinCampo = (doc, k) => Object.fromEntries(Object.entries(doc).filter(([x]) => x !== k));
+    const casos = [
+      ['versión "0"', propuestaDe({}, { version_coordinacion: '0' }), [VI]],
+      ['versión 1.5', propuestaDe({}, { version_coordinacion: 1.5 }), [VI]],
+      ['versión null', propuestaDe({}, { version_coordinacion: null }), [VI]],
+      ['versión ausente', sinCampo(propuestaDe(), 'version_coordinacion'), [VI]],
+      ['decisión previa', propuestaDe({}, { decision_aprobacion_id: D }), [DP]],
+      ['decision_aprobacion_id ausente (= null para el CAS)', sinCampo(propuestaDe(), 'decision_aprobacion_id'), []],
+      ['íntegra', propuestaDe(), []]
+    ];
+    for (const [etiqueta, doc, motivos] of casos) {
+      const d = await detalleDe(doc);
+      assert.deepStrictEqual({ acciones_permitidas: d.acciones_permitidas, acciones_bloqueadas: d.acciones_bloqueadas }, acciones(motivos, motivos), etiqueta);
+    }
+    console.log(`7c) coordinación: ${invalidas.length} versiones inválidas → [] con ${VI} en ambas; decisión previa en pendiente → [] con ${DP} en ambas (fuera de pendiente no aplica); orden coordinación → integridad → estado/permiso; detalle: versión "0"/1.5/null/ausente bloquean, decision_aprobacion_id ausente = null: OK`);
+  }
+
+  // ============================================================
+  // 7b) evaluarIntegridad: única lectura de integridad (GET y POST)
+  // ============================================================
+  {
+    const p = propuestaDe();
+    const { db, llamadas } = dbFalso({ propuestas: [p], destinos: [destinoDe([requisitoEta({ costo: '£16' })])] });
+    const r = await L.evaluarIntegridad(db, p);
+    assert.deepStrictEqual(r.motivos, ['valor_actual_cambio']);
+    assert.deepStrictEqual(Object.keys(r), ['hash', 'problemas', 'requisitoActual', 'motivos']);
+    assert.deepStrictEqual(llamadas.map((l) => [l.coleccion, l.op]), [['destinos', 'findOne']], 'solo lee el destino');
+    assert.deepStrictEqual(llamadas[0].opciones, { projection: { pais: 1, codigo_iso: 1, requisitos: 1 } });
+    const base = propuestaDe();
+    const sinDestino = await L.evaluarIntegridad(dbFalso().db, { ...base, payload: { ...base.payload, destino_id: 'no-hex' } });
+    assert.deepStrictEqual(sinDestino.requisitoActual.estado, 'no_evaluable');
+    // El detalle expone exactamente esa evaluación.
+    const { db: db2 } = dbFalso({ propuestas: [p], destinos: [destinoDe([requisitoEta({ costo: '£16' })])] });
+    const d = await L.crearLectorPropuestas({ obtenerDb: () => db2 }).detalle(PID, OP_DECIDE);
+    assert.deepStrictEqual(d.acciones_bloqueadas.aprobar, r.motivos);
+    assert.deepStrictEqual(d.requisito_actual, r.requisitoActual);
+    console.log('7b) evaluarIntegridad: solo lee el destino (proyección exacta), destino_id inválido → no_evaluable; el detalle usa sus mismos motivos y requisito: OK');
   }
 
   // ============================================================
@@ -434,7 +552,7 @@ const sinProhibidos = (obj, etiqueta) => {
     assert.strictEqual(d.eventos[0].metodo_identidad, 'connection_status');
     assert.strictEqual(d.eventos[1].motivo, 'x uri-mongodb-redactada');
     assert.deepStrictEqual(d.acciones_permitidas, []);
-    assert.deepStrictEqual(d.motivos_sin_acciones, ['estado_no_permite_decision']);
+    assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: ['estado_no_permite_decision'], rechazar: ['estado_no_permite_decision'] });
     sinProhibidos(L.resumenListado(p), 'listado');
     console.log('8) detalle y listado: sin fragmento_html, HTML, payload, usuario_atlas, sub ni email de otros; avisos y motivos saneados; evidencia = lista blanca exacta: OK');
   }
