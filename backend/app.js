@@ -19,16 +19,21 @@ const { crearRouterPanel } = require('./routes/panel.routes');
 const { cargarConfigPanel } = require('./services/panel/config-panel');
 const { crearVerificadorGoogle } = require('./services/panel/verificar-token-google');
 const { crearLectorPropuestas } = require('./services/panel/lectura-propuestas');
+const { crearDecisionesPropuestas } = require('./services/panel/decisiones-propuestas');
 const { crearRegistrador } = require('./utils/sanear-registro');
 
 // Db nativo de la conexión de Mongoose, solo si está conectada (readyState 1).
 const dbConectada = () => (mongoose.connection.readyState === 1 ? mongoose.connection.db : null);
 
-// panel: { env, verificador?, registrar?, propuestas? }. Sin env, el panel
-// queda deshabilitado (503): crearApp() nunca lee process.env por su cuenta.
+// panel: { env, verificador?, registrar?, propuestas?, decisiones? }. Sin
+// env, el panel queda deshabilitado (503): crearApp() nunca lee process.env
+// por su cuenta.
 // propuestas: lector inyectable; por defecto lee con el driver nativo de la
 // conexión de Mongoose (sin modelos de propuestas).
-function armarPanel({ env = {}, verificador, registrar = crearRegistrador(), propuestas } = {}) {
+// decisiones: inyectable; por defecto relee con el driver nativo y escribe
+// solo a través de decidirPropuesta (registra los modelos de propuestas, que
+// no crean colecciones ni índices porque config/mongoose ya se cargó).
+function armarPanel({ env = {}, verificador, registrar = crearRegistrador(), propuestas, decisiones } = {}) {
   let config = null;
   try {
     config = cargarConfigPanel(env);
@@ -40,7 +45,8 @@ function armarPanel({ env = {}, verificador, registrar = crearRegistrador(), pro
     config,
     verificador: verificador ?? crearVerificadorGoogle({ clientId: config.clientId }),
     registrar,
-    propuestas: propuestas ?? crearLectorPropuestas({ obtenerDb: dbConectada })
+    propuestas: propuestas ?? crearLectorPropuestas({ obtenerDb: dbConectada }),
+    decisiones: decisiones ?? crearDecisionesPropuestas({ obtenerDb: dbConectada })
   };
 }
 

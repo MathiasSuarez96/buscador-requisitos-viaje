@@ -14,8 +14,12 @@
  *  - crearAutorizar: operador de la allowlist con el permiso pedido →
  *    req.operador, construido y congelado acá, no escribible. Nada del body,
  *    la query ni otros headers participa.
+ *  - crearExigirPermiso: permiso adicional sobre el req.operador ya
+ *    resuelto (p. ej. "decidir" después del gate de "ver").
  *  - manejarErroresPanel: { error: { codigo, mensaje, request_id } } con
- *    mensajes fijos; el detalle va solo al registro saneado.
+ *    mensajes fijos; el detalle va solo al registro saneado. Únicas
+ *    excepciones, ya armadas por lista blanca: `actual` en un 409 y
+ *    `motivos` en un 422.
  */
 
 const crypto = require('crypto');
@@ -27,14 +31,20 @@ const { sanearTexto } = require('../utils/sanear-registro');
 
 const LIMITE_BODY = '8kb';
 
+// datos: bloque público (solo se usa el de DATOS_PUBLICOS[status]).
+// causa: error original, solo para el registro de un 5xx.
 class ErrorPanel extends Error {
-  constructor(status, codigo, motivo = codigo) {
+  constructor(status, codigo, motivo = codigo, { datos = null, causa = null } = {}) {
     super(motivo);
     this.status = status;
     this.codigo = codigo;
     this.motivo = motivo;
+    this.datos = datos;
+    this.causa = causa;
   }
 }
+
+const DATOS_PUBLICOS = Object.freeze({ 409: 'actual', 422: 'motivos' });
 
 const MENSAJES = Object.freeze({
   no_autenticado: 'Se requiere un token válido.',
@@ -48,6 +58,9 @@ const MENSAJES = Object.freeze({
   json_invalido: 'El cuerpo no es JSON válido.',
   tipo_no_soportado: 'El cuerpo debe ser application/json.',
   solicitud_invalida: 'Solicitud inválida.',
+  propuesta_cambio: 'La propuesta cambió desde que la viste. Recargala antes de decidir.',
+  propuesta_no_decidible: 'La propuesta no se puede decidir así: no pasó las verificaciones (ver motivos). Recargar no lo resuelve.',
+  resultado_incierto: 'No se pudo confirmar si la decisión quedó registrada. Revisá la propuesta antes de reintentar.',
   error_interno: 'Error interno.'
 });
 
@@ -117,6 +130,14 @@ function crearAutorizar(operadores, permiso) {
   };
 }
 
+// Después de crearAutorizar: no vuelve a resolver el operador.
+function crearExigirPermiso(permiso) {
+  return function exigirPermiso(req, res, next) {
+    if (!req.operador?.permisos?.includes(permiso)) throw new ErrorPanel(403, 'sin_permiso', `sin_permiso_${permiso}`);
+    next();
+  };
+}
+
 // Clasifica cualquier error en { status, codigo, motivo }.
 function clasificar(err) {
   if (err instanceof ErrorPanel) return { status: err.status, codigo: err.codigo, motivo: err.motivo };
@@ -141,6 +162,9 @@ function manejarErroresPanel(registrar) {
   // eslint-disable-next-line no-unused-vars
   return function manejarErrores(err, req, res, next) {
     const { status, codigo, motivo } = clasificar(err);
+    const original = err instanceof ErrorPanel && err.causa ? err.causa : err;
+    const clave = DATOS_PUBLICOS[status];
+    const datos = err instanceof ErrorPanel && clave && err.datos && Object.hasOwn(err.datos, clave) ? { [clave]: err.datos[clave] } : {};
     registrar({
       nivel: status >= 500 ? 'error' : 'aviso',
       evento: 'panel_error',
@@ -150,10 +174,10 @@ function manejarErroresPanel(registrar) {
       status,
       codigo,
       motivo,
-      ...(status >= 500 ? { error: `${err?.name ?? 'Error'}: ${sanearTexto(err?.message ?? err)}` } : {})
+      ...(status >= 500 ? { error: `${original?.name ?? 'Error'}: ${sanearTexto(original?.message ?? original)}` } : {})
     });
     if (status === 401) res.set('WWW-Authenticate', 'Bearer');
-    res.status(status).json({ error: { codigo, mensaje: MENSAJES[codigo], request_id: req.requestId ?? null } });
+    res.status(status).json({ error: { codigo, mensaje: MENSAJES[codigo], request_id: req.requestId ?? null, ...datos } });
   };
 }
 
@@ -168,6 +192,7 @@ module.exports = {
   parserJson,
   crearAutenticar,
   crearAutorizar,
+  crearExigirPermiso,
   clasificar,
   manejarErroresPanel
 };
