@@ -67,12 +67,45 @@ function revisarClientId(clientId: unknown, entorno: string[]) {
   else if (!CLIENT_ID_GOOGLE.test(clientId)) entorno.push('VITE_GOOGLE_CLIENT_ID no tiene la forma <número>-<id>.apps.googleusercontent.com.')
 }
 
+// Directivas en orden, con el nombre en minúsculas (los navegadores no
+// distinguen mayúsculas en nombres ni en palabras clave). Se omiten las vacías.
+function directivas(csp: string): { nombre: string; valores: string[] }[] {
+  return csp
+    .split(';')
+    .map((parte) => parte.trim())
+    .filter((parte) => parte !== '')
+    .map((parte) => {
+      const [clave, ...valores] = parte.split(/\s+/)
+      return { nombre: clave.toLowerCase(), valores }
+    })
+}
+
 function directiva(csp: string, nombre: string): string[] | null {
-  for (const parte of csp.split(';')) {
-    const [clave, ...valores] = parte.trim().split(/\s+/)
-    if (clave?.toLowerCase() === nombre) return valores
+  return directivas(csp).find((d) => d.nombre === nombre)?.valores ?? null
+}
+
+// La única excepción: 'unsafe-inline' en style-src-attr, para los atributos
+// style que inyecta el botón de Google. No afecta a scripts (script-src no lo
+// hereda). Cualquier otro valor con "unsafe-" ('unsafe-eval', 'unsafe-hashes',
+// 'wasm-unsafe-eval', ...) es defecto en cualquier directiva. Una directiva
+// repetida también: el navegador usa la primera e ignora el resto en silencio.
+const EXCEPCION = { directiva: 'style-src-attr', valor: "'unsafe-inline'" }
+
+function revisarInseguros(ruta: string, csp: string, vercel: string[]) {
+  const vistas = new Set<string>()
+  for (const { nombre, valores } of directivas(csp)) {
+    if (vistas.has(nombre)) vercel.push(`${ruta}: la CSP repite la directiva ${nombre}.`)
+    vistas.add(nombre)
+    for (const valor of [nombre, ...valores]) {
+      if (!/unsafe-/i.test(valor)) continue
+      if (nombre === EXCEPCION.directiva && valor.toLowerCase() === EXCEPCION.valor) continue
+      vercel.push(
+        /^'unsafe-inline'$/i.test(valor)
+          ? `${ruta}: 'unsafe-inline' solo se permite en style-src-attr (aparece en ${nombre}).`
+          : `${ruta}: la CSP no puede permitir ${valor} (aparece en ${nombre}).`,
+      )
+    }
   }
-  return null
 }
 
 export function verificarCspPanel({ apiUrl, clientId, vercel }: { apiUrl: unknown; clientId: unknown; vercel: unknown }): Hallazgos {
@@ -92,7 +125,7 @@ export function verificarCspPanel({ apiUrl, clientId, vercel }: { apiUrl: unknow
     const csps = cabeceras.filter((c) => NOMBRES_CSP.includes(c.key.toLowerCase()))
     if (csps.length === 0) hallazgos.vercel.push(`${ruta}: falta Content-Security-Policy(-Report-Only).`)
     for (const { value } of csps) {
-      if (/'unsafe-(inline|eval)'/i.test(value)) hallazgos.vercel.push(`${ruta}: la CSP no puede permitir 'unsafe-inline' ni 'unsafe-eval'.`)
+      revisarInseguros(ruta, value, hallazgos.vercel)
       const connect = directiva(value, 'connect-src')
       if (connect === null) hallazgos.vercel.push(`${ruta}: la CSP no tiene connect-src.`)
       else if (origen !== null && !connect.includes(origen)) hallazgos.entorno.push(`${ruta}: connect-src no incluye el origen de VITE_API_URL (${origen}).`)
