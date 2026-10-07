@@ -1,0 +1,3 @@
+/* Estilos del panel: Tailwind con la fuente del sistema (sin Google Fonts).
+   Solo escanea src/panel, no las clases del sitio público. */
+@import "tailwindcss" source("./");
