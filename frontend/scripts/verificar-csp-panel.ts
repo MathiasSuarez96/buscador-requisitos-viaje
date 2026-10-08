@@ -84,27 +84,49 @@ function directiva(csp: string, nombre: string): string[] | null {
   return directivas(csp).find((d) => d.nombre === nombre)?.valores ?? null
 }
 
-// La única excepción: 'unsafe-inline' en style-src-attr, para los atributos
-// style que inyecta el botón de Google. No afecta a scripts (script-src no lo
-// hereda). Cualquier otro valor con "unsafe-" ('unsafe-eval', 'unsafe-hashes',
-// 'wasm-unsafe-eval', ...) es defecto en cualquier directiva. Una directiva
-// repetida también: el navegador usa la primera e ignora el resto en silencio.
-const EXCEPCION = { directiva: 'style-src-attr', valor: "'unsafe-inline'" }
+// Cualquier valor con "unsafe-" ('unsafe-inline', 'unsafe-eval',
+// 'unsafe-hashes', 'wasm-unsafe-eval', ...) es defecto en cualquier directiva,
+// sin excepciones. Una directiva repetida también: el navegador usa la primera
+// e ignora el resto en silencio.
+//
+// Hashes: solo en style-src y style-src-elem, y con los mismos valores en las
+// dos (style-src es el respaldo de los navegadores sin style-src-elem). El
+// hash de vercel.json corresponde al texto exacto del <style> que inyecta el
+// script de Google Identity Services (client:427), que Google sirve sin
+// versión. Si Google cambia ese texto, el hash deja de coincidir y el botón se
+// ve roto hasta actualizarlo; se detecta por una violación nueva de
+// style-src-elem en la consola, con el hash nuevo que pide el navegador.
+const DIRECTIVAS_CON_HASH = ['style-src', 'style-src-elem']
+// Bytes del digest de cada algoritmo: el base64 tiene que decodificar a
+// exactamente esa cantidad y volver a codificarse igual (con su relleno).
+const BYTES_HASH: Record<string, number> = { sha256: 32, sha384: 48, sha512: 64 }
+const PARECE_HASH = /sha(256|384|512)-/i
+const FORMA_HASH = /^'(sha256|sha384|sha512)-([A-Za-z0-9+/]+={0,2})'$/
 
-function revisarInseguros(ruta: string, csp: string, vercel: string[]) {
+function hashValido(valor: string): boolean {
+  const partes = FORMA_HASH.exec(valor)
+  if (!partes) return false
+  const [, algoritmo, base64] = partes
+  const bytes = Buffer.from(base64, 'base64')
+  return bytes.length === BYTES_HASH[algoritmo] && bytes.toString('base64') === base64
+}
+
+function revisarFuentes(ruta: string, csp: string, vercel: string[]) {
   const vistas = new Set<string>()
+  const hashes = new Map<string, string>()
   for (const { nombre, valores } of directivas(csp)) {
     if (vistas.has(nombre)) vercel.push(`${ruta}: la CSP repite la directiva ${nombre}.`)
+    else if (DIRECTIVAS_CON_HASH.includes(nombre)) hashes.set(nombre, valores.filter((v) => PARECE_HASH.test(v)).sort().join(' '))
     vistas.add(nombre)
     for (const valor of [nombre, ...valores]) {
-      if (!/unsafe-/i.test(valor)) continue
-      if (nombre === EXCEPCION.directiva && valor.toLowerCase() === EXCEPCION.valor) continue
-      vercel.push(
-        /^'unsafe-inline'$/i.test(valor)
-          ? `${ruta}: 'unsafe-inline' solo se permite en style-src-attr (aparece en ${nombre}).`
-          : `${ruta}: la CSP no puede permitir ${valor} (aparece en ${nombre}).`,
-      )
+      if (/unsafe-/i.test(valor)) vercel.push(`${ruta}: la CSP no puede permitir ${valor} (aparece en ${nombre}).`)
+      if (!PARECE_HASH.test(valor)) continue
+      if (!DIRECTIVAS_CON_HASH.includes(nombre)) vercel.push(`${ruta}: los hashes solo se permiten en style-src y style-src-elem (aparece ${valor} en ${nombre}).`)
+      else if (!hashValido(valor)) vercel.push(`${ruta}: hash con forma inválida en ${nombre}: ${valor}.`)
     }
+  }
+  if (hashes.size === 2 && hashes.get('style-src') !== hashes.get('style-src-elem')) {
+    vercel.push(`${ruta}: style-src y style-src-elem tienen que tener los mismos hashes.`)
   }
 }
 
@@ -125,7 +147,7 @@ export function verificarCspPanel({ apiUrl, clientId, vercel }: { apiUrl: unknow
     const csps = cabeceras.filter((c) => NOMBRES_CSP.includes(c.key.toLowerCase()))
     if (csps.length === 0) hallazgos.vercel.push(`${ruta}: falta Content-Security-Policy(-Report-Only).`)
     for (const { value } of csps) {
-      revisarInseguros(ruta, value, hallazgos.vercel)
+      revisarFuentes(ruta, value, hallazgos.vercel)
       const connect = directiva(value, 'connect-src')
       if (connect === null) hallazgos.vercel.push(`${ruta}: la CSP no tiene connect-src.`)
       else if (origen !== null && !connect.includes(origen)) hallazgos.entorno.push(`${ruta}: connect-src no incluye el origen de VITE_API_URL (${origen}).`)

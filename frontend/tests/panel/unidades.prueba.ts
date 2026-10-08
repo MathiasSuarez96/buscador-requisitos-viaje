@@ -2,6 +2,7 @@
 // estáticas sobre el código del panel.
 
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { clasificar, decidirModo, verificarCspPanel } from '../../scripts/verificar-csp-panel.ts'
@@ -17,18 +18,22 @@ const vercel = () => JSON.parse(readFileSync(join(RAIZ, 'vercel.json'), 'utf8'))
 const verificar = (apiUrl: unknown, ...resto: [clientId?: unknown, v?: unknown]) =>
   verificarCspPanel({ apiUrl, clientId: resto.length > 0 ? resto[0] : CLIENT_ID, vercel: resto.length > 1 ? resto[1] : vercel() })
 
-// Defectos de vercel.json al agregar directivas al final de la CSP real en
-// ambas rutas (para que sigan idénticas). La política real ya tiene
-// style-src-attr y script-src, así que se quitan antes para no contar repeticiones.
-const SIN_ATTR = / style-src-attr 'unsafe-inline';/
-function conDirectiva(...extra: string[]) {
+// Hash del <style> que inyecta el script de Google (el mismo de vercel.json).
+const HASH = "'sha256-RU4sU0AaS8IBGZx8XrGt/pa9A5SLA3dQszGeqT5L3Kw='"
+const hashDe = (algoritmo: 'sha256' | 'sha384' | 'sha512', texto: string) => `'${algoritmo}-${createHash(algoritmo).update(texto).digest('base64')}'`
+
+// Defectos de vercel.json al transformar la CSP real en ambas rutas (para que sigan idénticas).
+function conCsp(cambiar: (csp: string) => string) {
   const v = vercel()
-  for (const e of v.headers) {
-    const csp = e.headers[0].value.replace(SIN_ATTR, '').replace(/ script-src [^;]*;/, '')
-    e.headers[0].value = [csp, ...extra].join('; ')
-  }
+  for (const e of v.headers) e.headers[0].value = cambiar(e.headers[0].value)
   return verificar(API_RENDER, CLIENT_ID, v).vercel
 }
+// Agrega directivas al final. La política real ya tiene script-src, así que se
+// quita antes para que agregarla no cuente como repetición.
+const conDirectiva = (...extra: string[]) => conCsp((csp) => [csp.replace(/ script-src [^;]*;/, ''), ...extra].join('; '))
+// Reemplaza el hash solo en style-src o solo en style-src-elem.
+const enDirectiva = (nombre: 'style-src' | 'style-src-elem', nuevo: string) =>
+  conCsp((csp) => csp.replace(new RegExp(`(${nombre} [^;]*?)${HASH}`), (_, antes: string) => antes + nuevo))
 
 // Documento y ventana falsos para el cargador de GIS.
 function entornoGis(alAgregar: (script: ScriptFalso, ventana: { google?: Window['google'] }) => void) {
@@ -169,67 +174,107 @@ export const pruebas: Prueba[] = [
     },
   },
   {
-    nombre: "verificarCspPanel: 'unsafe-inline' solo en style-src-attr (mayúsculas, espacios y otros valores incluidos)",
+    nombre: 'verificarCspPanel: hashes válidos en style-src y style-src-elem (mayúsculas, espacios, sha384/sha512, otro orden) → sin defectos',
     fn: () => {
-      const aceptadas = [
+      assert.deepEqual(conCsp((csp) => csp), [])
+      assert.deepEqual(conCsp((csp) => csp.replace('style-src ', 'STYLE-SRC \t ').replace('style-src-elem', 'Style-Src-Elem')), [])
+      const h384 = hashDe('sha384', 'a')
+      const h512 = hashDe('sha512', 'b')
+      const varios = conCsp((csp) =>
+        csp.replace(`gsi/style ${HASH};`, `gsi/style ${HASH}  ${h384}\t${h512};`).replace(/(style-src-elem [^;]*?)gsi\/style [^;]*/, `$1gsi/style ${h512} ${HASH} ${h384}`),
+      )
+      assert.deepEqual(varios, [])
+    },
+  },
+  {
+    nombre: 'verificarCspPanel: hash ausente o alterado en style-src o en style-src-elem → los hashes ya no coinciden',
+    fn: () => {
+      const alterado = HASH.replace("'sha256-RU4s", "'sha256-RU4t")
+      for (const nombre of ['style-src', 'style-src-elem'] as const) {
+        assert.match(enDirectiva(nombre, '').join('\n'), /style-src y style-src-elem tienen que tener los mismos hashes/, `${nombre} sin hash`)
+        assert.match(enDirectiva(nombre, alterado).join('\n'), /style-src y style-src-elem tienen que tener los mismos hashes/, `${nombre} alterado`)
+        assert.match(enDirectiva(nombre, `${HASH} ${hashDe('sha256', 'otro')}`).join('\n'), /mismos hashes/, `${nombre} con uno de más`)
+      }
+    },
+  },
+  {
+    nombre: 'verificarCspPanel: hash con forma inválida (longitud, relleno, alfabeto, comillas, algoritmo) → defecto',
+    fn: () => {
+      const cuerpo = HASH.slice("'sha256-".length, -1)
+      const invalidos = [
+        `'sha256-${cuerpo.slice(1)}'`, // un carácter menos
+        `'sha256-A${cuerpo}'`, // un carácter más
+        `'sha256-${cuerpo.slice(0, -1)}'`, // sin relleno
+        `'sha256-${cuerpo.slice(0, -2)}x='`, // último carácter no canónico (bits sobrantes)
+        `'sha256-${cuerpo.replace('/', '_')}'`, // base64url
+        `'sha384-${cuerpo}'`, // longitud de sha256 con prefijo sha384
+        `'sha512-${hashDe('sha384', 'a').slice("'sha384-".length)}`, // longitud de sha384 con prefijo sha512
+        `'sha256-${hashDe('sha512', 'b').slice("'sha512-".length)}`, // longitud de sha512 con prefijo sha256
+        `'SHA256-${cuerpo}'`, // algoritmo en mayúsculas
+        `sha256-${cuerpo}`, // sin comillas
+        `'sha256-${cuerpo}`, // sin comilla final
+        `'sha256-'`, // vacío
+      ]
+      for (const h of invalidos) {
+        // El mismo valor en las dos directivas: el único defecto es la forma.
+        const defectos = conCsp((csp) => csp.replaceAll(HASH, h))
+        assert.match(defectos.join('\n'), /hash con forma inválida en style-src:[\s\S]*hash con forma inválida en style-src-elem:/, h)
+        assert.doesNotMatch(defectos.join('\n'), /mismos hashes/, h)
+      }
+    },
+  },
+  {
+    nombre: 'verificarCspPanel: hash en script-src, default-src, style-src-attr u otra directiva → defecto',
+    fn: () => {
+      const fuera = [
+        `script-src 'self' ${HASH}`,
+        `SCRIPT-SRC\t${HASH}`,
+        `script-src-elem ${HASH}`,
+        `style-src-attr ${HASH}`,
+        `img-src ${hashDe('sha384', 'a')}`,
+        `font-src ${HASH.toUpperCase()}`,
+        `connect-src-x sha256-${HASH.slice("'sha256-".length, -1)}`,
+      ]
+      for (const d of fuera) assert.match(conDirectiva(d).join('\n'), /los hashes solo se permiten en style-src y style-src-elem/, d)
+      assert.match(conCsp((csp) => csp.replace("default-src 'self'", `default-src 'self' ${HASH}`)).join('\n'), /aparece 'sha256-[^ ]+ en default-src/)
+    },
+  },
+  {
+    nombre: "verificarCspPanel: cualquier 'unsafe-*' es defecto en toda directiva, sin excepciones (incluidas style-src-attr y style-src-elem)",
+    fn: () => {
+      const rechazadas = [
         "style-src-attr 'unsafe-inline'",
         "STYLE-SRC-ATTR 'UNSAFE-INLINE'",
-        "Style-Src-Attr 'Unsafe-Inline'",
         "  style-src-attr\t 'unsafe-inline'  ",
-        "style-src-attr 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
-        "style-src-attr 'unsafe-inline' 'self'",
-      ]
-      for (const d of aceptadas) assert.deepEqual(conDirectiva(d), [], d)
-    },
-  },
-  {
-    nombre: "verificarCspPanel: 'unsafe-inline' fuera de style-src-attr → defecto de vercel.json",
-    fn: () => {
-      const rechazadas = [
         "script-src 'self' 'unsafe-inline'",
         "script-src 'UNSAFE-INLINE'",
-        "SCRIPT-SRC\t'unsafe-inline'",
-        "script-src-elem 'unsafe-inline'",
+        "SCRIPT-SRC\t'unsafe-eval'",
         "script-src-attr 'unsafe-inline'",
-        "style-src 'self' 'unsafe-inline'",
-        "style-src 'Unsafe-Inline' 'self'",
-        "style-src-elem 'unsafe-inline'",
-        "style-src-elem 'self'   'unsafe-inline'",
-        "default-src 'unsafe-inline'",
-        "img-src 'unsafe-inline'",
-        "style-src-attrs 'unsafe-inline'",
-        "style-src-attr-x 'unsafe-inline'",
+        "script-src 'wasm-unsafe-eval'",
+        "img-src 'unsafe-hashes'",
+        "script-src 'self''unsafe-inline'",
         "'unsafe-inline'",
       ]
-      for (const d of rechazadas) assert.match(conDirectiva(d).join('\n'), /'unsafe-inline' solo se permite en style-src-attr/i, d)
-      // Pegado a otro valor ya no es la palabra clave exacta: también es defecto, incluso en style-src-attr.
-      assert.match(conDirectiva("style-src-attr 'self''unsafe-inline'").join('\n'), /no puede permitir 'self''unsafe-inline'/)
-    },
-  },
-  {
-    nombre: "verificarCspPanel: 'unsafe-eval' y cualquier otro 'unsafe-*' son defecto en toda directiva, incluida style-src-attr",
-    fn: () => {
-      const rechazadas = [
-        "script-src 'self' 'unsafe-eval'",
-        "script-src 'UNSAFE-EVAL'",
-        "default-src 'unsafe-eval'",
-        "style-src-attr 'unsafe-eval'",
-        "style-src-attr 'unsafe-inline' 'unsafe-eval'",
-        "STYLE-SRC-ATTR 'UNSAFE-INLINE' 'UNSAFE-EVAL'",
-        "script-src 'wasm-unsafe-eval'",
-        "style-src-attr 'unsafe-inline' 'unsafe-hashes'",
+      for (const d of rechazadas) assert.match(conDirectiva(d).join('\n'), /no puede permitir \S*unsafe-/i, d)
+      const enLaPolitica: [string, string][] = [
+        ['style-src-elem ', "style-src-elem 'unsafe-inline' "],
+        ['style-src ', "style-src 'Unsafe-Inline' "],
+        ["default-src 'self'", "default-src 'self' 'unsafe-eval'"],
       ]
-      for (const d of rechazadas) assert.match(conDirectiva(d).join('\n'), /no puede permitir '[a-z-]*unsafe-(eval|hashes)'/i, d)
+      for (const [de, a] of enLaPolitica) assert.match(conCsp((csp) => csp.replace(de, a)).join('\n'), /no puede permitir 'unsafe-(inline|eval)'/i, a)
     },
   },
   {
     nombre: 'verificarCspPanel: directiva repetida → defecto, aunque la repetición sea inocua o el navegador la ignore',
     fn: () => {
-      assert.match(conDirectiva("style-src-attr 'unsafe-inline'", "style-src-attr 'unsafe-inline'").join('\n'), /repite la directiva style-src-attr/)
-      assert.match(conDirectiva("style-src-attr 'none'", "STYLE-SRC-ATTR 'unsafe-inline'").join('\n'), /repite la directiva style-src-attr/)
+      assert.match(conCsp((csp) => `${csp}; style-src-elem 'self' ${HASH}`).join('\n'), /repite la directiva style-src-elem/)
+      assert.match(conCsp((csp) => `${csp}; STYLE-SRC 'self'`).join('\n'), /repite la directiva style-src/)
       const scriptRepetido = conDirectiva("script-src 'self'", "script-src 'unsafe-inline'").join('\n')
       assert.match(scriptRepetido, /repite la directiva script-src/)
       assert.match(scriptRepetido, /aparece en script-src/, 'la segunda aparición también se revisa')
+      // Para comparar hashes cuenta la primera aparición, como en el navegador.
+      const segunda = conCsp((csp) => csp.replace(/style-src-elem [^;]*/, "style-src-elem 'self'; style-src-elem 'self' " + HASH)).join('\n')
+      assert.match(segunda, /mismos hashes/)
       // El navegador usa la primera connect-src: si el origen está solo en la segunda, no alcanza.
       const v = vercel()
       for (const e of v.headers) e.headers[0].value = e.headers[0].value.replace('connect-src', "connect-src 'self'; connect-src")
@@ -239,13 +284,18 @@ export const pruebas: Prueba[] = [
     },
   },
   {
-    nombre: "verificarCspPanel: 'unsafe-inline' solo en la CSP de /panel también se detecta",
+    nombre: 'verificarCspPanel: un defecto solo en la CSP de /panel también se detecta; hashes distintos entre las dos entradas → defecto',
     fn: () => {
       const v = vercel()
       v.headers[1].headers[0].value = v.headers[1].headers[0].value.replace('script-src', "script-src 'unsafe-inline'")
       const defectos = verificar(API_RENDER, CLIENT_ID, v).vercel.join('\n')
-      assert.match(defectos, /\/panel: 'unsafe-inline' solo se permite en style-src-attr \(aparece en script-src\)/)
-      assert.doesNotMatch(defectos, /\/panel\.html: 'unsafe-inline'/)
+      assert.match(defectos, /\/panel: la CSP no puede permitir 'unsafe-inline' \(aparece en script-src\)/)
+      assert.doesNotMatch(defectos, /\/panel\.html: la CSP no puede permitir/)
+
+      // Válidos y coherentes en cada entrada, pero distintos entre /panel.html y /panel.
+      const distintos = vercel()
+      distintos.headers[1].headers[0].value = distintos.headers[1].headers[0].value.replaceAll(HASH, hashDe('sha256', 'otro'))
+      assert.deepEqual(verificar(API_RENDER, CLIENT_ID, distintos).vercel, ['/panel.html y /panel tienen que tener los mismos headers.'])
     },
   },
   {
@@ -292,26 +342,25 @@ export const pruebas: Prueba[] = [
         const h = Object.fromEntries(e.headers.map((x: { key: string; value: string }) => [x.key, x.value]))
         assert.deepEqual(Object.keys(h), ['Content-Security-Policy-Report-Only', 'Cross-Origin-Opener-Policy', 'Referrer-Policy', 'X-Content-Type-Options', 'X-Robots-Tag', 'X-Frame-Options'])
         const csp = h['Content-Security-Policy-Report-Only']
-        for (const d of [
-          "default-src 'self'",
-          "script-src 'self' https://accounts.google.com/gsi/client",
-          "style-src 'self' https://accounts.google.com/gsi/style",
-          "style-src-elem 'self' https://accounts.google.com/gsi/style",
-          "style-src-attr 'unsafe-inline'",
-          'frame-src https://accounts.google.com/gsi/',
-          `connect-src 'self' ${API_RENDER} https://accounts.google.com/gsi/`,
-          "object-src 'none'",
-          "base-uri 'none'",
-          "form-action 'none'",
-          "frame-ancestors 'none'",
-        ]) {
-          assert.ok(csp.split(';').map((x: string) => x.trim()).includes(d), `falta "${d}"`)
-        }
-        const conUnsafe = csp
-          .split(';')
-          .map((x: string) => x.trim())
-          .filter((x: string) => /unsafe-/i.test(x))
-        assert.deepEqual(conUnsafe, ["style-src-attr 'unsafe-inline'"], "'unsafe-*' solo en style-src-attr")
+        // La política completa, en orden: sin style-src-attr ni ningún 'unsafe-*'.
+        assert.deepEqual(
+          csp.split(';').map((x: string) => x.trim()),
+          [
+            "default-src 'self'",
+            "script-src 'self' https://accounts.google.com/gsi/client",
+            `style-src 'self' https://accounts.google.com/gsi/style ${HASH}`,
+            `style-src-elem 'self' https://accounts.google.com/gsi/style ${HASH}`,
+            'frame-src https://accounts.google.com/gsi/',
+            `connect-src 'self' ${API_RENDER} https://accounts.google.com/gsi/`,
+            "img-src 'self'",
+            "font-src 'self'",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-ancestors 'none'",
+          ],
+        )
+        assert.doesNotMatch(csp, /unsafe-|style-src-attr/i)
         assert.equal(h['Cross-Origin-Opener-Policy'], 'same-origin-allow-popups')
         assert.equal(h['Referrer-Policy'], 'strict-origin-when-cross-origin')
         assert.equal(h['X-Content-Type-Options'], 'nosniff')
