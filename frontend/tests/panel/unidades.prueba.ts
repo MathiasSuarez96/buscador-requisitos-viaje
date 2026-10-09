@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { clasificar, decidirModo, verificarCspPanel } from '../../scripts/verificar-csp-panel.ts'
+import { clasificar, CSP_PANEL, decidirModo, HASH_ESTILO_GIS, HEADERS_PANEL, RUTAS_PANEL, verificarCspPanel } from '../../scripts/verificar-csp-panel.ts'
 import { crearCargadorGis, URL_GIS } from '../../src/panel/cargar-gis.ts'
 import { leerConfigPanel } from '../../src/panel/config.ts'
 import { esperar, type Prueba } from './apoyo.tsx'
@@ -18,8 +18,8 @@ const vercel = () => JSON.parse(readFileSync(join(RAIZ, 'vercel.json'), 'utf8'))
 const verificar = (apiUrl: unknown, ...resto: [clientId?: unknown, v?: unknown]) =>
   verificarCspPanel({ apiUrl, clientId: resto.length > 0 ? resto[0] : CLIENT_ID, vercel: resto.length > 1 ? resto[1] : vercel() })
 
-// Hash del <style> que inyecta el script de Google (el mismo de vercel.json).
-const HASH = "'sha256-RU4sU0AaS8IBGZx8XrGt/pa9A5SLA3dQszGeqT5L3Kw='"
+// Hash aprobado del <style> que inyecta el script de Google: la única fuente es el verificador.
+const HASH = HASH_ESTILO_GIS
 const hashDe = (algoritmo: 'sha256' | 'sha384' | 'sha512', texto: string) => `'${algoritmo}-${createHash(algoritmo).update(texto).digest('base64')}'`
 
 // Defectos de vercel.json al transformar la CSP real en ambas rutas (para que sigan idénticas).
@@ -28,6 +28,18 @@ function conCsp(cambiar: (csp: string) => string) {
   for (const e of v.headers) e.headers[0].value = cambiar(e.headers[0].value)
   return verificar(API_RENDER, CLIENT_ID, v).vercel
 }
+// Mensajes de la comparación con CSP_PANEL (faltan, sobran, otro valor, otro
+// orden, formato). Las pruebas de un control puntual los dejan de lado.
+const COMPARACION = /: (a la CSP le (faltan|sobran) directivas|la CSP tiene otro valor en|la CSP tiene las directivas en otro orden|la CSP difiere de la aprobada solo en el formato)/
+const sinComparacion = (defectos: string[]) => defectos.filter((d) => !COMPARACION.test(d))
+// Defectos de vercel.json al cambiar los headers de las dos rutas por igual.
+type Cabeceras = { key: string; value: string }[]
+function conHeaders(cambiar: (headers: Cabeceras) => void) {
+  const v = vercel()
+  for (const e of v.headers) cambiar(e.headers)
+  return verificar(API_RENDER, CLIENT_ID, v).vercel
+}
+const enAmbas = (texto: string) => [`/panel.html: ${texto}`, `/panel: ${texto}`]
 // Agrega directivas al final. La política real ya tiene script-src, así que se
 // quita antes para que agregarla no cuente como repetición.
 const conDirectiva = (...extra: string[]) => conCsp((csp) => [csp.replace(/ script-src [^;]*;/, ''), ...extra].join('; '))
@@ -174,16 +186,111 @@ export const pruebas: Prueba[] = [
     },
   },
   {
-    nombre: 'verificarCspPanel: hashes válidos en style-src y style-src-elem (mayúsculas, espacios, sha384/sha512, otro orden) → sin defectos',
+    nombre: 'verificarCspPanel: exactamente una Content-Security-Policy por ruta; Report-Only, las dos cabeceras o la obligatoria ausente → defecto',
+    fn: () => {
+      const defectos = (cambiar: (v: { headers: { headers: { key: string; value: string }[] }[] }) => void) => {
+        const v = vercel()
+        cambiar(v)
+        return verificar(API_RENDER, CLIENT_ID, v).vercel
+      }
+
+      // Vuelta a Report-Only en las dos rutas (con cualquier capitalización).
+      for (const nombre of ['Content-Security-Policy-Report-Only', 'content-security-policy-report-only']) {
+        const r = defectos((v) => v.headers.forEach((e) => (e.headers[0].key = nombre)))
+        assert.deepEqual(
+          r,
+          [
+            '/panel.html: no puede tener Content-Security-Policy-Report-Only; la CSP tiene que ser obligatoria.',
+            '/panel.html: falta Content-Security-Policy.',
+            '/panel: no puede tener Content-Security-Policy-Report-Only; la CSP tiene que ser obligatoria.',
+            '/panel: falta Content-Security-Policy.',
+          ],
+          nombre,
+        )
+      }
+
+      // Las dos cabeceras a la vez, con la misma política, en las dos rutas.
+      const ambas = defectos((v) => v.headers.forEach((e) => e.headers.splice(1, 0, { ...e.headers[0], key: 'Content-Security-Policy-Report-Only' })))
+      assert.deepEqual(ambas, [
+        '/panel.html: no puede tener Content-Security-Policy-Report-Only; la CSP tiene que ser obligatoria.',
+        '/panel: no puede tener Content-Security-Policy-Report-Only; la CSP tiene que ser obligatoria.',
+      ])
+
+      // La obligatoria ausente solo en /panel (quitada o vuelta a Report-Only).
+      const sinObligatoria = defectos((v) => v.headers[1].headers.shift()).join('\n')
+      assert.match(sinObligatoria, /^\/panel: falta Content-Security-Policy\.$/m)
+      assert.doesNotMatch(sinObligatoria, /\/panel\.html: falta/)
+      assert.match(sinObligatoria, /mismos headers/)
+      const unaReportOnly = defectos((v) => (v.headers[1].headers[0].key = 'Content-Security-Policy-Report-Only')).join('\n')
+      assert.match(unaReportOnly, /^\/panel: no puede tener Content-Security-Policy-Report-Only/m)
+      assert.match(unaReportOnly, /^\/panel: falta Content-Security-Policy\.$/m)
+      assert.doesNotMatch(unaReportOnly, /\/panel\.html: (falta|no puede tener)/)
+
+      // Dos obligatorias en la misma ruta (aunque sean iguales).
+      const dobles = defectos((v) => v.headers.forEach((e) => e.headers.splice(1, 0, { ...e.headers[0] })))
+      assert.deepEqual(dobles, [
+        '/panel.html: tiene que haber exactamente una Content-Security-Policy (hay 2).',
+        '/panel: tiene que haber exactamente una Content-Security-Policy (hay 2).',
+      ])
+
+      // Las dos rutas difieren en un header que no es la CSP.
+      const distintas = defectos((v) => (v.headers[1].headers[4].value = 'noindex'))
+      assert.deepEqual(distintas, ['/panel: X-Robots-Tag tiene que ser noindex, nofollow (es "noindex").', '/panel.html y /panel tienen que tener los mismos headers.'])
+    },
+  },
+  {
+    nombre: 'verificarCspPanel: hash aprobado en style-src y style-src-elem; con mayúsculas y espacios en los nombres solo falla la comparación exacta',
     fn: () => {
       assert.deepEqual(conCsp((csp) => csp), [])
-      assert.deepEqual(conCsp((csp) => csp.replace('style-src ', 'STYLE-SRC \t ').replace('style-src-elem', 'Style-Src-Elem')), [])
-      const h384 = hashDe('sha384', 'a')
-      const h512 = hashDe('sha512', 'b')
-      const varios = conCsp((csp) =>
-        csp.replace(`gsi/style ${HASH};`, `gsi/style ${HASH}  ${h384}\t${h512};`).replace(/(style-src-elem [^;]*?)gsi\/style [^;]*/, `$1gsi/style ${h512} ${HASH} ${h384}`),
+      const formato = conCsp((csp) => csp.replace('style-src ', 'STYLE-SRC \t ').replace('style-src-elem', 'Style-Src-Elem'))
+      assert.deepEqual(sinComparacion(formato), [])
+      assert.deepEqual(
+        formato,
+        ['/panel.html', '/panel'].map((r) => `${r}: la CSP difiere de la aprobada solo en el formato (mayúsculas de los nombres, espacios o separadores); tiene que ser igual carácter por carácter.`),
       )
-      assert.deepEqual(varios, [])
+    },
+  },
+  {
+    nombre: 'verificarCspPanel: el hash tiene que ser exactamente el aprobado y el único (no alcanza con que coincidan)',
+    fn: () => {
+      const aprobado = (nombre: string) => `${nombre} tiene que tener el hash aprobado ${HASH} y ningún otro.`
+      const ambas = (ruta: string) => [`${ruta}: ${aprobado('style-src')}`, `${ruta}: ${aprobado('style-src-elem')}`]
+      const otro = hashDe('sha256', 'otro')
+      // Cambiado de forma coherente en las dos directivas, o quitado de las dos: coinciden entre sí, pero no es el aprobado.
+      assert.deepEqual(sinComparacion(conCsp((csp) => csp.replaceAll(HASH, otro))), [...ambas('/panel.html'), ...ambas('/panel')])
+      assert.deepEqual(sinComparacion(conCsp((csp) => csp.replaceAll(` ${HASH}`, ''))), [...ambas('/panel.html'), ...ambas('/panel')])
+      for (const nombre of ['style-src', 'style-src-elem'] as const) {
+        const enUna = (nuevo: string) => sinComparacion(enDirectiva(nombre, nuevo)).filter((d) => !/mismos hashes/.test(d))
+        const solo = ['/panel.html', '/panel'].map((ruta) => `${ruta}: ${aprobado(nombre)}`)
+        assert.deepEqual(enUna(otro), solo, `${nombre} distinto`)
+        assert.deepEqual(enUna(''), solo, `${nombre} sin hash`)
+        // Un segundo hash, válido, antes o después del aprobado.
+        for (const extra of [`${HASH} ${otro}`, `${hashDe('sha384', 'a')} ${HASH}`, `${HASH}\t${hashDe('sha512', 'b')}`]) {
+          assert.deepEqual(enUna(extra), solo, `${nombre}: ${extra}`)
+        }
+      }
+      // Sin style-src-elem (o sin style-src) tampoco está el hash aprobado.
+      assert.match(conCsp((csp) => csp.replace(/ style-src-elem [^;]*;/, '')).join('\n'), /\/panel\.html: style-src-elem tiene que tener el hash aprobado/)
+    },
+  },
+  {
+    nombre: 'verificarCspPanel: style-src-attr prohibida en cualquier posición y con cualquier valor',
+    fn: () => {
+      const valores = ["'self'", "'none'", "'unsafe-inline'", HASH, 'https://accounts.google.com/gsi/style', '']
+      for (const valor of valores) {
+        for (const nombre of ['style-src-attr', 'STYLE-SRC-ATTR', 'Style-Src-Attr']) {
+          const directiva = `${nombre} ${valor}`.trim()
+          for (const [donde, csp] of [
+            ['al principio', (c: string) => `${directiva}; ${c}`],
+            ['en el medio', (c: string) => c.replace('frame-src', `${directiva}; frame-src`)],
+            ['al final', (c: string) => `${c}; ${directiva}`],
+          ] as const) {
+            const defectos = conCsp(csp).join('\n')
+            assert.match(defectos, /\/panel\.html: la CSP no puede tener style-src-attr\./, `${directiva} ${donde}`)
+            assert.match(defectos, /\/panel: la CSP no puede tener style-src-attr\./, `${directiva} ${donde}`)
+          }
+        }
+      }
     },
   },
   {
@@ -292,10 +399,56 @@ export const pruebas: Prueba[] = [
       assert.match(defectos, /\/panel: la CSP no puede permitir 'unsafe-inline' \(aparece en script-src\)/)
       assert.doesNotMatch(defectos, /\/panel\.html: la CSP no puede permitir/)
 
-      // Válidos y coherentes en cada entrada, pero distintos entre /panel.html y /panel.
+      // Válidos y coherentes en cada entrada, pero distintos entre /panel.html y /panel:
+      // /panel ya no tiene el hash aprobado y las entradas difieren.
       const distintos = vercel()
       distintos.headers[1].headers[0].value = distintos.headers[1].headers[0].value.replaceAll(HASH, hashDe('sha256', 'otro'))
-      assert.deepEqual(verificar(API_RENDER, CLIENT_ID, distintos).vercel, ['/panel.html y /panel tienen que tener los mismos headers.'])
+      assert.deepEqual(sinComparacion(verificar(API_RENDER, CLIENT_ID, distintos).vercel), [
+        `/panel: style-src tiene que tener el hash aprobado ${HASH} y ningún otro.`,
+        `/panel: style-src-elem tiene que tener el hash aprobado ${HASH} y ningún otro.`,
+        '/panel.html y /panel tienen que tener los mismos headers.',
+      ])
+    },
+  },
+  {
+    nombre: 'verificarCspPanel: exactamente un Cross-Origin-Opener-Policy, con ese nombre y same-origin-allow-popups; ausente, duplicado, otro valor u otras mayúsculas → defecto',
+    fn: () => {
+      type Entrada = { headers: { key: string; value: string }[] }
+      const conCoop = (cambiar: (headers: Entrada['headers']) => void) => {
+        const v = vercel()
+        for (const e of v.headers as Entrada[]) cambiar(e.headers)
+        return verificar(API_RENDER, CLIENT_ID, v).vercel
+      }
+      const indice = (h: Entrada['headers']) => h.findIndex((x) => x.key === 'Cross-Origin-Opener-Policy')
+      const enAmbas = (texto: string) => [`/panel.html: ${texto}`, `/panel: ${texto}`]
+
+      assert.deepEqual(conCoop((h) => h.splice(indice(h), 1)), enAmbas('falta Cross-Origin-Opener-Policy.'))
+      assert.deepEqual(
+        conCoop((h) => h.push({ key: 'Cross-Origin-Opener-Policy', value: 'same-origin-allow-popups' })),
+        enAmbas('tiene que haber exactamente un Cross-Origin-Opener-Policy (hay 2).'),
+      )
+      for (const valor of ['same-origin', 'unsafe-none', 'Same-Origin-Allow-Popups', ' same-origin-allow-popups', 'same-origin-allow-popups;', '']) {
+        assert.deepEqual(
+          conCoop((h) => (h[indice(h)].value = valor)),
+          enAmbas(`Cross-Origin-Opener-Policy tiene que ser same-origin-allow-popups (es ${JSON.stringify(valor)}).`),
+          valor,
+        )
+      }
+      // Otras mayúsculas en el nombre: con el valor correcto, con otro valor, o como duplicado del header bien escrito.
+      for (const nombre of ['cross-origin-opener-policy', 'CROSS-ORIGIN-OPENER-POLICY', 'Cross-origin-opener-policy']) {
+        const escritura = `el header ${nombre} tiene que escribirse exactamente Cross-Origin-Opener-Policy.`
+        assert.deepEqual(conCoop((h) => (h[indice(h)].key = nombre)), enAmbas(escritura), nombre)
+        assert.deepEqual(
+          conCoop((h) => (h[indice(h)] = { key: nombre, value: 'unsafe-none' })),
+          ['/panel.html', '/panel'].flatMap((r) => [`${r}: ${escritura}`, `${r}: Cross-Origin-Opener-Policy tiene que ser same-origin-allow-popups (es "unsafe-none").`]),
+          `${nombre} con otro valor`,
+        )
+        assert.deepEqual(
+          conCoop((h) => h.push({ key: nombre, value: 'same-origin-allow-popups' })),
+          ['/panel.html', '/panel'].flatMap((r) => [`${r}: tiene que haber exactamente un Cross-Origin-Opener-Policy (hay 2).`, `${r}: ${escritura}`]),
+          `${nombre} duplicado`,
+        )
+      }
     },
   },
   {
@@ -331,42 +484,181 @@ export const pruebas: Prueba[] = [
     },
   },
   {
-    nombre: 'vercel.json: CSP Report-Only con la política diseñada y los cinco headers en ambas rutas',
+    nombre: 'vercel.json: solo headers, con las dos entradas del panel y exactamente HEADERS_PANEL (CSP_PANEL obligatoria, sin Report-Only)',
     fn: () => {
-      const v = vercel()
+      const texto = readFileSync(join(RAIZ, 'vercel.json'), 'utf8')
+      assert.doesNotMatch(texto, /report-only/i)
+      assert.deepEqual(JSON.parse(texto), { headers: RUTAS_PANEL.map((source) => ({ source, headers: HEADERS_PANEL })) })
+      assert.deepEqual(verificar(API_RENDER).vercel, [])
+      // Los seis headers aprobados, en este orden, con la CSP como primero.
       assert.deepEqual(
-        v.headers.map((e: { source: string }) => e.source),
-        ['/panel.html', '/panel'],
+        HEADERS_PANEL.map((h) => h.key),
+        ['Content-Security-Policy', 'Cross-Origin-Opener-Policy', 'Referrer-Policy', 'X-Content-Type-Options', 'X-Robots-Tag', 'X-Frame-Options'],
       )
-      for (const e of v.headers) {
-        const h = Object.fromEntries(e.headers.map((x: { key: string; value: string }) => [x.key, x.value]))
-        assert.deepEqual(Object.keys(h), ['Content-Security-Policy-Report-Only', 'Cross-Origin-Opener-Policy', 'Referrer-Policy', 'X-Content-Type-Options', 'X-Robots-Tag', 'X-Frame-Options'])
-        const csp = h['Content-Security-Policy-Report-Only']
-        // La política completa, en orden: sin style-src-attr ni ningún 'unsafe-*'.
-        assert.deepEqual(
-          csp.split(';').map((x: string) => x.trim()),
-          [
-            "default-src 'self'",
-            "script-src 'self' https://accounts.google.com/gsi/client",
-            `style-src 'self' https://accounts.google.com/gsi/style ${HASH}`,
-            `style-src-elem 'self' https://accounts.google.com/gsi/style ${HASH}`,
-            'frame-src https://accounts.google.com/gsi/',
-            `connect-src 'self' ${API_RENDER} https://accounts.google.com/gsi/`,
-            "img-src 'self'",
-            "font-src 'self'",
-            "object-src 'none'",
-            "base-uri 'none'",
-            "form-action 'none'",
-            "frame-ancestors 'none'",
-          ],
-        )
-        assert.doesNotMatch(csp, /unsafe-|style-src-attr/i)
-        assert.equal(h['Cross-Origin-Opener-Policy'], 'same-origin-allow-popups')
-        assert.equal(h['Referrer-Policy'], 'strict-origin-when-cross-origin')
-        assert.equal(h['X-Content-Type-Options'], 'nosniff')
-        assert.equal(h['X-Robots-Tag'], 'noindex, nofollow')
-        assert.equal(h['X-Frame-Options'], 'DENY')
+      const valores = Object.fromEntries(HEADERS_PANEL.map((h) => [h.key, h.value]))
+      assert.equal(valores['Content-Security-Policy'], CSP_PANEL)
+      assert.equal(valores['Cross-Origin-Opener-Policy'], 'same-origin-allow-popups')
+      assert.equal(valores['Referrer-Policy'], 'strict-origin-when-cross-origin')
+      assert.equal(valores['X-Content-Type-Options'], 'nosniff')
+      assert.equal(valores['X-Robots-Tag'], 'noindex, nofollow')
+      assert.equal(valores['X-Frame-Options'], 'DENY')
+      // Propiedades de la política aprobada, sin repetir su texto: 12 directivas,
+      // el hash aprobado dos veces, sin 'unsafe-*', comodines ni style-src-attr.
+      const directivasCsp = CSP_PANEL.split('; ')
+      assert.equal(directivasCsp.length, 12)
+      assert.equal(CSP_PANEL.split(HASH).length - 1, 2)
+      assert.doesNotMatch(CSP_PANEL, /unsafe-|style-src-attr|\*/i)
+      for (const d of ["default-src 'self'", "object-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'"]) assert.ok(directivasCsp.includes(d), d)
+      assert.ok(directivasCsp.some((d) => d.startsWith('connect-src ') && d.split(' ').includes(API_RENDER)))
+    },
+  },
+  {
+    nombre: 'verificarCspPanel: cada uno de los seis headers ausente, duplicado, con otro valor, con otras mayúsculas o espacios de más; un header adicional → defecto',
+    fn: () => {
+      for (const { key, value } of HEADERS_PANEL) {
+        const i = (h: Cabeceras) => h.findIndex((x) => x.key === key)
+        const articulo = key === 'Content-Security-Policy' ? 'una' : 'un'
+        assert.deepEqual(conHeaders((h) => h.splice(i(h), 1)), enAmbas(`falta ${key}.`), `${key} ausente`)
+        assert.deepEqual(conHeaders((h) => h.push({ key, value })), enAmbas(`tiene que haber exactamente ${articulo} ${key} (hay 2).`), `${key} duplicado`)
+        for (const nombre of [key.toLowerCase(), key.toUpperCase()]) {
+          assert.deepEqual(conHeaders((h) => (h[i(h)].key = nombre)), enAmbas(`el header ${nombre} tiene que escribirse exactamente ${key}.`), nombre)
+        }
+        for (const nombre of [`${key} `, ` ${key}`]) {
+          assert.deepEqual(
+            conHeaders((h) => (h[i(h)].key = nombre)),
+            ['/panel.html', '/panel'].flatMap((r) => [`${r}: falta ${key}.`, `${r}: header no permitido: ${JSON.stringify(nombre)}.`]),
+            JSON.stringify(nombre),
+          )
+        }
+        if (key === 'Content-Security-Policy') {
+          const formato = enAmbas('la CSP difiere de la aprobada solo en el formato (mayúsculas de los nombres, espacios o separadores); tiene que ser igual carácter por carácter.')
+          for (const otro of [` ${value}`, `${value} `, `${value};`, value.replace('; ', ';  '), value.replace('; ', ' ; '), value.replace('default-src', 'DEFAULT-SRC')]) {
+            assert.deepEqual(conHeaders((h) => (h[i(h)].value = otro)), formato, JSON.stringify(otro))
+          }
+          assert.deepEqual(conHeaders((h) => (h[i(h)].value = `${value}; worker-src 'none'`)), enAmbas('a la CSP le sobran directivas: worker-src.'))
+        } else {
+          for (const otro of [` ${value}`, `${value} `, value === value.toUpperCase() ? value.toLowerCase() : value.toUpperCase(), 'otro', '']) {
+            assert.deepEqual(conHeaders((h) => (h[i(h)].value = otro)), enAmbas(`${key} tiene que ser ${value} (es ${JSON.stringify(otro)}).`), `${key}: ${JSON.stringify(otro)}`)
+          }
+        }
       }
+      assert.deepEqual(
+        conHeaders((h) => (h[h.findIndex((x) => x.key === 'X-Robots-Tag')].value = 'noindex,  nofollow')),
+        enAmbas('X-Robots-Tag tiene que ser noindex, nofollow (es "noindex,  nofollow").'),
+      )
+      for (const extra of [
+        { key: 'X-Extra', value: '1' },
+        { key: 'Strict-Transport-Security', value: 'max-age=63072000' },
+        { key: 'Cache-Control', value: 'no-store' },
+        { key: 'Access-Control-Allow-Origin', value: '*' },
+      ]) {
+        assert.deepEqual(conHeaders((h) => h.push(extra)), enAmbas(`header no permitido: ${JSON.stringify(extra.key)}.`), extra.key)
+      }
+    },
+  },
+  {
+    nombre: 'verificarCspPanel: cada directiva de la CSP quitada, con un valor de más, con otro valor o en otro orden → el error dice qué cambió',
+    fn: () => {
+      const aprobadas = CSP_PANEL.split('; ').map((d) => {
+        const [nombre, ...valores] = d.split(' ')
+        return [nombre, valores.join(' ')] as const
+      })
+      const nombres = aprobadas.map(([n]) => n)
+      const armar = (lista: (readonly [string, string])[]) => lista.map(([n, v]) => `${n} ${v}`).join('; ')
+      const comparacion = (lista: (readonly [string, string])[]) => conCsp(() => armar(lista)).filter((d) => COMPARACION.test(d))
+      const otroValor = (nombre: string, es: string, aprobado: string) => enAmbas(`la CSP tiene otro valor en ${nombre}: es "${es}", tiene que ser "${aprobado}".`)
+      const otroOrden = (orden: string[]) => enAmbas(`la CSP tiene las directivas en otro orden: ${orden.join(', ')}; el orden aprobado es ${nombres.join(', ')}.`)
+
+      for (const [k, [nombre, valor]] of aprobadas.entries()) {
+        const resto = aprobadas.filter((_, j) => j !== k)
+        assert.deepEqual(comparacion(resto), enAmbas(`a la CSP le faltan directivas: ${nombre}.`), `${nombre} quitada`)
+        for (const agregado of ['https://ajeno.example', "'self'", 'data:']) {
+          if (valor.split(' ').includes(agregado)) continue
+          const lista = aprobadas.map((d, j) => (j === k ? ([nombre, `${valor} ${agregado}`] as const) : d))
+          assert.deepEqual(comparacion(lista), otroValor(nombre, `${valor} ${agregado}`, valor), `${nombre} + ${agregado}`)
+        }
+        const cambiado = valor === "'none'" ? "'self'" : "'none'"
+        assert.deepEqual(comparacion(aprobadas.map((d, j) => (j === k ? ([nombre, cambiado] as const) : d))), otroValor(nombre, cambiado, valor), `${nombre} cambiada`)
+        // Movida al final (o al principio, si ya es la última): solo cambia el orden.
+        const movida = k < aprobadas.length - 1 ? [...resto, aprobadas[k]] : [aprobadas[k], ...resto]
+        assert.deepEqual(conCsp(() => armar(movida)), otroOrden(movida.map(([n]) => n)), `${nombre} movida`)
+      }
+
+      // Casos concretos: orígenes ajenos, directivas de protección ausentes y hash cambiado.
+      const con = (nombre: string, nuevo: string) => aprobadas.map((d) => (d[0] === nombre ? ([nombre, nuevo] as const) : d))
+      const valorDe = (nombre: string) => aprobadas.find(([n]) => n === nombre)![1]
+      for (const nombre of ['script-src', 'connect-src']) {
+        const ajeno = `${valorDe(nombre)} https://evil.example`
+        assert.deepEqual(comparacion(con(nombre, ajeno)), otroValor(nombre, ajeno, valorDe(nombre)), `origen ajeno en ${nombre}`)
+      }
+      for (const nombre of ['frame-ancestors', 'object-src', 'base-uri']) {
+        assert.deepEqual(comparacion(aprobadas.filter(([n]) => n !== nombre)), enAmbas(`a la CSP le faltan directivas: ${nombre}.`), `sin ${nombre}`)
+      }
+      const otroHash = hashDe('sha256', 'otro')
+      const conOtroHash = conCsp((csp) => csp.replaceAll(HASH, otroHash))
+      assert.deepEqual(
+        conOtroHash.filter((d) => COMPARACION.test(d)),
+        ['/panel.html', '/panel'].flatMap((r) =>
+          ['style-src', 'style-src-elem'].map((n) => `${r}: la CSP tiene otro valor en ${n}: es "${valorDe(n).replace(HASH, otroHash)}", tiene que ser "${valorDe(n)}".`),
+        ),
+      )
+      // Varias diferencias a la vez: faltan, sobran, otro valor y orden, cada una con su mensaje.
+      const varias = [aprobadas[1], aprobadas[0], ...aprobadas.slice(2, -1).map((d) => (d[0] === 'img-src' ? (['img-src', "'self' data:"] as const) : d)), ['worker-src', "'none'"] as const]
+      assert.deepEqual(comparacion(varias), [
+        ...['/panel.html', '/panel'].flatMap((r) => [
+          `${r}: a la CSP le faltan directivas: frame-ancestors.`,
+          `${r}: a la CSP le sobran directivas: worker-src.`,
+          `${r}: la CSP tiene otro valor en img-src: es "'self' data:", tiene que ser "'self'".`,
+          `${r}: la CSP tiene las directivas en otro orden: ${[nombres[1], nombres[0], ...nombres.slice(2, -1)].join(', ')}; el orden aprobado es ${nombres.slice(0, -1).join(', ')}.`,
+        ]),
+      ])
+      // Un valor con otras mayúsculas es otro valor (los valores se comparan tal cual).
+      assert.deepEqual(comparacion(con('object-src', "'NONE'")), otroValor('object-src', "'NONE'", "'none'"))
+      // Una directiva renombrada: falta la aprobada y sobra la nueva.
+      assert.deepEqual(
+        comparacion(aprobadas.map((d) => (d[0] === 'script-src' ? (['script-src-elem', d[1]] as const) : d))),
+        ['/panel.html', '/panel'].flatMap((r) => [`${r}: a la CSP le faltan directivas: script-src.`, `${r}: a la CSP le sobran directivas: script-src-elem.`]),
+      )
+    },
+  },
+  {
+    nombre: 'verificarCspPanel: vercel.json con exactamente dos entradas (/panel.html y /panel), solo source y headers, e iguales entre sí',
+    fn: () => {
+      const con = (cambiar: (v: { headers: Record<string, unknown>[] }) => void) => {
+        const v = vercel()
+        cambiar(v)
+        return verificar(API_RENDER, CLIENT_ID, v).vercel
+      }
+      for (const source of ['/(.*)', '/', '/index.html', '/panel/']) {
+        assert.deepEqual(
+          con((v) => v.headers.push({ source, headers: [{ key: 'X-Frame-Options', value: 'DENY' }] })),
+          [`vercel.json: headers tiene que tener exactamente dos entradas, /panel.html y /panel (tiene 3: "/panel.html", "/panel", ${JSON.stringify(source)}).`],
+          source,
+        )
+      }
+      assert.deepEqual(con((v) => v.headers.push({ ...v.headers[1] })), [
+        'vercel.json: headers tiene que tener exactamente dos entradas, /panel.html y /panel (tiene 3: "/panel.html", "/panel", "/panel").',
+        'vercel.json tiene que tener exactamente una entrada de headers para /panel.',
+      ])
+      assert.deepEqual(con((v) => (v.headers[1].source = '/panel/')), [
+        'vercel.json: headers tiene que tener exactamente dos entradas, /panel.html y /panel (tiene 2: "/panel.html", "/panel/").',
+        'vercel.json tiene que tener exactamente una entrada de headers para /panel.',
+      ])
+      for (const clave of ['has', 'missing']) {
+        assert.deepEqual(
+          con((v) => (v.headers[0][clave] = [{ type: 'header', key: 'x-no-aplicar' }])),
+          [`vercel.json: la entrada "/panel.html" solo puede tener source y headers (tiene también ${clave}).`],
+          clave,
+        )
+      }
+      // Entradas en otro orden: se aceptan (cada una se busca por su source).
+      assert.deepEqual(con((v) => v.headers.reverse()), [])
+      // /panel con los mismos seis headers en otro orden: las rutas difieren.
+      assert.deepEqual(con((v) => (v.headers[1].headers as unknown[]).reverse()), ['/panel.html y /panel tienen que tener los mismos headers.'])
+      // Headers que no son una lista de { key, value } de texto.
+      assert.match(con((v) => (v.headers[0].headers = {})).join('\n'), /^\/panel\.html: headers tiene que ser una lista de \{ key, value \} de texto\.$/m)
+      assert.match(con((v) => (v.headers[1].headers as unknown[]).push({ key: 'X-Extra', value: 1 })).join('\n'), /^\/panel: headers tiene que ser una lista de \{ key, value \} de texto\.$/m)
+      assert.match(verificar(API_RENDER, CLIENT_ID, {}).vercel.join('\n'), /^vercel\.json tiene que tener una lista headers\.$/m)
     },
   },
   {
