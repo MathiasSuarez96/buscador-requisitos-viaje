@@ -2,7 +2,9 @@
 // (services/panel/lectura-propuestas.js): validación de la consulta,
 // cursor, consultas exactas enviadas al driver, hash, identidad y valor
 // actual del requisito (ausente frente a null), acciones permitidas,
-// resumen seguro de evidencia y eventos. Usa un `db` falso que solo
+// resumen seguro de evidencia y eventos, y el destino saneado del
+// listado y del detalle (una sola lectura de destinos por página).
+// Usa un `db` falso que solo
 // implementa find/findOne: cualquier otro método lanza.
 //
 // Uso: node scripts/test-lectura-propuestas.js (sin red ni Mongo)
@@ -92,8 +94,11 @@ function requisitoEta(extra = {}) {
 }
 const destinoDe = (requisitos) => ({ _id: ObjectId.createFromHexString(DESTINO_HEX), pais: 'Reino Unido', codigo_iso: 'GB', requisitos });
 
-// db falso: solo find/findOne. Registra cada llamada.
-function dbFalso({ propuestas = [], destinos = [], eventos = [] } = {}) {
+// db falso: solo find/findOne. Registra cada llamada. find sobre destinos
+// solo admite { _id: { $in: [ObjectId] } } (como Mongo, un string no
+// coincide con un _id ObjectId) y devuelve el documento COMPLETO, sin
+// aplicar la proyección. falloDestinos: error que lanza ese find.
+function dbFalso({ propuestas = [], destinos = [], eventos = [], falloDestinos = null } = {}) {
   const llamadas = [];
   const datos = { propuestas_cambio: propuestas, destinos, eventos_propuesta: eventos };
   const coleccion = (nombre) =>
@@ -102,7 +107,12 @@ function dbFalso({ propuestas = [], destinos = [], eventos = [] } = {}) {
         find(filtro, opciones) {
           llamadas.push({ coleccion: nombre, op: 'find', filtro, opciones });
           let docs = datos[nombre].slice();
-          if (nombre === 'propuestas_cambio') {
+          if (nombre === 'destinos') {
+            if (falloDestinos) throw falloDestinos;
+            assert.deepStrictEqual(Object.keys(filtro), ['_id'], 'destinos: solo filtro por _id');
+            assert.deepStrictEqual(Object.keys(filtro._id), ['$in'], 'destinos: solo $in');
+            docs = docs.filter((d) => filtro._id.$in.some((id) => id instanceof ObjectId && d._id instanceof ObjectId && d._id.equals(id)));
+          } else if (nombre === 'propuestas_cambio') {
             docs = docs.filter((d) => filtro.estado.$in.includes(d.estado) && (!filtro._id || d._id.toHexString() < filtro._id.$lt.toHexString()));
             docs.sort((a, b) => (a._id.toHexString() < b._id.toHexString() ? 1 : -1));
           } else {
@@ -573,6 +583,275 @@ const sinProhibidos = (obj, etiqueta) => {
     ];
     for (const [cambio, codigo] of casos) assert.ok(L.problemasConsistencia({ ...p, ...cambio }).includes(codigo), codigo);
     console.log(`9) consistencia documento/payload: ${casos.length} divergencias detectadas: OK`);
+  }
+
+  // ============================================================
+  // 10) destinoSeguro: el mismo saneamiento en listado y detalle
+  // ============================================================
+  {
+    const oid = () => new ObjectId();
+    const id = oid();
+    const hex = id.toHexString();
+    const conPais = (pais, codigo_iso = 'GB') => L.destinoSeguro({ _id: id, pais, codigo_iso });
+    assert.deepStrictEqual(conPais('Reino Unido'), { destino_id: hex, pais: 'Reino Unido', codigo_iso: 'GB' });
+
+    // Datos reales: ningún nombre ni código cambia.
+    const reales = require('../../data/destinos.json');
+    assert.ok(reales.length > 0);
+    for (const d of reales) assert.deepStrictEqual(L.destinoSeguro({ ...d, _id: id }), { destino_id: hex, pais: d.pais, codigo_iso: d.codigo_iso }, d.pais);
+    for (const pais of ['Países Bajos', 'Corea del Sur', "Côte d'Ivoire", 'São Tomé y Príncipe', 'Bosnia y Herzegovina', 'Guinea-Bisáu']) assert.strictEqual(conPais(pais).pais, pais, pais);
+
+    // pais hostil o mal formado.
+    const paises = [
+      ['<b>Reino</b> Unido', 'Reino Unido'],
+      ['<img src=x onerror=alert(1)>Francia', 'Francia'],
+      ['<script>alert(1)</script>', 'alert(1)'],
+      ['Reino > Unido <', 'Reino  Unido'],
+      ['mongodb+srv://u:p@h/x', 'uri-mongodb-redactada'],
+      ['a'.repeat(150), `${'a'.repeat(100)}…`],
+      ['<b></b>', null],
+      ['   ', null],
+      ['', null],
+      [42, null],
+      [{ x: 1 }, null],
+      [['Francia'], null],
+      [null, null],
+      [undefined, null],
+      [true, null]
+    ];
+    for (const [pais, esperado] of paises) assert.strictEqual(conPais(pais).pais, esperado, `pais ${JSON.stringify(pais)}`);
+
+    // Casos dudosos (reglas de paisSeguro):
+    //  - cada tramo de controles o separadores de línea → UN espacio; los
+    //    espacios comunes no se tocan; en los extremos desaparecen (trim);
+    //  - un sustituto Unicode aislado → el pais entero es null;
+    //  - vacío después de limpiar → null;
+    //  - el recorte cuenta code points y nunca parte un par sustituto.
+    const dudosos = [
+      ['Reino\nUnido', 'Reino Unido'],
+      ['Reino\tUnido', 'Reino Unido'],
+      ['Reino\rUnido', 'Reino Unido'],
+      ['Reino\r\n\tUnido', 'Reino Unido'],
+      ['Reino \n Unido', 'Reino   Unido'],
+      ['Reino Unido ', 'Reino Unido'],
+      ['Reino\u0085Unido', 'Reino Unido'],
+      ['Fran\u0000cia', 'Fran cia'],
+      ['\u0007Francia\n', 'Francia'],
+      ['<b>\n</b>', null],
+      ['\n\t\r', null],
+      ['\u0000', null],
+      ['Fran\uD800cia', null],
+      ['\uDC00', null],
+      ['Reino Unido\uD83C', null],
+      ['🇬🇧 Reino Unido', '🇬🇧 Reino Unido'],
+      ['😀'.repeat(150), `${'😀'.repeat(100)}…`],
+      [`${'a'.repeat(99)}😀😀`, `${'a'.repeat(99)}😀…`],
+      ['a'.repeat(100), 'a'.repeat(100)]
+    ];
+    for (const [pais, esperado] of dudosos) {
+      const r = L.paisSeguro(pais);
+      assert.strictEqual(r, esperado, `paisSeguro(${JSON.stringify(pais)})`);
+      assert.strictEqual(conPais(pais).pais, esperado, `destinoSeguro con ${JSON.stringify(pais)}`);
+      if (r !== null) assert.ok(r.isWellFormed() && !/[\p{Cc}\p{Zl}\p{Zp}<>]/u.test(r), `salida limpia para ${JSON.stringify(pais)}`);
+    }
+    // codigo_iso: solo dos letras mayúsculas; no se corrige.
+    for (const iso of ['gb', 'Gb', 'GBR', 'G', 'G B', ' GB', 'GB ', 'G1', '<b>GB</b>', 42, null, undefined, {}, ['GB'], '']) {
+      assert.strictEqual(L.destinoSeguro({ _id: id, pais: 'Reino Unido', codigo_iso: iso }).codigo_iso, null, `iso ${JSON.stringify(iso)}`);
+    }
+    // Sin destino o con _id que no es ObjectId → null; nunca otros campos.
+    for (const malo of [null, undefined, 'GB', [], 42, { pais: 'X', codigo_iso: 'GB' }, { _id: 'xyz', pais: 'X' }, { _id: 'A'.repeat(24), pais: 'X' }]) {
+      assert.strictEqual(L.destinoSeguro(malo), null, JSON.stringify(malo));
+    }
+    const completo = L.destinoSeguro({ _id: id, pais: 'X', codigo_iso: 'XX', requisitos: [requisitoEta()], creado: new Date(), __v: 0 });
+    assert.deepStrictEqual(Object.keys(completo), ['destino_id', 'pais', 'codigo_iso']);
+    console.log(`10) destinoSeguro: ${reales.length} destinos de data/destinos.json y 6 nombres con acentos/apóstrofes sin cambios; ${paises.length} pais hostiles o mal formados; ${dudosos.length} casos dudosos (controles → un espacio, sustituto aislado → null, vacío → null, recorte por code points); 15 codigo_iso inválidos → null; sin destino o _id inválido → null; solo destino_id, pais y codigo_iso: OK`);
+  }
+
+  // ============================================================
+  // 11) Destino en el listado: una sola lectura por página
+  // ============================================================
+  {
+    const pid = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+    const hexes = Array.from({ length: 60 }, () => new ObjectId().toHexString());
+    const destinoN = (i, extra = {}) => ({ _id: ObjectId.createFromHexString(hexes[i]), pais: `Destino ${i}`, codigo_iso: 'ZZ', requisitos: [requisitoEta({ descripcion: '<p>no sale</p>' })], ...extra });
+    const listarCon = async (docs, destinos, limite = '50', extraDb = {}) => {
+      const f = dbFalso({ propuestas: docs, destinos, ...extraDb });
+      const r = await L.crearLectorPropuestas({ obtenerDb: () => f.db }).listar(L.validarConsultaListado({ limite }));
+      return { r, llamadas: f.llamadas };
+    };
+    const secuencia = (llamadas) => llamadas.map((l) => [l.coleccion, l.op]);
+    const idsDe = (llamada) => llamada.filtro._id.$in.map((x) => {
+      assert.ok(x instanceof ObjectId, 'ids como ObjectId, no string');
+      return x.toHexString();
+    });
+
+    // a) 50 propuestas con destinos distintos → exactamente 2 lecturas.
+    {
+      const docs = Array.from({ length: 50 }, (_, i) => propuestaDe({ propuestaId: pid(i), destinoHex: hexes[i] }));
+      const destinos = Array.from({ length: 50 }, (_, i) => destinoN(i));
+      const { r, llamadas } = await listarCon(docs, destinos);
+      assert.deepStrictEqual(secuencia(llamadas), [['propuestas_cambio', 'find'], ['destinos', 'find']]);
+      assert.deepStrictEqual(idsDe(llamadas[1]), [...hexes.slice(0, 50)].sort(), 'ids únicos y ordenados');
+      assert.deepStrictEqual(llamadas[1].opciones, { projection: { _id: 1, pais: 1, codigo_iso: 1 } }, 'proyección exacta');
+      assert.strictEqual(r.propuestas.length, 50);
+      for (const item of r.propuestas) {
+        assert.deepStrictEqual(item.destino, { destino_id: item.destino_id, pais: `Destino ${hexes.indexOf(item.destino_id)}`, codigo_iso: 'ZZ' });
+      }
+      sinProhibidos(r, 'listado de 50');
+      assert.ok(!JSON.stringify(r).includes('<'), 'ni requisitos ni HTML del destino');
+    }
+
+    // b) límite + 1: el documento extra no se consulta.
+    {
+      const docs = Array.from({ length: 4 }, (_, i) => propuestaDe({ propuestaId: pid(i), destinoHex: hexes[i] }));
+      const { r, llamadas } = await listarCon(docs, docs.map((_, i) => destinoN(i)), '3');
+      const pagina = r.propuestas.map((x) => x.destino_id);
+      assert.strictEqual(pagina.length, 3);
+      assert.ok(r.siguiente_cursor);
+      assert.deepStrictEqual(idsDe(llamadas[1]), [...pagina].sort(), 'solo los destinos de la página');
+    }
+
+    // c) Repetidos, null, inválido, inexistente, distinto del payload.
+    {
+      const docs = [
+        propuestaDe({ propuestaId: pid(1), destinoHex: hexes[1] }),
+        propuestaDe({ propuestaId: pid(2), destinoHex: hexes[1] }),
+        propuestaDe({ propuestaId: pid(3), destinoHex: hexes[1] }),
+        propuestaDe({ propuestaId: pid(4) }, { destino_id: null }),
+        propuestaDe({ propuestaId: pid(5) }, { destino_id: 'no-es-objectid' }),
+        propuestaDe({ propuestaId: pid(6) }, { destino_id: 'A'.repeat(24) }),
+        propuestaDe({ propuestaId: pid(7), destinoHex: hexes[7] }), // inexistente
+        propuestaDe({ propuestaId: pid(8), destinoHex: hexes[1] }, { destino_id: ObjectId.createFromHexString(hexes[8]) }), // payload ≠ documento
+        propuestaDe({ propuestaId: pid(9), destinoHex: hexes[1] }, { destino_id: hexes[9] }) // destino_id como string hex válido
+      ];
+      const { r, llamadas } = await listarCon(docs, [destinoN(1), destinoN(8), destinoN(9)]);
+      assert.deepStrictEqual(idsDe(llamadas[1]), [hexes[1], hexes[7], hexes[8], hexes[9]].sort(), 'repetidos una vez; null e inválidos fuera');
+      const por = Object.fromEntries(r.propuestas.map((x) => [x.propuesta_id, x]));
+      for (const n of [1, 2, 3]) assert.deepStrictEqual(por[pid(n)].destino, { destino_id: hexes[1], pais: 'Destino 1', codigo_iso: 'ZZ' });
+      assert.notStrictEqual(por[pid(1)].destino, por[pid(2)].destino, 'cada ítem con su propio objeto');
+      for (const n of [4, 5, 6, 7]) assert.strictEqual(por[pid(n)].destino, null, `ítem ${n}`);
+      assert.deepStrictEqual(por[pid(8)].destino, { destino_id: hexes[8], pais: 'Destino 8', codigo_iso: 'ZZ' }, 'sale del documento, no del payload');
+      assert.deepStrictEqual(por[pid(9)].destino, { destino_id: hexes[9], pais: 'Destino 9', codigo_iso: 'ZZ' });
+      // Ningún campo existente cambia; destino va justo después de destino_id.
+      for (const doc of docs) {
+        const item = por[doc.propuesta_id];
+        const { destino, ...resto } = item;
+        assert.deepStrictEqual(resto, L.resumenListado(doc), `${doc.propuesta_id}: campos existentes`);
+        const claves = Object.keys(L.resumenListado(doc));
+        claves.splice(claves.indexOf('destino_id') + 1, 0, 'destino');
+        assert.deepStrictEqual(Object.keys(item), claves, 'orden de claves');
+        assert.ok(destino === null || typeof destino === 'object');
+      }
+    }
+
+    // d) Página vacía o sin ids válidos → una sola lectura.
+    {
+      for (const docs of [[], [propuestaDe({}, { destino_id: null }), propuestaDe({}, { destino_id: 'xyz' })]]) {
+        const { r, llamadas } = await listarCon(docs, [destinoN(0)]);
+        assert.deepStrictEqual(secuencia(llamadas), [['propuestas_cambio', 'find']], `${docs.length} propuestas sin ids`);
+        assert.ok(r.propuestas.every((x) => x.destino === null));
+      }
+    }
+
+    // e) Si falla la lectura de destinos, falla el listado con ese mismo error.
+    {
+      const boom = new Error('fallo de destinos');
+      const f = dbFalso({ propuestas: [propuestaDe()], destinos: [destinoN(0)], falloDestinos: boom });
+      await assert.rejects(L.crearLectorPropuestas({ obtenerDb: () => f.db }).listar(L.validarConsultaListado({})), (err) => err === boom);
+    }
+
+    // f) Listado y detalle: misma forma y mismo saneamiento.
+    {
+      const casos = [
+        ['normal', { pais: 'Reino Unido', codigo_iso: 'GB' }],
+        ['acentos y apóstrofe', { pais: "Côte d'Ivoire", codigo_iso: 'CI' }],
+        ['pais con HTML', { pais: '<img src=x onerror=alert(1)>Países <b>Bajos</b>', codigo_iso: 'nl' }],
+        ['pais largo', { pais: 'Ñ'.repeat(150), codigo_iso: 'GBR' }],
+        ['tipos incorrectos', { pais: 42, codigo_iso: 7 }],
+        ['solo etiquetas', { pais: '<i></i>', codigo_iso: ' GB' }]
+      ];
+      for (const [etiqueta, campos] of casos) {
+        const destino = { _id: ObjectId.createFromHexString(DESTINO_HEX), ...campos, requisitos: [requisitoEta()] };
+        const p = propuestaDe();
+        const f = dbFalso({ propuestas: [p], destinos: [destino] });
+        const lector = L.crearLectorPropuestas({ obtenerDb: () => f.db });
+        const item = (await lector.listar(L.validarConsultaListado({}))).propuestas[0];
+        const det = await lector.detalle(PID, OP_DECIDE);
+        assert.deepStrictEqual(item.destino, det.requisito_actual.destino, `${etiqueta}: listado = detalle`);
+        assert.deepStrictEqual(item.destino, L.destinoSeguro(destino), etiqueta);
+        assert.ok(!JSON.stringify([item, det]).includes('<'), `${etiqueta}: sin "<"`);
+      }
+      // Destino inexistente: null en los dos.
+      const f = dbFalso({ propuestas: [propuestaDe()] });
+      const lector = L.crearLectorPropuestas({ obtenerDb: () => f.db });
+      assert.strictEqual((await lector.listar(L.validarConsultaListado({}))).propuestas[0].destino, null);
+      assert.strictEqual((await lector.detalle(PID, OP_DECIDE)).requisito_actual.destino, null);
+    }
+
+    // g) Consulta exacta (pura).
+    {
+      assert.strictEqual(L.consultaDestinosListado([]), null);
+      assert.strictEqual(L.consultaDestinosListado([{ destino_id: null }, { destino_id: 'xyz' }, {}]), null);
+      const q = L.consultaDestinosListado([{ destino_id: hexes[3] }, { destino_id: ObjectId.createFromHexString(hexes[2]) }, { destino_id: hexes[3] }, { destino_id: null }]);
+      assert.deepStrictEqual(Object.keys(q.filtro), ['_id']);
+      assert.deepStrictEqual(q.filtro._id.$in.map((x) => x.toHexString()), [hexes[2], hexes[3]].sort());
+      assert.deepStrictEqual(q.opciones, { projection: { _id: 1, pais: 1, codigo_iso: 1 } });
+    }
+    console.log('11) destino en el listado: 50 propuestas → [find propuestas_cambio, find destinos] con ids únicos y ordenados (ObjectId) y proyección exacta; documento extra del límite + 1 fuera; repetidos una vez; null, inválido e inexistente → null; destino_id del documento (no del payload); campos existentes y orden intactos; página vacía o sin ids → 1 lectura; fallo de destinos → mismo error; listado = detalle en 6 casos hostiles y en inexistente: OK');
+  }
+
+  // ============================================================
+  // 12) El saneamiento solo afecta lo que se muestra: un pais o
+  //     codigo_iso hostil no cambia la integridad ni las acciones
+  // ============================================================
+  {
+    const hostiles = [
+      ['pais con HTML', { pais: '<img src=x onerror=alert(1)>Reino <b>Unido</b>' }],
+      ['pais con controles', { pais: 'Reino\r\n\tUnido\u0000' }],
+      ['pais con sustituto aislado', { pais: 'Reino\uD800Unido' }],
+      ['pais de 500 caracteres', { pais: 'Ñ'.repeat(500) }],
+      ['pais numérico', { pais: 42 }],
+      ['pais objeto', { pais: { $gt: '' } }],
+      ['sin pais', { pais: undefined }],
+      ['solo etiquetas', { pais: '<i></i>' }],
+      ['codigo_iso en minúsculas', { codigo_iso: 'gb' }],
+      ['codigo_iso numérico', { codigo_iso: 7 }]
+    ];
+    const escenarios = [
+      ['íntegra', requisitoEta(), ['aprobar', 'rechazar']],
+      ['valor actual cambiado', requisitoEta({ costo: '£16' }), ['rechazar']]
+    ];
+    let comparados = 0;
+    for (const [escenario, req, permitidas] of escenarios) {
+      const p = propuestaDe();
+      const destino = (campos = {}) => ({ _id: ObjectId.createFromHexString(DESTINO_HEX), pais: 'Reino Unido', codigo_iso: 'GB', requisitos: [req], ...campos });
+      const leer = async (d) => {
+        const f = dbFalso({ propuestas: [p], destinos: [d] });
+        const det = await L.crearLectorPropuestas({ obtenerDb: () => f.db }).detalle(PID, OP_DECIDE);
+        const integ = await L.evaluarIntegridad(dbFalso({ destinos: [d] }).db, p);
+        return { det, integ };
+      };
+      const sinDestino = ({ destino: _d, ...resto }) => resto;
+      const base = await leer(destino());
+      assert.strictEqual(base.det.integridad.hash_coincide, true, `${escenario}: hash coincide`);
+      assert.deepStrictEqual(base.det.acciones_permitidas, permitidas, `${escenario}: acciones de referencia`);
+      for (const [etiqueta, campos] of hostiles) {
+        const h = await leer(destino(campos));
+        const nombre = `${escenario} + ${etiqueta}`;
+        assert.deepStrictEqual(h.det.integridad, base.det.integridad, `${nombre}: integridad`);
+        assert.deepStrictEqual(h.det.acciones_permitidas, base.det.acciones_permitidas, `${nombre}: acciones_permitidas`);
+        assert.deepStrictEqual(h.det.acciones_bloqueadas, base.det.acciones_bloqueadas, `${nombre}: acciones_bloqueadas`);
+        assert.deepStrictEqual(sinDestino(h.det.requisito_actual), sinDestino(base.det.requisito_actual), `${nombre}: requisito_actual (salvo destino)`);
+        assert.deepStrictEqual(h.det.propuesta, base.det.propuesta, `${nombre}: propuesta`);
+        // La aprobación POST usa evaluarIntegridad: mismos motivos y mismo hash.
+        assert.deepStrictEqual(h.integ.motivos, base.integ.motivos, `${nombre}: motivos de la aprobación`);
+        assert.deepStrictEqual(h.integ.hash, base.integ.hash, `${nombre}: hash`);
+        // Lo único que cambia es lo que se muestra del destino.
+        assert.deepStrictEqual(h.det.requisito_actual.destino, L.destinoSeguro(destino(campos)), `${nombre}: destino saneado`);
+        comparados++;
+      }
+    }
+    console.log(`12) integridad sobre el documento original: ${comparados} combinaciones (2 escenarios × ${hostiles.length} pais/codigo_iso hostiles) con la misma integridad, hash_coincide, acciones permitidas y bloqueadas, requisito_actual y motivos de la aprobación; solo cambia el destino mostrado: OK`);
   }
 
   console.log('\nTODAS LAS PRUEBAS DEL LECTOR DE PROPUESTAS OK');

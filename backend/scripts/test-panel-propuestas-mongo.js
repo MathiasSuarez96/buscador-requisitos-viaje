@@ -27,6 +27,7 @@ const { MongoMemoryServer } = require('mongodb-memory-server');
 const { MongoClient, ObjectId } = require('mongodb');
 const { crearApp } = require('../app');
 const { crearVerificadorGoogle } = require('../services/panel/verificar-token-google');
+const { crearLectorPropuestas } = require('../services/panel/lectura-propuestas');
 const { hashSobreCanonico } = require('../services/propuestas/canonicalizacion-propuestas');
 const { REQUISITO_ID_ETA } = require('../services/propuestas/fuentes/govuk-uk-eta');
 const { pedir } = require('./lib/http-prueba');
@@ -55,8 +56,15 @@ const D = {
   gbNull: '6a87828da8282a4aa6ddfbdb', // UK ETA con costo: null
   gbOtroNombre: '6a87828da8282a4aa6ddfbdc', // mismo _id de requisito, otro nombre
   gbConCosto: '6a87828da8282a4aa6ddfbdd', // UK ETA con costo: '£16'
+  hostilHtml: '6a87828da8282a4aa6ddfbe1', // pais con HTML, ISO en minúsculas
+  hostilLargo: '6a87828da8282a4aa6ddfbe2', // pais de 150 caracteres, ISO de 3 letras
+  hostilTipo: '6a87828da8282a4aa6ddfbe3', // pais numérico, ISO numérico
+  hostilControles: '6a87828da8282a4aa6ddfbe4', // pais con tabulación, \r\n y NUL
   inexistente: '6a87828da8282a4aa6ddfbff'
 };
+// 51 destinos distintos para la página de 50 (estado conflicto).
+const hexConflicto = (i) => `6b${String(i).padStart(22, '0')}`;
+const isoConflicto = (i) => String.fromCharCode(65 + Math.floor(i / 26), 65 + (i % 26));
 const requisito = (extra = {}) => ({
   _id: oid(REQUISITO_ID_ETA),
   tipo: 'formulario_digital',
@@ -73,7 +81,12 @@ const destinos = [
   { _id: oid(D.gb), pais: 'Reino Unido', codigo_iso: 'GB', requisitos: [requisito()] },
   { _id: oid(D.gbNull), pais: 'Reino Unido (null)', codigo_iso: 'G1', requisitos: [requisito({ costo: null })] },
   { _id: oid(D.gbOtroNombre), pais: 'Reino Unido (otro)', codigo_iso: 'G2', requisitos: [requisito({ nombre: 'UK ETA (nuevo)' })] },
-  { _id: oid(D.gbConCosto), pais: 'Reino Unido (costo)', codigo_iso: 'G3', requisitos: [requisito({ costo: '£16' })] }
+  { _id: oid(D.gbConCosto), pais: 'Reino Unido (costo)', codigo_iso: 'G3', requisitos: [requisito({ costo: '£16' })] },
+  { _id: oid(D.hostilHtml), pais: '<img src=x onerror=alert(1)>Países <b>Bajos</b>', codigo_iso: 'nl', requisitos: [requisito()] },
+  { _id: oid(D.hostilLargo), pais: 'Ñ'.repeat(150), codigo_iso: 'GBR', requisitos: [requisito()] },
+  { _id: oid(D.hostilTipo), pais: 42, codigo_iso: 7, requisitos: [requisito()] },
+  { _id: oid(D.hostilControles), pais: '\tReino\r\nUnido\u0000', codigo_iso: 'GB', requisitos: [requisito()] },
+  ...Array.from({ length: 51 }, (_, i) => ({ _id: oid(hexConflicto(i)), pais: `Destino ${i}`, codigo_iso: isoConflicto(i), requisitos: [requisito()] }))
 ];
 
 let secuencia = 0;
@@ -146,9 +159,17 @@ const P = {
   decisionPrevia: propuesta('pendiente con decision_aprobacion_id', { extra: { decision_aprobacion_id: '4db810fc-d491-4166-82d1-8b88fe9b088d' } }),
   aprobada: propuesta('aprobada', { estado: 'aprobada', extra: { version_coordinacion: 1 } }),
   rechazada: propuesta('rechazada', { estado: 'rechazada', extra: { version_coordinacion: 1 } }),
-  aplicada: propuesta('aplicada', { estado: 'aplicada', extra: { version_coordinacion: 2 } })
+  aplicada: propuesta('aplicada', { estado: 'aplicada', extra: { version_coordinacion: 2 } }),
+  destinoHostilHtml: propuesta('destino con pais HTML', { destino: D.hostilHtml }),
+  destinoHostilLargo: propuesta('destino con pais largo', { destino: D.hostilLargo }),
+  destinoHostilTipo: propuesta('destino con tipos incorrectos', { destino: D.hostilTipo }),
+  destinoHostilControles: propuesta('destino con controles en pais', { destino: D.hostilControles }),
+  destinoIdNull: propuesta('destino_id null en el documento', { extra: { destino_id: null } }),
+  destinoIdInvalido: propuesta('destino_id inválido en el documento', { extra: { destino_id: 'no-es-objectid' } })
 };
 const relleno = Array.from({ length: 5 }, (_, i) => propuesta(`relleno ${i}`));
+// Creadas en orden: conflictos[0] tiene el _id más chico (queda fuera de la página de 50).
+const conflictos = Array.from({ length: 51 }, (_, i) => propuesta(`conflicto ${i}`, { destino: hexConflicto(i), estado: 'conflicto', extra: { version_coordinacion: 1 } }));
 const EVENTO_APROBACION = '4db810fc-d491-4166-82d1-8b88fe9b088d';
 P.aprobada.doc.decision_aprobacion_id = EVENTO_APROBACION;
 P.aprobada.doc.ultimo_evento_id = EVENTO_APROBACION;
@@ -216,7 +237,7 @@ async function volcado() {
   await semilla.connect();
   const db = semilla.db(DB);
   await db.collection('destinos').insertMany(destinos);
-  await db.collection('propuestas_cambio').insertMany([...Object.values(P), ...relleno].map((p) => p.doc));
+  await db.collection('propuestas_cambio').insertMany([...Object.values(P), ...relleno, ...conflictos].map((p) => p.doc));
   await db.collection('eventos_propuesta').insertMany(eventos);
   const antes = await volcado();
 
@@ -254,7 +275,9 @@ async function volcado() {
   // Conexión de la app (mongoose) con monitor de comandos.
   await mongoose.connect(uri, { monitorCommands: true });
   const COMANDOS = [];
-  mongoose.connection.getClient().on('commandStarted', (e) => COMANDOS.push({ nombre: e.commandName, coleccion: e.command[e.commandName] }));
+  mongoose.connection.getClient().on('commandStarted', (e) =>
+    COMANDOS.push({ nombre: e.commandName, coleccion: e.command[e.commandName], filtro: e.command.filter, proyeccion: e.command.projection })
+  );
   COMANDOS.length = 0;
 
   const REGISTROS = [];
@@ -366,6 +389,7 @@ async function volcado() {
         estado: 'pendiente_aprobacion',
         campo: 'costo',
         destino_id: D.gb,
+        destino: { destino_id: D.gb, pais: 'Reino Unido', codigo_iso: 'GB' },
         requisito_id: REQUISITO_ID_ETA,
         valor_anterior: { presente: false, valor: null },
         valor_propuesto: { valor: '£20', importe: 20, moneda: 'GBP' },
@@ -377,8 +401,132 @@ async function volcado() {
       });
       assert.deepStrictEqual(todo.json.propuestas.find((x) => x.propuesta_id === P.hashAlterado.doc.propuesta_id).alertas, ['hash_no_coincide']);
       const finds = lecturasDe().filter((c) => c.nombre === 'find');
-      assert.ok(finds.length > 0 && finds.every((c) => c.coleccion === 'propuestas_cambio'), 'el listado solo lee propuestas_cambio');
-      console.log(`2) listado: pendientes por defecto en orden _id desc; ${paginas} páginas de 4 sin repetidos ni faltantes; 3 estados; 10 consultas inválidas → 400; forma exacta del ítem; alerta de hash; solo lee propuestas_cambio: OK`);
+      assert.ok(finds.length > 0 && finds.every((c) => ['propuestas_cambio', 'destinos'].includes(c.coleccion)), 'el listado solo lee propuestas_cambio y destinos');
+      console.log(`2) listado: pendientes por defecto en orden _id desc; ${paginas} páginas de 4 sin repetidos ni faltantes; 3 estados; 10 consultas inválidas → 400; forma exacta del ítem; alerta de hash; solo lee propuestas_cambio y destinos: OK`);
+    }
+
+    // ============================================================
+    // 2b) Destino del listado: una sola lectura por página
+    // ============================================================
+    {
+      const lecturas = () => lecturasDe().map((c) => [c.nombre, c.coleccion]);
+      const idsDe = (c) => c.filtro._id.$in.map((x) => x.toHexString());
+
+      // a) Página de 50 con destinos distintos: exactamente 2 comandos.
+      COMANDOS.length = 0;
+      const r = await llamar('/api/panel/propuestas?estado=conflicto&limite=50');
+      assert.strictEqual(r.status, 200);
+      assert.deepStrictEqual(lecturas(), [['find', 'propuestas_cambio'], ['find', 'destinos']], 'propuestas y destinos, sin getMore ni N+1');
+      const consulta = lecturasDe()[1];
+      assert.deepStrictEqual(Object.keys(consulta.filtro), ['_id']);
+      const esperados = conflictos.slice(1).map((p) => p.doc.destino_id.toHexString()).sort();
+      assert.deepStrictEqual(idsDe(consulta), esperados, '50 ids únicos y ordenados, sin el documento extra');
+      assert.ok(!idsDe(consulta).includes(hexConflicto(0)), 'el documento 51 no se consulta');
+      assert.deepStrictEqual(consulta.proyeccion, { _id: 1, pais: 1, codigo_iso: 1 });
+      assert.strictEqual(r.json.propuestas.length, 50);
+      assert.ok(r.json.siguiente_cursor);
+      for (const item of r.json.propuestas) {
+        const i = conflictos.findIndex((p) => p.doc.propuesta_id === item.propuesta_id);
+        assert.ok(i > 0);
+        assert.deepStrictEqual(item.destino, { destino_id: hexConflicto(i), pais: `Destino ${i}`, codigo_iso: isoConflicto(i) });
+      }
+
+      // b) explain de esa misma consulta (cliente de siembra, fuera del monitor).
+      const plan = await semilla.db(DB).collection('destinos').find(consulta.filtro, { projection: consulta.proyeccion }).explain('queryPlanner');
+      const etapas = [];
+      const recorrer = (n) => {
+        if (Array.isArray(n)) return n.forEach(recorrer);
+        if (n === null || typeof n !== 'object') return;
+        if (typeof n.stage === 'string') etapas.push([n.stage, n.indexName ?? null]);
+        Object.values(n).forEach(recorrer);
+      };
+      recorrer(plan.queryPlanner.winningPlan);
+      assert.ok(etapas.some(([s, i]) => s === 'IXSCAN' && i === '_id_'), `IXSCAN sobre _id_: ${JSON.stringify(etapas)}`);
+      assert.ok(!etapas.some(([s]) => s === 'COLLSCAN'), 'sin COLLSCAN');
+
+      // c) Pendientes: repetidos, inexistente, null, inválido y hostiles.
+      COMANDOS.length = 0;
+      const todo = await llamar('/api/panel/propuestas?limite=50');
+      assert.deepStrictEqual(lecturas(), [['find', 'propuestas_cambio'], ['find', 'destinos']]);
+      const pagina = [...Object.values(P), ...relleno].map((p) => p.doc).filter((d) => d.estado === 'pendiente_aprobacion');
+      const validos = [...new Set(pagina.map((d) => d.destino_id).filter((x) => x instanceof ObjectId).map((x) => x.toHexString()))].sort();
+      assert.deepStrictEqual(idsDe(lecturasDe()[1]), validos, 'repetidos una vez; null e inválido fuera');
+      assert.ok(validos.includes(D.inexistente) && validos.length < pagina.length);
+      const item = (p) => todo.json.propuestas.find((x) => x.propuesta_id === p.doc.propuesta_id);
+      const esperado = [
+        [P.valida, { destino_id: D.gb, pais: 'Reino Unido', codigo_iso: 'GB' }],
+        [P.ausenteVsNull, { destino_id: D.gbNull, pais: 'Reino Unido (null)', codigo_iso: null }],
+        [P.destinoHostilHtml, { destino_id: D.hostilHtml, pais: 'Países Bajos', codigo_iso: null }],
+        [P.destinoHostilLargo, { destino_id: D.hostilLargo, pais: `${'Ñ'.repeat(100)}…`, codigo_iso: null }],
+        [P.destinoHostilTipo, { destino_id: D.hostilTipo, pais: null, codigo_iso: null }],
+        [P.destinoHostilControles, { destino_id: D.hostilControles, pais: 'Reino Unido', codigo_iso: 'GB' }],
+        [P.destinoInexistente, null],
+        [P.destinoIdNull, null],
+        [P.destinoIdInvalido, null]
+      ];
+      for (const [p, destino] of esperado) assert.deepStrictEqual(item(p).destino, destino, p.nombre);
+      assert.strictEqual(item(P.destinoIdNull).destino_id, null);
+      assert.strictEqual(item(P.destinoIdInvalido).destino_id, null);
+
+      // d) Listado y detalle: misma forma y mismo saneamiento (cuando el
+      //    documento y el payload apuntan al mismo destino).
+      let comparados = 0;
+      for (const p of [...Object.values(P), ...relleno].filter((x) => x.doc.estado === 'pendiente_aprobacion')) {
+        if (!(p.doc.destino_id instanceof ObjectId) || p.doc.destino_id.toHexString() !== p.doc.payload.destino_id) continue;
+        const d = (await detalle(p, '1000')).json;
+        assert.deepStrictEqual(item(p).destino, d.requisito_actual.destino, `${p.nombre}: listado = detalle`);
+        comparados++;
+      }
+      assert.ok(comparados >= 10);
+      // Un destino hostil solo cambia lo que se muestra: la integridad y las
+      // acciones son las mismas que con el destino real (mismo requisito).
+      const referencia = (await detalle(P.valida, '1000')).json;
+      for (const p of [P.destinoHostilHtml, P.destinoHostilLargo, P.destinoHostilTipo, P.destinoHostilControles]) {
+        const d = (await detalle(p, '1000')).json;
+        assert.strictEqual(d.integridad.hash_coincide, true, `${p.nombre}: hash_coincide`);
+        assert.deepStrictEqual([d.requisito_actual.estado, d.requisito_actual.valor], ['coincide', 'coincide'], `${p.nombre}: requisito`);
+        assert.deepStrictEqual([d.acciones_permitidas, d.acciones_bloqueadas], [referencia.acciones_permitidas, referencia.acciones_bloqueadas], `${p.nombre}: acciones`);
+      }
+      // El destino del listado sale del documento: con destino_id null el
+      // detalle (que usa el payload) sí encuentra el destino.
+      assert.deepStrictEqual((await detalle(P.destinoIdNull, '1000')).json.requisito_actual.destino, { destino_id: D.gb, pais: 'Reino Unido', codigo_iso: 'GB' });
+      // e) Si falla la lectura de destinos, falla todo el listado con el
+      //    500 actual (registrado como error); sin ids no se lee destinos.
+      const registros = [];
+      const real = mongoose.connection.db;
+      const dbConFallo = {
+        collection: (nombre) => {
+          const c = real.collection(nombre);
+          if (nombre !== 'destinos') return c;
+          return {
+            find: () => {
+              const err = new Error('conexión cerrada (simulada)');
+              err.name = 'MongoNetworkError';
+              throw err;
+            }
+          };
+        }
+      };
+      const conFallo = crearApp({
+        panel: { env: envPanel, verificador, registrar: (e) => registros.push(e), propuestas: crearLectorPropuestas({ obtenerDb: () => dbConFallo }) }
+      });
+      const srv = conFallo.listen(0, '127.0.0.1');
+      await new Promise((res) => srv.once('listening', res));
+      try {
+        const auth = { Authorization: `Bearer ${await emisor.firmar({ sub: '1000', email: 'operador@example.com' })}` };
+        const f = await pedir(srv.address().port, 'GET', '/api/panel/propuestas', auth);
+        assert.strictEqual(f.status, 500, f.body);
+        assert.strictEqual(JSON.parse(f.body).error.codigo, 'error_interno');
+        assert.ok(!f.body.includes('propuesta_id'), 'nada parcial en la respuesta');
+        assert.deepStrictEqual(registros.map((e) => [e.nivel, e.status, e.codigo]), [['error', 500, 'error_interno']]);
+        assert.match(registros[0].error, /MongoNetworkError/);
+        const vacia = await pedir(srv.address().port, 'GET', '/api/panel/propuestas?estado=cancelada', auth);
+        assert.strictEqual(vacia.status, 200, 'página vacía: no se lee destinos');
+        assert.deepStrictEqual(JSON.parse(vacia.body).propuestas, []);
+      } finally {
+        await new Promise((res) => srv.close(res));
+      }
+      console.log(`2b) destino: 50 propuestas con destinos distintos → [find propuestas_cambio, find destinos] (sin getMore), 50 ids únicos y ordenados sin el documento 51, proyección exacta; explain: IXSCAN sobre _id_, sin COLLSCAN; repetidos una vez, inexistente/null/inválido → null; pais HTML, largo, numérico y con controles e ISO inválidos saneados; listado = detalle en ${comparados} propuestas; destinos hostiles con la misma integridad y acciones que el real; fallo de destinos → 500 error_interno registrado como error, sin respuesta parcial; página vacía no lee destinos: OK`);
     }
 
     // ============================================================

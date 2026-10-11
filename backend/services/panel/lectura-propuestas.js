@@ -17,8 +17,17 @@
  *            (máscara: 2 hex, un bit por estado de ESTADOS_PROPUESTA).
  *            Opaco para el cliente, sin JSON ni base64 (no se parece a un
  *            token) y atado al filtro: uno de otro filtro se rechaza (400).
- *   Sin acciones: el listado no lee destinos ni eventos y nunca afirma que
- *   una propuesta sea aplicable. Solo alertas locales (hash, consistencia).
+ *   destino: después de leer la página, UNA sola lectura de destinos
+ *            (nunca una por propuesta): destinos.find({ _id: { $in } }) con
+ *            los destino_id DEL DOCUMENTO de la página (nunca los de
+ *            payload), únicos y ordenados, sin el documento extra del
+ *            límite + 1, y proyección { _id, pais, codigo_iso }. Usa el
+ *            índice _id_. Sin ids válidos no se consulta. Un destino_id
+ *            null, inválido o inexistente → destino: null. Si la lectura
+ *            falla, falla todo el listado (el error no se traga).
+ *   Sin acciones: el listado no lee eventos ni requisitos de los destinos
+ *   y nunca afirma que una propuesta sea aplicable. Solo alertas locales
+ *   (hash, consistencia).
  *
  * DETALLE (GET /api/panel/propuestas/:propuesta_id)
  *   1. propuestas_cambio.findOne({ propuesta_id })
@@ -31,6 +40,8 @@
  *   5. eventos_propuesta.find({ propuesta_id }) ordenado por
  *      { version_coordinacion_nueva: 1, _id: 1 }, con proyección que NO
  *      trae detalle.identidad_operador (sub, email, usuario_atlas).
+ *   requisito_actual.destino: destinoSeguro, el mismo saneamiento que el
+ *   destino del listado.
  *   acciones_bloqueadas: { aprobar: [...], rechazar: [...] }, los motivos
  *   por los que cada acción NO está disponible ([] = permitida):
  *     - coordinación (ambas): payload_hash_invalido,
@@ -72,6 +83,7 @@ const PARAMETROS_LISTADO = Object.freeze(['estado', 'limite', 'cursor']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const OBJECT_ID_HEX = /^[0-9a-f]{24}$/;
 const CURSOR = /^v1\.([0-9a-f]{24})\.([0-9a-f]{2})$/;
+const CODIGO_ISO = /^[A-Z]{2}$/;
 
 // Entrada inválida del cliente → 400 solicitud_invalida en la ruta.
 class ErrorConsultaInvalida extends Error {}
@@ -186,6 +198,18 @@ function consultaListado({ estados, limite, despuesDe }) {
   };
 }
 
+// Pura. Lectura de destinos de una página del listado: destino_id del
+// documento (no del payload), únicos y ordenados. null = no hay nada que
+// leer. `propuestas`: la página, ya sin el documento extra del límite + 1.
+function consultaDestinosListado(propuestas) {
+  const ids = [...new Set(propuestas.map((p) => hexDe(p.destino_id)).filter((h) => h !== null))].sort();
+  if (ids.length === 0) return null;
+  return {
+    filtro: { _id: { $in: ids.map((h) => ObjectId.createFromHexString(h)) } },
+    opciones: { projection: { _id: 1, pais: 1, codigo_iso: 1 } }
+  };
+}
+
 const PROYECCION_EVENTOS = Object.freeze({
   _id: 1,
   evento_id: 1,
@@ -287,6 +311,54 @@ function resumenEvidencia(pl) {
   };
 }
 
+// Pura. pais PARA MOSTRAR, en este orden:
+//  1. no string, o string mal formado (sustituto Unicode aislado) → null
+//     entero: es un dato corrupto y no se muestra a medias;
+//  2. cada tramo de caracteres de control o separadores de línea (\n, \r,
+//     \t, U+0085, U+2028, U+2029, ...) → UN espacio; los espacios comunes
+//     no se tocan;
+//  3. sin marcas HTML, saneado (tokens, JWT, URIs), sin "<" ni ">", sin
+//     espacios en los extremos;
+//  4. vacío → null; más de 100 code points → los primeros 100 y "…" (el
+//     corte nunca parte un par sustituto).
+// Solo afecta lo que se muestra: la integridad lee el documento original.
+function paisSeguro(valor) {
+  if (typeof valor !== 'string' || !valor.isWellFormed()) return null;
+  const limpio = sanearTexto(valor.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ').replace(/<[^>]*>?/g, ''))
+    .replace(/[<>]/g, '')
+    .trim();
+  if (limpio === '') return null;
+  const puntos = Array.from(limpio);
+  return puntos.length > 100 ? `${puntos.slice(0, 100).join('')}…` : limpio;
+}
+
+// Pura. Destino por lista blanca, el MISMO en el listado y en
+// requisito_actual.destino del detalle: pais con paisSeguro; codigo_iso
+// solo si son dos letras mayúsculas (no se corrige). null si no hay
+// destino o su _id no es un ObjectId. Nunca devuelve requisitos ni otros
+// campos.
+function destinoSeguro(destino) {
+  if (!esObjeto(destino)) return null;
+  const destinoId = hexDe(destino._id);
+  if (destinoId === null) return null;
+  return {
+    destino_id: destinoId,
+    pais: paisSeguro(destino.pais),
+    codigo_iso: typeof destino.codigo_iso === 'string' && CODIGO_ISO.test(destino.codigo_iso) ? destino.codigo_iso : null
+  };
+}
+
+// Pura. Ítem del listado con `destino` justo después de destino_id; el
+// resto de los campos, sin cambios.
+function conDestino(resumen, destino) {
+  const item = {};
+  for (const [clave, valor] of Object.entries(resumen)) {
+    item[clave] = valor;
+    if (clave === 'destino_id') item.destino = destino;
+  }
+  return item;
+}
+
 function resumenListado(p) {
   const hash = verificarHash(p);
   const problemas = problemasConsistencia(p);
@@ -358,8 +430,8 @@ const mismoValorConPresencia = (a, b) => a.presente === b.presente && (a.valor ?
 //   valor: coincide | cambio | null (no evaluable)
 function evaluarRequisitoActual(p, destino, adaptador) {
   const pl = esObjeto(p.payload) ? p.payload : {};
-  const destinoSeguro = destino ? { destino_id: hexDe(destino._id), pais: texto(destino.pais, 100), codigo_iso: texto(destino.codigo_iso, 10) } : null;
-  const vacio = (estado) => ({ estado, destino: destinoSeguro, requisito: null, valor_actual: null, valor: null });
+  const destinoPublico = destinoSeguro(destino);
+  const vacio = (estado) => ({ estado, destino: destinoPublico, requisito: null, valor_actual: null, valor: null });
   if (typeof pl.requisito_id !== 'string' || !OBJECT_ID_HEX.test(pl.requisito_id)) return vacio('no_evaluable');
 
   const validarIdentidad = adaptador ? adaptador.validarIdentidad : () => ({ ok: true });
@@ -378,7 +450,7 @@ function evaluarRequisitoActual(p, destino, adaptador) {
   let estado = 'coincide';
   if (!c.ok) estado = 'identidad_semantica_no_coincide';
   else if (!adaptador) estado = 'identidad_no_verificable';
-  return { estado, destino: destinoSeguro, requisito, valor_actual: valorActualSeguro, valor };
+  return { estado, destino: destinoPublico, requisito, valor_actual: valorActualSeguro, valor };
 }
 
 const ACCIONES = Object.freeze(['aprobar', 'rechazar']);
@@ -461,13 +533,27 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
     return d;
   };
 
+  // Mapa hex → documento de destino leído (sin sanear todavía).
+  async function leerDestinosListado(d, pagina) {
+    const consulta = consultaDestinosListado(pagina);
+    if (consulta === null) return new Map();
+    const docs = await d.collection(COLECCIONES.destinos).find(consulta.filtro, consulta.opciones).toArray();
+    return new Map(docs.map((doc) => [hexDe(doc._id), doc]));
+  }
+
   async function listar(consulta) {
+    const d = db();
     const { filtro, opciones } = consultaListado(consulta);
-    const docs = await db().collection(COLECCIONES.propuestas).find(filtro, opciones).toArray();
+    const docs = await d.collection(COLECCIONES.propuestas).find(filtro, opciones).toArray();
     const pagina = docs.slice(0, consulta.limite);
     const hayMas = docs.length > consulta.limite;
+    const destinos = await leerDestinosListado(d, pagina);
+    const destinoDe = (p) => {
+      const hex = hexDe(p.destino_id);
+      return hex !== null && destinos.has(hex) ? destinoSeguro(destinos.get(hex)) : null;
+    };
     return {
-      propuestas: pagina.map(resumenListado),
+      propuestas: pagina.map((p) => conDestino(resumenListado(p), destinoDe(p))),
       filtro: { estados: [...consulta.estados] },
       limite: consulta.limite,
       siguiente_cursor: hayMas ? codificarCursor(hexDe(pagina.at(-1)._id), consulta.estados) : null
@@ -535,6 +621,9 @@ module.exports = {
   validarPropuestaId,
   codificarCursor,
   consultaListado,
+  consultaDestinosListado,
+  paisSeguro,
+  destinoSeguro,
   verificarHash,
   problemasConsistencia,
   resumenEvidencia,
