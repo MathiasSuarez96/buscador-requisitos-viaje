@@ -23,7 +23,7 @@ function construir(env: Env) {
   const base = Object.fromEntries(Object.entries(process.env).filter(([k]) => !HEREDADAS.test(k)))
   const definidas = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== undefined)) as Record<string, string>
   // process.execArgv conserva el preload sin-red del runner, si lo hay.
-  const r = spawnSync(process.execPath, [...process.execArgv, CONSTRUIR, salida], { cwd: RAIZ, env: { ...base, ...definidas }, encoding: 'utf8', timeout: 120000 })
+  const r = spawnSync(process.execPath, [...process.execArgv, CONSTRUIR, salida], { cwd: RAIZ, env: { ...base, NODE_ENV: 'production', ...definidas }, encoding: 'utf8', timeout: 120000 })
   const resultado = { status: r.status, texto: `${r.stdout}\n${r.stderr}`, existe: existsSync(salida), generado: existsSync(join(salida, 'panel.html')) && existsSync(join(salida, 'index.html')) }
   rmSync(join(salida, '..'), { recursive: true, force: true })
   return resultado

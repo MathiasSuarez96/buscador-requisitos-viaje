@@ -13,10 +13,12 @@ interface Prueba {
   fn: () => Promise<void> | void
 }
 
-const ARCHIVOS = ['/tests/panel/unidades.prueba.ts', '/tests/panel/controlador.prueba.ts', '/tests/panel/build.prueba.ts']
+const ARCHIVOS = process.argv.includes('--solo-huella') ? ['/tests/panel/huella.prueba.ts'] : process.argv.includes('--solo-listado')
+  ? ['/tests/panel/listado.prueba.tsx']
+  : ['/tests/panel/unidades.prueba.ts', '/tests/panel/controlador.prueba.ts', '/tests/panel/listado.prueba.tsx', '/tests/panel/fuentes.prueba.ts', '/tests/panel/build.prueba.ts', '/tests/panel/huella.prueba.ts']
 
 const servidor = await createServer({
-  root: resolve(import.meta.dirname, '../..'),
+  root: process.argv.includes('--raiz') ? resolve(process.argv[process.argv.indexOf('--raiz') + 1]) : resolve(import.meta.dirname, '../..'),
   configFile: false,
   envFile: false,
   plugins: [react()],

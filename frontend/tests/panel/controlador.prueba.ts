@@ -29,7 +29,7 @@ async function escenario(responder: Responder, prueba: (ctx: Contexto) => Promis
   const espias = instalarEspias()
   try {
     const gis = crearGisFalso()
-    const red = crearFetchFalso(responder)
+    const red = crearFetchFalso((url, init) => url.includes('/propuestas?') ? respuestaJson(200, { propuestas: [], filtro: { estados: ['pendiente_aprobacion'] }, limite: 20, siguiente_cursor: null }) : responder(url, init))
     const controlador = crearControladorPanel({ config: CONFIG, cargarGis: gis.cargar, hacerFetch: red.hacerFetch })
     controlador.iniciar()
     await hastaQue(() => controlador.obtenerEstado().fase === 'sin_sesion')
@@ -74,7 +74,7 @@ const cuerpoInvalido = (nombre: string, cuerpo: unknown): Prueba => ({
 
 export const pruebas: Prueba[] = [
   {
-    nombre: 'sesión autorizada: datos visibles; un solo fetch a VITE_API_URL/api/panel/sesion con el pase solo en Authorization',
+    nombre: 'sesión autorizada: consulta sesión y después listado; pase solo en Authorization',
     fn: () =>
       escenario(
         () => respuestaJson(200, SESION_AUTORIZADA),
@@ -82,7 +82,7 @@ export const pruebas: Prueba[] = [
           const estado = controlador.obtenerEstado()
           assert.equal(estado.fase, 'autorizado')
           assert.equal(controlador.tieneToken(), true, 'el pase queda en memoria mientras dura la sesión')
-          assert.equal(red.llamadas.length, 1)
+          assert.equal(red.llamadas.length, 2)
           const [{ url, init }] = red.llamadas
           assert.equal(url, `${API}/api/panel/sesion`)
           assert.equal(init.method, 'GET')

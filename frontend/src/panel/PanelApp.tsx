@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ControladorPanel, ErrorPanel } from './controlador.ts'
 import { MENSAJES, mensajeError } from './mensajes.ts'
 import type { SesionPanel } from './sesion.ts'
+import { ListadoPropuestas } from './ListadoPropuestas.tsx'
 
 const copiarAlPortapapeles = (texto: string) => navigator.clipboard.writeText(texto)
 
@@ -12,6 +13,7 @@ interface Props {
 
 export function PanelApp({ controlador, copiar = copiarAlPortapapeles }: Props) {
   const estado = useSyncExternalStore(controlador.suscribir, controlador.obtenerEstado, controlador.obtenerEstado)
+  const listado = useSyncExternalStore(controlador.suscribir, controlador.obtenerListado, controlador.obtenerListado)
 
   useEffect(() => {
     controlador.iniciar()
@@ -19,7 +21,7 @@ export function PanelApp({ controlador, copiar = copiarAlPortapapeles }: Props) 
 
   return (
     <main className="min-h-screen bg-slate-50 font-sans text-slate-900">
-      <div className="mx-auto max-w-xl px-4 py-12">
+      <div className="mx-auto max-w-6xl px-4 py-8">
         <h1 className="mb-6 text-2xl font-semibold">Panel de propuestas</h1>
         {estado.fase === 'cargando_gis' && <p role="status">{MENSAJES.cargando}</p>}
         {estado.fase === 'sin_sesion' && (
@@ -38,6 +40,7 @@ export function PanelApp({ controlador, copiar = copiarAlPortapapeles }: Props) 
           <DatosSesion sesion={estado.sesion} copiar={copiar} onCerrar={controlador.cerrarSesion} />
         )}
         {estado.fase === 'error' && <VistaError error={estado.error} onVolver={controlador.volverAlInicio} />}
+        {(estado.fase === 'autorizado' || listado.cargado || listado.propuestas.length > 0 || listado.error !== null) && <ListadoPropuestas controlador={controlador} habilitado={estado.fase === 'autorizado'} copiar={copiar} />}
       </div>
     </main>
   )

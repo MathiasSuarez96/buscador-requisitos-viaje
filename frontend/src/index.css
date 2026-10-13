@@ -1,4 +1,10 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+@source "./App.tsx";
+@source "./main.tsx";
+@source "../index.html";
+/* Compatibilidad con main-dSpg_NR1.css de aa1558f: utilidades históricas
+   congeladas, sin escanear panel, scripts ni tests. No ampliar con el panel. */
+@source inline("bg-amber-50 bg-green-50 bg-red-50 bg-slate-50 bg-slate-800 border-amber-300 border-green-300 border-red-300 border-slate-300 break-all filter flex-wrap gap-x-4 gap-y-2 grid-cols-[max-content_1fr] hover:bg-slate-100 hover:bg-slate-700 max-w-xl outline p-3 py-0.5 py-12 space-y-4 table text-green-700 text-red-700 text-slate-700 text-slate-900 transform");
 
 @theme {
   --font-sans: 'Poppins', sans-serif;

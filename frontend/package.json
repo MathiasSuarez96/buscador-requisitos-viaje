@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test:panel": "node tests/panel/ejecutar.ts",
+    "test:panel": "node --require ./tests/panel/sin-red.cjs tests/panel/ejecutar.ts",
+    "test:panel:mutaciones": "node --require ./tests/panel/sin-red.cjs tests/panel/mutaciones.ts",
     "preview": "vite preview"
   },
   "dependencies": {
