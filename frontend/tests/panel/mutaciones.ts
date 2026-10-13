@@ -24,6 +24,18 @@ const mutaciones: [string, string, string, string][] = [
   ['401 conserva token', controlador, "if (r.fallo === 'sesion') {\n        token = null", "if (r.fallo === 'sesion') {"],
   ['acepta lectura tardía de otro filtro', controlador, 'if (mia !== lectura || sesionMia !== consulta) return', 'if (sesionMia !== consulta) return'],
   ['selección no se reinicia', controlador, "fijarListado({ ...listadoInicial(), filtro:", "fijarListado({ ...listadoInicial(), seleccion: listado.seleccion, filtro:"],
+  ['detalle de otra propuesta aceptado', 'src/panel/detalle.ts', 'if (d.propuesta.propuesta_id !== propuestaId) return null', ''],
+  ['detalle conserva identificador privado del actor', 'src/panel/detalle.ts', 'actor: forma({ tipo:', 'actor: forma({ identificador: texto(101), tipo:'],
+  ['enlace HTTPS con credenciales aceptado', 'src/panel/detalle.ts', "url.protocol === 'https:' && url.hostname !== '' && !url.username && !url.password", "url.protocol === 'https:'"],
+  ['detalle sigue redirecciones', 'src/panel/detalle.ts', "redirect: 'error'", "redirect: 'follow'"],
+  ['detalle envía cookies', 'src/panel/detalle.ts', "credentials: 'omit'", "credentials: 'include'"],
+  ['detalle tardío reemplaza selección', controlador, 'if (numeroDetalle !== lecturaDetalle || sesionDetalle !== consulta) return', 'if (sesionDetalle !== consulta) return'],
+  ['volver descarta listado', controlador, 'function volverAlListado() {', 'function volverAlListado() { fijarListado(listadoInicial());'],
+  ['detalle 401 conserva token', controlador, "if (resultado.fallo === 'sesion') {\n        token = null", "if (resultado.fallo === 'sesion') {"],
+  ['detalle se reintenta automáticamente al autenticar', controlador, 'if (!listado.cargado) void cargarListado(false)', 'if (!listado.cargado) void cargarListado(false); if (detalle.propuestaId) void cargarDetalle(detalle.propuestaId)'],
+  ['historial invierte orden del servidor', 'src/panel/detalle.ts', '    return d\n', '    d.eventos.reverse(); return d\n'],
+  ['ausente se confunde con null', 'src/panel/presentacion.ts', '!v.presente', 'false'],
+  ['rechazar usa motivos de aprobar', 'src/panel/DetallePropuesta.tsx', 'd.acciones_bloqueadas[a].map', 'd.acciones_bloqueadas.aprobar.map'],
 ]
 try {
   for (const p of ['src', 'tests', 'package.json']) cpSync(join(raiz, p), join(copia, p), { recursive: true })
@@ -33,7 +45,7 @@ try {
   assert.equal(base.status, 0, `Línea base fallida: ${base.error ?? ''}\n${base.stdout}\n${base.stderr}`)
   let detectadas = 0
   for (const [nombre, archivo, antes, despues] of mutaciones) {
-    const ruta = join(copia, archivo), original = readFileSync(ruta, 'utf8')
+    const ruta = join(copia, archivo), original = readFileSync(ruta, 'utf8').replaceAll('\r\n', '\n')
     assert.equal(original.split(antes).length, 2, `Ancla no única: ${nombre}`)
     writeFileSync(ruta, original.replace(antes, despues))
     const r = ejecutar()

@@ -3,9 +3,11 @@
 @import "tailwindcss" source(none);
 @source "./**/*.tsx";
 
-#panel :is(button, select, input):focus-visible {
+#panel :is(button, select, input, a, [tabindex]):focus-visible,
+#panel [tabindex="-1"]:focus {
   outline: 3px solid #0066cc;
   outline-offset: 3px;
 }
 #panel button:not(:disabled), #panel select { cursor: pointer; }
 #panel button:disabled { opacity: .55; cursor: not-allowed; }
+#panel button[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }

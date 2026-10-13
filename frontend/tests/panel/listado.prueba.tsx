@@ -12,7 +12,7 @@ const pagina = (propuestas: unknown[] = [], siguiente_cursor: string | null = nu
 type Responder = Parameters<typeof crearFetchFalso>[0]
 async function contexto(responder: Responder) {
   const gis = crearGisFalso()
-  const red = crearFetchFalso((url, init) => url.endsWith('/sesion') ? respuestaJson(200, SESION_AUTORIZADA) : responder(url, init))
+  const red = crearFetchFalso((url, init) => url.endsWith('/sesion') ? respuestaJson(200, SESION_AUTORIZADA) : url.includes('/propuestas/') ? respuestaJson(404, {}) : responder(url, init))
   const controlador = crearControladorPanel({ config: CONFIG, cargarGis: gis.cargar, hacerFetch: red.hacerFetch })
   controlador.iniciar()
   await hastaQue(() => controlador.obtenerEstado().fase === 'sin_sesion')

@@ -45,6 +45,8 @@ export const pruebas: Prueba[] = [{ nombre: 'huella pública aa1558f: bytes idé
       const panelCss = readdirSync(assets).find(n => /^panel-.*\.css$/.test(n))!
       const css = readFileSync(join(assets, panelCss), 'utf8')
       assert.ok(css.includes('grid-template-columns:repeat(2,'), 'utilidades responsive propias del panel')
+      assert.ok(css.includes('grid-template-columns:repeat(3,'), 'valores responsive del detalle')
+      assert.ok(css.includes('overflow-wrap:anywhere'), 'datos largos del detalle no desbordan')
       assert.equal(css.includes('z-index:9876'), variante === 'panel')
       assert.ok(!css.includes('8765') && !css.includes('7654'), 'tests/scripts fuera del panel')
       const cssPublico = readFileSync(join(assets, 'main-dSpg_NR1.css'), 'utf8')

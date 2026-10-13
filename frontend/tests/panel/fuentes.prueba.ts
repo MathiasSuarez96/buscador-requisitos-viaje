@@ -21,6 +21,8 @@ export const pruebas: Prueba[] = [
     const clases = scan.scan()
     assert.ok(clases.includes('md:grid-cols-2'))
     assert.ok(clases.includes('max-w-6xl'))
+    assert.ok(clases.includes('lg:grid-cols-3'), 'columnas de valores del detalle')
+    assert.ok(clases.includes('[overflow-wrap:anywhere]'), 'textos largos del detalle')
     assert.ok(scan.files.every(f => f.replaceAll('\\', '/').includes('/src/panel/') && f.endsWith('.tsx')))
   } },
   { nombre: 'seguridad recursiva: APIs prohibidas, HTML y scripts/estilos inline ausentes', fn() {

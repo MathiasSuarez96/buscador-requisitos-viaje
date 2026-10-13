@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ControladorPanel } from './controlador.ts'
+import { NOMBRES } from './presentacion.ts'
 import { ESTADOS, type EstadoPropuesta, type FalloListado } from './propuestas.ts'
 
-const NOMBRES: Record<EstadoPropuesta, string> = { pendiente_aprobacion: 'Pendiente de aprobación', aprobada: 'Aprobada', rechazada: 'Rechazada', obsoleta: 'Obsoleta', revision_requerida: 'Revisión requerida', conflicto: 'Conflicto', cancelada: 'Cancelada', aplicada: 'Aplicada' }
 const ERRORES: Record<FalloListado, string> = {
   sesion: 'Tu sesión venció. Iniciá sesión nuevamente para continuar. Conservamos la vista del listado.',
   permiso: 'No tenés permiso para consultar propuestas (403).',
@@ -14,11 +14,18 @@ const ERRORES: Record<FalloListado, string> = {
 const ALERTAS: Record<string, string> = { hash_no_coincide: 'El contenido no coincide con su huella registrada.', datos_inconsistentes: 'La propuesta contiene datos inconsistentes.' }
 const fechaVisible = (fecha: string | null) => fecha === null ? 'Fecha no disponible' : new Intl.DateTimeFormat('es-UY', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Montevideo' }).format(new Date(fecha))
 
-export function ListadoPropuestas({ controlador, habilitado, copiar }: { controlador: ControladorPanel; habilitado: boolean; copiar: (texto: string) => Promise<void> }) {
+export function ListadoPropuestas({ controlador, habilitado, copiar, visible = true }: { controlador: ControladorPanel; habilitado: boolean; visible?: boolean; copiar: (texto: string) => Promise<void> }) {
   const vista = useSyncExternalStore(controlador.suscribir, controlador.obtenerListado, controlador.obtenerListado)
   const [estados, setEstados] = useState<EstadoPropuesta[]>(vista.filtro.estados)
   const [limite, setLimite] = useState(vista.filtro.limite)
   const [copia, setCopia] = useState<string | null>(null)
+  const seleccionado = useRef<HTMLButtonElement>(null)
+  const titulo = useRef<HTMLHeadingElement>(null)
+  const visibleAnterior = useRef(visible)
+  useEffect(() => {
+    if (visible && !visibleAnterior.current) (seleccionado.current ?? titulo.current)?.focus()
+    visibleAnterior.current = visible
+  }, [visible])
   const anuncio = useRef<HTMLParagraphElement>(null)
   const enfocarAlTerminar = useRef(false)
   useEffect(() => {
@@ -30,7 +37,7 @@ export function ListadoPropuestas({ controlador, habilitado, copiar }: { control
   const aplicar = () => controlador.filtrar({ estados, limite })
   return <section aria-labelledby="titulo-propuestas" className="mt-8 space-y-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 id="titulo-propuestas" className="text-xl font-semibold">Propuestas de cambio</h2>
+      <h2 ref={titulo} tabIndex={-1} id="titulo-propuestas" className="text-xl font-semibold">Propuestas de cambio</h2>
       <button type="button" disabled={!habilitado || vista.cargando} onClick={controlador.recargar} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm">Recargar listado</button>
     </div>
     <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -68,8 +75,7 @@ export function ListadoPropuestas({ controlador, habilitado, copiar }: { control
         </dl>
         {p.destino === null && <p className="mt-3 text-sm text-amber-800">No se pudo identificar el destino de esta propuesta.</p>}
         {p.alertas.length > 0 && <ul aria-label="Alertas" className="mt-3 list-disc space-y-1 pl-5 text-sm text-amber-800">{p.alertas.map((a, i) => <li key={`${a}-${i}`}>{ALERTAS[a] ?? `Alerta de integridad: ${a}`}</li>)}</ul>}
-        <button type="button" aria-pressed={vista.seleccion === p.propuesta_id} onClick={() => controlador.seleccionar(p.propuesta_id)} className="mt-4 rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-100">{vista.seleccion === p.propuesta_id ? 'Propuesta seleccionada' : 'Seleccionar propuesta'}</button>
-        {vista.seleccion === p.propuesta_id && <p role="status" className="mt-2 text-sm text-slate-600">El detalle y las decisiones estarán disponibles en un próximo bloque.</p>}
+        <button ref={vista.seleccion === p.propuesta_id ? seleccionado : undefined} type="button" aria-disabled={!habilitado} aria-pressed={vista.seleccion === p.propuesta_id} onClick={() => controlador.seleccionar(p.propuesta_id)} className="mt-4 rounded-lg border border-slate-300 px-4 py-2 text-sm hover:bg-slate-100">{vista.seleccion === p.propuesta_id ? 'Propuesta seleccionada' : 'Seleccionar propuesta'}</button>
       </li>)}
     </ul>
     {vista.cursor && <button type="button" disabled={!habilitado || vista.cargando || vista.error === 'permiso'} onClick={() => { enfocarAlTerminar.current = true; controlador.cargarMas() }} className="rounded-lg bg-slate-800 px-5 py-3 text-white hover:bg-slate-700">Cargar más</button>}

@@ -9,6 +9,16 @@ import type { ConfigPanel } from './config.ts'
 import { crearCargadorGis, type CargadorGis } from './cargar-gis.ts'
 import { consultarSesion, type HacerFetch, type SesionPanel } from './sesion.ts'
 import { consultarPropuestas, filtroValido, unirPropuestas, type Filtro, type Propuesta, type FalloListado } from './propuestas.ts'
+import { consultarDetalle, type Detalle, type FalloDetalle } from './detalle.ts'
+
+export interface EstadoDetalle {
+  propuestaId: string | null
+  cargando: boolean
+  datos: Detalle | null
+  error: FalloDetalle | null
+  requestId: string | null
+}
+const detalleInicial = (): EstadoDetalle => ({ propuestaId: null, cargando: false, datos: null, error: null, requestId: null })
 
 export interface EstadoListado {
   filtro: Filtro
@@ -51,6 +61,9 @@ export interface ControladorPanel {
   cargarMas(): void
   recargar(): void
   seleccionar(id: string): void
+  obtenerDetalle(): EstadoDetalle
+  volverAlListado(): void
+  reintentarDetalle(): void
 }
 
 export interface DependenciasPanel {
@@ -82,6 +95,9 @@ export function crearControladorPanel({
   // Cada inicio o cierre de sesión invalida las respuestas anteriores.
   let consulta = 0
   let listado = listadoInicial()
+  let detalle = detalleInicial()
+  let lecturaDetalle = 0
+  let abortarDetalle: AbortController | null = null
   let lectura = 0
   let abortar: AbortController | null = null
   let identidadAnterior: string | null = null
@@ -97,6 +113,40 @@ export function crearControladorPanel({
     listado = nuevo
     for (const oyente of oyentes) oyente()
   }
+  const fijarDetalle = (nuevo: EstadoDetalle) => {
+    detalle = nuevo
+    for (const oyente of oyentes) oyente()
+  }
+  function invalidarDetalle() {
+    lecturaDetalle += 1
+    abortarDetalle?.abort()
+    abortarDetalle = null
+  }
+  function volverAlListado() {
+    invalidarDetalle()
+    fijarDetalle(detalleInicial())
+  }
+  async function cargarDetalle(id: string) {
+    if (!config || !token || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('ver')) return
+    invalidarDetalle()
+    const numeroDetalle = lecturaDetalle
+    const sesionDetalle = consulta
+    abortarDetalle = new AbortController()
+    fijarDetalle({ propuestaId: id, cargando: true, datos: null, error: null, requestId: null })
+    const resultado = await consultarDetalle(config.apiOrigen, token, id, hacerFetch, abortarDetalle.signal)
+    if (numeroDetalle !== lecturaDetalle || sesionDetalle !== consulta) return
+    if (resultado.tipo === 'ok') {
+      fijarDetalle({ propuestaId: id, cargando: false, datos: resultado.detalle, error: null, requestId: resultado.requestId })
+    } else {
+      if (resultado.fallo === 'sesion') {
+        token = null
+        invalidarLectura()
+        if (listado.cargando) fijarListado({ ...listado, cargando: false })
+        fijar({ fase: 'sin_sesion', aviso: 'sesion_vencida' })
+      }
+      fijarDetalle({ propuestaId: id, cargando: false, datos: null, error: resultado.fallo, requestId: resultado.requestId })
+    }
+  }
   function invalidarLectura() {
     lectura += 1
     abortar?.abort()
@@ -104,6 +154,7 @@ export function crearControladorPanel({
   }
   function limpiarListado() {
     invalidarLectura()
+    volverAlListado()
     identidadAnterior = null
     cursores.clear()
     fijarListado(listadoInicial())
@@ -123,6 +174,8 @@ export function crearControladorPanel({
       fijarListado({ ...listado, cargando: false, error: r.fallo, requestId: r.requestId })
       if (r.fallo === 'sesion') {
         token = null
+        invalidarDetalle()
+        if (detalle.propuestaId) fijarDetalle({ ...detalle, cargando: false, datos: null, error: 'sesion' })
         fijar({ fase: 'sin_sesion', aviso: 'sesion_vencida' })
       }
       return
@@ -141,6 +194,8 @@ export function crearControladorPanel({
     if (!config) return
     consulta += 1
     invalidarLectura()
+    invalidarDetalle()
+    if (detalle.cargando) fijarDetalle({ ...detalle, cargando: false })
     if (listado.cargando) fijarListado({ ...listado, cargando: false })
     const mia = consulta
     token = null
@@ -160,8 +215,12 @@ export function crearControladorPanel({
         if (!resultado.sesion.autorizado) limpiarListado()
         fijar(resultado.sesion.autorizado ? { fase: 'autorizado', sesion: resultado.sesion } : { fase: 'no_autorizado', sesion: resultado.sesion })
         if (resultado.sesion.autorizado) {
-          if (resultado.sesion.permisos.includes('ver')) void cargarListado(false)
-          else fijarListado({ ...listadoInicial(), error: 'permiso' })
+          if (resultado.sesion.permisos.includes('ver')) {
+            if (!listado.cargado) void cargarListado(false)
+          } else {
+            volverAlListado()
+            fijarListado({ ...listadoInicial(), error: 'permiso' })
+          }
         }
         return
       case 'no_autenticado':
@@ -234,12 +293,20 @@ export function crearControladorPanel({
     volverAlInicio() {
       consulta += 1
       token = null
+      invalidarDetalle()
+      if (detalle.cargando) fijarDetalle({ ...detalle, cargando: false })
       if (gis) fijar({ fase: 'sin_sesion', aviso: null })
     },
     tieneToken: () => token !== null,
     obtenerListado: () => listado,
+    obtenerDetalle: () => detalle,
+    volverAlListado,
+    reintentarDetalle() {
+      if (detalle.propuestaId && !detalle.cargando) void cargarDetalle(detalle.propuestaId)
+    },
     filtrar(filtro) {
       if (!filtroValido(filtro) || estado.fase !== 'autorizado') return
+      volverAlListado()
       invalidarLectura()
       cursores.clear()
       fijarListado({ ...listadoInicial(), filtro: { estados: [...filtro.estados], limite: filtro.limite } })
@@ -248,7 +315,10 @@ export function crearControladorPanel({
     cargarMas() { void cargarListado(true) },
     recargar() { void cargarListado(false) },
     seleccionar(id) {
-      if (listado.propuestas.some(p => p.propuesta_id === id)) fijarListado({ ...listado, seleccion: id })
+      if (estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('ver') || !listado.propuestas.some(p => p.propuesta_id === id)) return
+      if (detalle.propuestaId === id && detalle.cargando) return
+      fijarListado({ ...listado, seleccion: id })
+      void cargarDetalle(id)
     },
   }
 }

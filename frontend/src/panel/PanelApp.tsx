@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ControladorPanel, ErrorPanel } from './controlador.ts'
 import { MENSAJES, mensajeError } from './mensajes.ts'
 import type { SesionPanel } from './sesion.ts'
+import { DetallePropuesta } from './DetallePropuesta.tsx'
 import { ListadoPropuestas } from './ListadoPropuestas.tsx'
 
 const copiarAlPortapapeles = (texto: string) => navigator.clipboard.writeText(texto)
@@ -14,6 +15,8 @@ interface Props {
 export function PanelApp({ controlador, copiar = copiarAlPortapapeles }: Props) {
   const estado = useSyncExternalStore(controlador.suscribir, controlador.obtenerEstado, controlador.obtenerEstado)
   const listado = useSyncExternalStore(controlador.suscribir, controlador.obtenerListado, controlador.obtenerListado)
+
+  const detalle = useSyncExternalStore(controlador.suscribir, controlador.obtenerDetalle, controlador.obtenerDetalle)
 
   useEffect(() => {
     controlador.iniciar()
@@ -40,7 +43,8 @@ export function PanelApp({ controlador, copiar = copiarAlPortapapeles }: Props) 
           <DatosSesion sesion={estado.sesion} copiar={copiar} onCerrar={controlador.cerrarSesion} />
         )}
         {estado.fase === 'error' && <VistaError error={estado.error} onVolver={controlador.volverAlInicio} />}
-        {(estado.fase === 'autorizado' || listado.cargado || listado.propuestas.length > 0 || listado.error !== null) && <ListadoPropuestas controlador={controlador} habilitado={estado.fase === 'autorizado'} copiar={copiar} />}
+        {(estado.fase === 'autorizado' || listado.cargado || listado.propuestas.length > 0 || listado.error !== null) && <div hidden={detalle.propuestaId !== null}><ListadoPropuestas controlador={controlador} habilitado={estado.fase === 'autorizado'} copiar={copiar} visible={detalle.propuestaId === null} /></div>}
+        {detalle.propuestaId !== null && <DetallePropuesta controlador={controlador} habilitado={estado.fase === 'autorizado' && estado.sesion.permisos.includes('ver')} />}
       </div>
     </main>
   )

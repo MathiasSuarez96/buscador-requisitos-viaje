@@ -206,6 +206,8 @@ export const renderizar = (controlador: ControladorPanel) => renderToString(<Pan
 export function comprobarSinFugas(ctx: { espias: Espias; controlador: ControladorPanel; gis: ReturnType<typeof crearGisFalso>; red: ReturnType<typeof crearFetchFalso> }) {
   assert.deepEqual(ctx.espias.registro, [], 'acceso a almacenamiento, cookies, URL, consola o rechazo no manejado')
   assert.ok(!contieneToken(JSON.stringify(ctx.controlador.obtenerEstado())), 'el pase está en el estado observable')
+  assert.ok(!contieneToken(JSON.stringify(ctx.controlador.obtenerListado())), 'el pase está en el listado')
+  assert.ok(!contieneToken(JSON.stringify(ctx.controlador.obtenerDetalle())), 'el pase está en el detalle')
   assert.ok(!contieneToken(renderizar(ctx.controlador)), 'el pase está en el HTML')
   assert.ok(!contieneToken(JSON.stringify(ctx.gis.llamadas)), 'el pase llegó a GIS')
   for (const { url, init } of ctx.red.llamadas) {
