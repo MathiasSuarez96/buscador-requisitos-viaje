@@ -43,6 +43,7 @@ const MOTIVOS_DECISION: Record<string, string> = {
   decision_previa_existente: 'Existe una decisión previa.', hash_no_coincide: 'La huella no coincide.', datos_inconsistentes: 'Hay datos inconsistentes.',
   requisito_no_coincide: 'El requisito actual no coincide.', valor_actual_cambio: 'El valor actual cambió o no pudo compararse.',
   estado_no_permite_decision: 'El estado no permite decidir.', sin_permiso_decidir: 'Falta el permiso para decidir.',
+  estado_no_permite_aplicar: 'El estado no permite aplicar.', sin_permiso_aplicar: 'Falta el permiso para aplicar.', decision_aprobacion_invalida: 'La aprobación asociada no es válida.',
   propuesta_no_decidible: 'La propuesta no es decidible.', solicitud_invalida: 'La solicitud no es válida.',
 }
 
@@ -66,7 +67,7 @@ function Textos({ valores, vacio }: { valores: (string | null)[]; vacio: string 
   return valores.length === 0 ? <p>{vacio}</p> : <ul className="list-disc space-y-2 pl-5 [overflow-wrap:anywhere]">{valores.map((v, i) => <li key={i}>{textoValor(v)}</li>)}</ul>
 }
 
-export function DetallePropuesta({ controlador, habilitado, puedeDecidir }: { controlador: ControladorPanel; habilitado: boolean; puedeDecidir: boolean }) {
+export function DetallePropuesta({ controlador, habilitado, puedeDecidir, puedeAplicar }: { controlador: ControladorPanel; habilitado: boolean; puedeDecidir: boolean; puedeAplicar: boolean }) {
   const vista = useSyncExternalStore(controlador.suscribir, controlador.obtenerDetalle, controlador.obtenerDetalle)
   const decision = useSyncExternalStore(controlador.suscribir, controlador.obtenerDecision, controlador.obtenerDecision)
   const titulo = useRef<HTMLHeadingElement>(null)
@@ -82,6 +83,7 @@ export function DetallePropuesta({ controlador, habilitado, puedeDecidir }: { co
     {vista.requestId && <p className="text-sm">Request ID: <code className="break-all">{vista.requestId}</code></p>}
     <div aria-busy={vista.cargando} className="space-y-5">{vista.datos && <ContenidoDetalle detalle={vista.datos} />}</div>
     {vista.datos && <AccionesDecisiones controlador={controlador} detalle={vista.datos} puedeDecidir={puedeDecidir} />}
+    {vista.datos && <AccionAplicar controlador={controlador} detalle={vista.datos} puedeAplicar={puedeAplicar} />}
   </article>
 }
 
@@ -137,8 +139,8 @@ export function ContenidoDetalle({ detalle: d }: { detalle: Detalle }) {
     </Seccion>
     <Seccion titulo="Acciones informadas por el servidor">
       <p className="text-sm text-slate-600">Acciones disponibles según el permiso y las condiciones que informó el servidor.</p>
-      <h4 className="font-semibold">Acciones permitidas</h4><Textos valores={d.acciones_permitidas.map(a => a === 'aprobar' ? 'Aprobar' : 'Rechazar')} vacio="Ninguna acción permitida." />
-      <div className="grid gap-4 sm:grid-cols-2">{(['aprobar', 'rechazar'] as const).map(a => <section key={a} className="space-y-2 rounded-lg bg-slate-50 p-4"><h4 className="font-semibold">{a === 'aprobar' ? 'Aprobar: bloqueos' : 'Rechazar: bloqueos'}</h4><Textos valores={d.acciones_bloqueadas[a].map(m => MOTIVOS[m] ? `${MOTIVOS[m]} (${m})` : m)} vacio="Sin motivos de bloqueo." /></section>)}</div>
+      <h4 className="font-semibold">Acciones permitidas</h4><Textos valores={d.acciones_permitidas.map(a => a === 'aprobar' ? 'Aprobar' : a === 'rechazar' ? 'Rechazar' : 'Aplicar')} vacio="Ninguna acción permitida." />
+      <div className="grid gap-4 sm:grid-cols-3">{(['aprobar', 'rechazar', 'aplicar'] as const).map(a => <section key={a} className="space-y-2 rounded-lg bg-slate-50 p-4"><h4 className="font-semibold">{a === 'aprobar' ? 'Aprobar: bloqueos' : a === 'rechazar' ? 'Rechazar: bloqueos' : 'Aplicar: bloqueos'}</h4><Textos valores={d.acciones_bloqueadas[a].map(m => MOTIVOS[m] ? `${MOTIVOS[m]} (${m})` : m)} vacio="Sin motivos de bloqueo." /></section>)}</div>
     </Seccion>
     <Seccion titulo="Coordinación para una futura decisión">
       <Datos><Dato nombre="Payload hash">{textoValor(p.payload_hash)}</Dato><Dato nombre="Versión de coordinación">{textoValor(p.version_coordinacion)}</Dato><Dato nombre="Decisión de aprobación ID">{textoValor(p.decision_aprobacion_id)}</Dato><Dato nombre="Último evento ID">{textoValor(p.ultimo_evento_id)}</Dato></Datos>
@@ -210,6 +212,34 @@ function AccionesDecisiones({ controlador, detalle, puedeDecidir }: { controlado
         <button type="button" disabled={decision.enviando || decision.requiereRecarga || decision.accionesBloqueadas.includes(decision.accion) || (decision.accion === 'rechazar' && !motivoValido)} onClick={controlador.confirmarDecision} className="rounded-lg bg-blue-900 px-4 py-2 font-medium text-white">{decision.enviando ? 'Enviando…' : decision.accion === 'aprobar' ? 'Confirmar aprobación' : 'Confirmar rechazo'}</button>
         <button type="button" disabled={decision.enviando} onClick={controlador.cancelarDecision} className="rounded-lg border border-slate-400 px-4 py-2">Cancelar</button>
       </div>
+    </section>}
+  </section>
+}
+
+function AccionAplicar({ controlador, detalle, puedeAplicar }: { controlador: ControladorPanel; detalle: Detalle; puedeAplicar: boolean }) {
+  const estado = useSyncExternalStore(controlador.suscribir, controlador.obtenerAplicacion, controlador.obtenerAplicacion)
+  const encabezado = useRef<HTMLHeadingElement>(null)
+  useEffect(() => { if (estado.confirmar) encabezado.current?.focus() }, [estado.confirmar])
+  const id = detalle.propuesta.propuesta_id
+  const error = estado.error
+  const mensaje = error?.autenticacionVencida ? 'La sesión venció. Iniciá sesión nuevamente; no se reenviará la aplicación.' : error?.fallo === 'permiso' ? 'Falta autorización o permiso para aplicar.' : error?.fallo === 'no_encontrado' ? 'La propuesta ya no existe.' : error?.fallo === 'cambio' ? 'La instantánea cambió desde que la viste. Compará el estado actual y recargá.' : error?.fallo === 'no_aplica' ? 'El destino no cambió, pero la propuesta puede haber cambiado y necesita recarga.' : error?.fallo === 'solicitud' ? 'El servidor no aceptó la solicitud. No se repitió.' : error?.fallo === 'no_disponible' ? 'El servicio o la fuente no están disponibles. No se repitió la aplicación.' : error?.fallo === 'incierto' ? 'El resultado es incierto. No vuelvas a aplicar; recargá explícitamente la propuesta.' : null
+  const bloqueada = estado.propuestaId === id && (estado.requiereRecarga || estado.enviando)
+  const permiso = puedeAplicar && detalle.acciones_permitidas.includes('aplicar') && !bloqueada
+  return <section aria-labelledby="titulo-aplicacion" className="space-y-4 rounded-xl border border-slate-300 bg-white p-5">
+    <h3 id="titulo-aplicacion" className="text-lg font-semibold">Aplicación</h3>
+    {!puedeAplicar && <p role="status">Tu sesión no tiene permiso para aplicar.</p>}
+    {detalle.acciones_bloqueadas.aplicar.length > 0 && <><h4 className="font-medium">Aplicación bloqueada por el servidor</h4><Textos valores={detalle.acciones_bloqueadas.aplicar.map(m => MOTIVOS[m] ? `${MOTIVOS[m]} (${m})` : m)} vacio="Sin motivos informados." /></>}
+    {detalle.acciones_permitidas.includes('aplicar') && puedeAplicar && !bloqueada && !estado.confirmar && estado.registrada?.propuesta_id !== id && <button type="button" onClick={controlador.prepararAplicacion} className="rounded-lg bg-slate-800 px-4 py-2 font-medium text-white hover:bg-slate-700">Aplicar desde el panel</button>}
+    {bloqueada && <p role="alert">La aplicación está bloqueada hasta una recarga explícita exitosa del detalle.</p>}
+    {estado.registrada?.propuesta_id === id && <div role="status" className="rounded-lg border border-green-300 bg-green-50 p-4"><h4 className="font-semibold">Aplicación registrada{estado.registrada.ya_aplicada ? ' (reenvío idéntico, ya aplicada)' : ''}</h4><p>Destino modificado; estado nuevo: Aplicada.</p><Datos><Dato nombre="Evento ID">{estado.registrada.evento_id}</Dato><Dato nombre="Intento ID">{estado.registrada.intento_id}</Dato><Dato nombre="Fecha"><Fecha fecha={estado.registrada.aplicado_en} /></Dato></Datos></div>}
+    {error && <div role="alert" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4"><p>{mensaje}</p>{error.fallo === 'cambio' && <Datos><Dato nombre="Instantánea vista">Estado aprobada; payload_hash {estado.instantanea?.payload_hash_esperado ?? 'No disponible'}; versión {estado.instantanea?.version_coordinacion_esperada ?? 'No disponible'}; decisión {estado.instantanea?.decision_aprobacion_id_esperado ?? 'No disponible'}.</Dato><Dato nombre="Actual devuelto por el servidor">Estado {error.actual?.estado ?? 'No disponible'}; payload_hash {error.actual?.payload_hash ?? 'No disponible'}; versión {error.actual?.version_coordinacion ?? 'No disponible'}; decisión {error.actual?.decision_aprobacion_id ?? 'No disponible'}.</Dato></Datos>}{error.fallo === 'no_aplica' && <p>Resultado: {error.resultado ?? 'No disponible'}; estado conocido: {error.estadoNuevo ?? 'No disponible'}; intento: {error.intentoId ?? 'No disponible'}. El destino no cambió.</p>}{error.requestId && <p>Request ID: <code className="break-all">{error.requestId}</code></p>}{error.fallo !== 'permiso' && error.fallo !== 'no_encontrado' && <button type="button" disabled={estado.enviando} onClick={controlador.reintentarDetalle} className="rounded border border-slate-300 px-3 py-2">Recargar propuesta</button>}{error.fallo === 'no_encontrado' && <button type="button" disabled={estado.enviando} onClick={controlador.volverAlListado} className="rounded border border-slate-300 px-3 py-2">Volver al listado</button>}</div>}
+    {estado.confirmar && estado.propuestaId === id && estado.instantanea && <section aria-labelledby="titulo-confirmar-aplicar" className="space-y-4 rounded-lg border border-red-300 bg-red-50 p-4">
+      <h4 id="titulo-confirmar-aplicar" ref={encabezado} tabIndex={-1} className="font-semibold">Confirmar aplicación de la propuesta</h4>
+      <p className="font-semibold text-red-900">Esto modificará el buscador público</p>
+      <Datos><Dato nombre="País">{textoValor(detalle.requisito_actual.destino?.pais ?? null)}</Dato><Dato nombre="Requisito">{textoValor(detalle.requisito_actual.requisito?.nombre ?? null)}</Dato><Dato nombre="Campo">{textoValor(detalle.propuesta.campo)}</Dato><Dato nombre="Valor actual">{textoPresencia(detalle.requisito_actual.valor_actual)}</Dato><Dato nombre="Valor nuevo">{textoValor(detalle.propuesta.valor_propuesto.valor)}</Dato></Datos>
+      <p>Instantánea que se enviará: estado aprobada; payload_hash <code className="break-all">{estado.instantanea.payload_hash_esperado}</code>; versión {estado.instantanea.version_coordinacion_esperada}; decisión <code className="break-all">{estado.instantanea.decision_aprobacion_id_esperado}</code>.</p>
+      <p role="status" aria-live="polite">{estado.enviando ? 'Aplicando…' : 'La solicitud no se repetirá automáticamente.'}</p>
+      <div className="flex flex-wrap gap-3"><button type="button" disabled={!permiso || estado.enviando} onClick={controlador.confirmarAplicacion} className="rounded-lg bg-red-800 px-4 py-2 font-medium text-white">{estado.enviando ? 'Aplicando…' : 'Confirmar aplicación'}</button><button type="button" disabled={estado.enviando} onClick={controlador.cancelarAplicacion} className="rounded-lg border border-slate-400 px-4 py-2">Cancelar</button></div>
     </section>}
   </section>
 }

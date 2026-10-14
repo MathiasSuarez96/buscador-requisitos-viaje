@@ -23,15 +23,20 @@
  *       500 resultado_incierto      no se pudo confirmar la escritura
  *       500 error_interno           inconsistencia, o ErrorEntradaInvalida /
  *                                   ErrorTransicionInvalida del servicio (el
+ *
  *                                   400 ya se resolvió en la frontera HTTP)
  *       503 no_disponible           sin Mongo, sin índices o transacción
  *                                   revertida por un error transitorio
  *     Cada decisión registrada (o reenvío reconocido) deja un panel_decision
  *     en el registro.
  *
+ *   POST /propuestas/:propuesta_id/aplicacion — exige ver y aplicar, sin
+ *     exigir decidir. La aprobación, payload, versión y evento de aprobación
+ *     se comprueban dentro del CAS transaccional de aplicarPropuesta.
+ *
  * Todo lo que no es /sesion exige autenticación + autorización (permiso
  * "ver"); una ruta inexistente responde 404 recién después de eso. Todavía
- * no hay rutas de cancelación ni aplicación.
+ * no hay rutas de cancelación.
  *
  * Sin configuración válida el router entero responde 503 (falla cerrado).
  */
@@ -54,6 +59,14 @@ const {
   ErrorEntradaInvalida,
   ErrorTransicionInvalida
 } = require('../services/panel/decisiones-propuestas');
+const {
+  ErrorCuerpoAplicacion,
+  ErrorAplicacionNoEncontrada,
+  ErrorAplicacionCambio,
+  ErrorAplicacionNoAplica,
+  ErrorAplicacionNoDisponible,
+  ErrorAplicacionIncierta
+} = require('../services/panel/aplicaciones-propuestas');
 const {
   ErrorPanel,
   asignarRequestId,
@@ -92,6 +105,17 @@ function traducirDecision(err) {
   return traducirLectura(err);
 }
 
+function traducirAplicacion(err) {
+  if (err instanceof ErrorCuerpoAplicacion) return new ErrorPanel(400, 'solicitud_invalida', `aplicacion_${err.message}`);
+  if (err instanceof ErrorAplicacionNoEncontrada) return new ErrorPanel(404, 'no_encontrado', 'propuesta_inexistente');
+  if (err instanceof ErrorAplicacionCambio) return new ErrorPanel(409, 'propuesta_cambio', 'aplicacion_cambio', { datos: { actual: { ...err.actual, intento_id: err.intentoId } } });
+  if (err instanceof ErrorAplicacionNoAplica) return new ErrorPanel(422, 'aplicacion_no_realizada', 'aplicacion_no_realizada', { datos: { aplicacion: err.aplicacion } });
+  if (err instanceof ErrorAplicacionNoDisponible) return new ErrorPanel(503, 'no_disponible', 'aplicacion_no_disponible');
+  if (err instanceof ErrorAplicacionIncierta) return new ErrorPanel(500, 'resultado_incierto', 'aplicacion_resultado_incierto', { datos: { aplicacion: { destino_modificado: null, resultado: 'resultado_incierto', estado_propuesta_nuevo: null, intento_id: err.intentoId } } });
+  if (['MongoNetworkError', 'MongoNetworkTimeoutError', 'MongoServerSelectionError', 'MongoNotConnectedError'].includes(err?.name) || err instanceof ErrorLecturaNoDisponible) return new ErrorPanel(503, 'no_disponible', 'aplicacion_no_disponible');
+  return traducirLectura(err);
+}
+
 const manejar = (traducir, fn) => async (req, res, next) => {
   try {
     await fn(req, res);
@@ -105,7 +129,7 @@ const leer = (fn) => manejar(traducirLectura, fn);
 // válida, o { config: null, registrar } si la configuración es inválida.
 // propuestas: lector de services/panel/lectura-propuestas.js.
 // decisiones: services/panel/decisiones-propuestas.js.
-function crearRouterPanel({ config, verificador, registrar, propuestas, decisiones }) {
+function crearRouterPanel({ config, verificador, registrar, propuestas, decisiones, aplicaciones }) {
   const router = express.Router();
   router.use(asignarRequestId, protecciones);
 
@@ -169,6 +193,19 @@ function crearRouterPanel({ config, verificador, registrar, propuestas, decision
   const exigirDecidir = crearExigirPermiso('decidir');
   router.post('/propuestas/:propuesta_id/aprobacion', exigirDecidir, decidir('aprobacion'));
   router.post('/propuestas/:propuesta_id/rechazo', exigirDecidir, decidir('rechazo'));
+
+  router.post('/propuestas/:propuesta_id/aplicacion', crearExigirPermiso('aplicar'), async (req, res, next) => {
+    try {
+      if (Object.keys(req.query).length > 0) throw new ErrorPanel(400, 'solicitud_invalida', 'parametro_no_admitido');
+      if (!aplicaciones || typeof aplicaciones.aplicar !== 'function') throw new ErrorPanel(503, 'no_disponible', 'aplicacion_no_configurada');
+      const resultado = await aplicaciones.aplicar(validarPropuestaId(req.params.propuesta_id), req.body, req.operador, req.requestId);
+      registrar({ nivel: 'info', evento: 'panel_aplicacion', request_id: req.requestId, propuesta_id: resultado.aplicacion.propuesta_id, identificador: req.operador.identificador, sub: req.operador.identidad_operador.sub, origen: 'panel', resultado: resultado.aplicacion.resultado, ya_aplicada: resultado.aplicacion.ya_aplicada });
+      res.status(200).json({ aplicacion: resultado.aplicacion });
+    } catch (err) {
+      registrar({ nivel: err instanceof ErrorAplicacionCambio || err instanceof ErrorAplicacionNoAplica ? 'aviso' : 'error', evento: 'panel_aplicacion', request_id: req.requestId, propuesta_id: req.params.propuesta_id, identificador: req.operador.identificador, sub: req.operador.identidad_operador.sub, origen: 'panel', resultado: err?.message === 'resultado_incierto' ? 'incierto' : 'no_exito' });
+      next(traducirAplicacion(err));
+    }
+  });
 
   router.use((req, res, next) => next(new ErrorPanel(404, 'no_encontrado')));
   router.use(manejarErroresPanel(registrar));

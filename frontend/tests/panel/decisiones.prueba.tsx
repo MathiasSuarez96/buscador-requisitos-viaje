@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { crearControladorPanel } from '../../src/panel/controlador.ts'
 import { enviarDecision, esMotivoValido, instantaneaDe, type AccionDecision } from '../../src/panel/decisiones.ts'
+import { enviarAplicacion, instantaneaAplicacionDe } from '../../src/panel/aplicaciones.ts'
 import { MAXIMO_RESPUESTA } from '../../src/panel/propuestas.ts'
 import { CONFIG, TOKEN, REQUEST_ID, SESION_AUTORIZADA, crearGisFalso, crearFetchFalso, respuestaJson, hastaQue, esperar, comprobarSinFugas, renderizar, type Prueba } from './apoyo.tsx'
 
@@ -19,7 +20,7 @@ function detalle(id = ID, cambios: Record<string, unknown> = {}) {
     },
     integridad: { hash_coincide: true, hash_recalculado: HASH, consistente: true, problemas: [] },
     requisito_actual: { estado: 'coincide', destino: { destino_id: HEX, pais: 'Reino Unido', codigo_iso: 'GB' }, requisito: { requisito_id: HEX, tipo: 'formulario_digital', nombre: 'UK ETA' }, valor_actual: { presente: false, valor: null }, valor: 'coincide' },
-    eventos: [], eventos_truncados: false, acciones_permitidas: ['aprobar', 'rechazar'], acciones_bloqueadas: { aprobar: [], rechazar: [] }, ...cambios,
+    eventos: [], eventos_truncados: false, acciones_permitidas: ['aprobar', 'rechazar'], acciones_bloqueadas: { aprobar: [], rechazar: [], aplicar: ['estado_no_permite_aplicar'] }, ...cambios,
   }
 }
 const pagina = { propuestas: [{ propuesta_id: ID, estado: 'pendiente_aprobacion', campo: 'costo', destino_id: HEX, destino: { destino_id: HEX, pais: 'Reino Unido', codigo_iso: 'GB' }, requisito_id: HEX, creada_en: FECHA, actualizada_en: null, alertas: [] }], filtro: { estados: ['pendiente_aprobacion'] }, limite: 20, siguiente_cursor: null }
@@ -36,6 +37,8 @@ async function contexto(responder: Responder, permisos: string[] = ['ver', 'deci
 }
 const decisionBody = (accion: AccionDecision, id = ID) => ({ decision: { tipo_evento: accion === 'aprobar' ? 'aprobacion' : 'rechazo', propuesta_id: id, evento_id: 'd54d03c8-e9ba-4352-8370-e4f88534f612', estado_anterior: 'pendiente_aprobacion', estado_nuevo: accion === 'aprobar' ? 'aprobada' : 'rechazada', version_coordinacion_nueva: 8, ocurrido_en: FECHA, actor: { tipo: 'humano', identificador: 'operador.panel', email: 'privado@example.com' }, ya_registrada: false, identidad_operador: { email: 'privado@example.com' } } })
 const errorJson = (status: number, extra: Record<string, unknown> = {}, requestId: string | null = REQUEST_ID) => respuestaJson(status, { error: { codigo: 'codigo_interno', mensaje: 'NO_MOSTRAR', request_id: requestId, ...extra } }, null)
+const aprobada = (cambios: Record<string, unknown> = {}) => detalle(ID, { propuesta: { ...detalle().propuesta, estado: 'aprobada', decision_aprobacion_id: 'd54d03c8-e9ba-4352-8370-e4f88534f612' }, acciones_permitidas: ['aplicar'], acciones_bloqueadas: { aprobar: ['estado_no_permite_decision'], rechazar: ['estado_no_permite_decision'], aplicar: [] }, ...cambios })
+const aplicacionBody = (ya_aplicada = false) => ({ aplicacion: { propuesta_id: ID, resultado: 'exito', destino_modificado: true, estado_propuesta_nuevo: 'aplicada', version_coordinacion_nueva: 8, decision_aprobacion_id: 'd54d03c8-e9ba-4352-8370-e4f88534f612', evento_id: 'e54d03c8-e9ba-4352-8370-e4f88534f612', intento_id: 'f54d03c8-e9ba-4352-8370-e4f88534f612', aplicado_en: FECHA, ya_aplicada } })
 const terminar = (c: ReturnType<typeof crearControladorPanel>) => hastaQue(() => !c.obtenerDecision().enviando)
 const seleccionar = async (c: ReturnType<typeof crearControladorPanel>, accion: AccionDecision) => {
   c.seleccionar(ID); await hastaQue(() => c.obtenerDetalle().datos !== null)
@@ -44,6 +47,67 @@ const seleccionar = async (c: ReturnType<typeof crearControladorPanel>, accion: 
 const enviar = async (c: ReturnType<typeof crearControladorPanel>) => { c.confirmarDecision(); await terminar(c) }
 
 export const pruebas: Prueba[] = [
+  { nombre: 'aplicación: CAS visible, body exacto, confirmación accesible, doble clic y reenvío idéntico', async fn() {
+    const d = aprobada() as ReturnType<typeof castDetalle>
+    const snap = instantaneaAplicacionDe(d)!
+    assert.deepEqual(snap, { estado_esperado: 'aprobada', payload_hash_esperado: HASH, version_coordinacion_esperada: 7, decision_aprobacion_id_esperado: 'd54d03c8-e9ba-4352-8370-e4f88534f612' })
+    const r = await enviarAplicacion(CONFIG.apiOrigen, TOKEN, ID, snap, async (url, init) => {
+      assert.equal(url, `${CONFIG.apiOrigen}/api/panel/propuestas/${ID}/aplicacion`); assert.equal(init.method, 'POST'); assert.equal(init.credentials, 'omit'); assert.equal(init.cache, 'no-store')
+      const body = JSON.parse(String(init.body)); assert.deepEqual(Object.keys(body).sort(), ['decision_aprobacion_id_esperado', 'estado_esperado', 'payload_hash_esperado', 'version_coordinacion_esperada']); assert.deepEqual(body, snap)
+      return respuestaJson(200, aplicacionBody(true))
+    })
+    assert.equal(r.tipo, 'ok'); if (r.tipo === 'ok') assert.equal(r.aplicacion.ya_aplicada, true)
+    let resolver: (r: Response) => void = () => {}, llamadas = 0
+    const ctx = await contexto(() => { llamadas++; return new Promise(r => { resolver = r }) }, ['ver', 'aplicar'], 20_000, () => respuestaJson(200, aprobada()))
+    ctx.controlador.seleccionar(ID); await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null)
+    ctx.controlador.prepararAplicacion(); assert.match(renderizar(ctx.controlador), /Esto modificará el buscador público/); assert.match(renderizar(ctx.controlador), /Reino Unido/); assert.match(renderizar(ctx.controlador), /Valor nuevo/)
+    ctx.controlador.confirmarAplicacion(); ctx.controlador.confirmarAplicacion(); ctx.controlador.filtrar({ estados: ['aplicada'], limite: 5 }); ctx.controlador.volverAlListado()
+    assert.equal(llamadas, 1); assert.equal(ctx.controlador.obtenerAplicacion().enviando, true)
+    resolver(respuestaJson(200, aplicacionBody())); await hastaQue(() => !ctx.controlador.obtenerAplicacion().enviando)
+    assert.equal(ctx.controlador.obtenerAplicacion().registrada?.destino_modificado, true); assert.equal(ctx.controlador.obtenerAplicacion().requiereRecarga, true)
+    assert.equal(ctx.red.llamadas.filter(p => p.url.endsWith('/aplicacion')).length, 1)
+  } },
+  { nombre: 'aplicación sin permiso, sin acción o con respuesta no válida no permite un POST', async fn() {
+    const ctx = await contexto(async () => { assert.fail('sin permiso no debe enviar') }, ['ver'], 20_000, () => respuestaJson(200, aprobada()))
+    ctx.controlador.seleccionar(ID); await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null); ctx.controlador.prepararAplicacion(); ctx.controlador.confirmarAplicacion()
+    assert.equal(ctx.controlador.obtenerAplicacion().confirmar, false); assert.equal(ctx.red.llamadas.filter(p => p.url.endsWith('/aplicacion')).length, 0)
+    const detalleSinAccion = aprobada({ acciones_permitidas: [], acciones_bloqueadas: { aprobar: [], rechazar: [], aplicar: ['sin_permiso_aplicar'] } })
+    const snap = instantaneaAplicacionDe(detalleSinAccion as ReturnType<typeof castDetalle>)
+    assert.ok(snap)
+  } },
+  { nombre: '409 y 422 bloquean; solo una recarga completa permite volver a aplicar usando la nueva acción del servidor', async fn() {
+    let lecturas = 0, posts = 0
+    const ctx = await contexto(() => { posts++; return errorJson(posts === 1 ? 409 : 422, posts === 1 ? { actual: { estado: 'aprobada', payload_hash: HASH, version_coordinacion: 7, decision_aprobacion_id: 'd54d03c8-e9ba-4352-8370-e4f88534f612', ultimo_evento_id: 'd54d03c8-e9ba-4352-8370-e4f88534f612' } } : { aplicacion: { destino_modificado: false, resultado: 'fuente_cambio', estado_propuesta_nuevo: 'revision_requerida', intento_id: 'f54d03c8-e9ba-4352-8370-e4f88534f612' } }) }, ['ver', 'aplicar'], 20_000, () => { lecturas++; return respuestaJson(200, aprobada({ acciones_permitidas: lecturas > 1 ? [] : ['aplicar'], acciones_bloqueadas: { aprobar: ['estado_no_permite_decision'], rechazar: ['estado_no_permite_decision'], aplicar: lecturas > 1 ? ['fuente_cambio'] : [] } })) })
+    ctx.controlador.seleccionar(ID); await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null)
+    ctx.controlador.prepararAplicacion(); ctx.controlador.confirmarAplicacion(); await hastaQue(() => !ctx.controlador.obtenerAplicacion().enviando)
+    assert.equal(ctx.controlador.obtenerAplicacion().requiereRecarga, true); ctx.controlador.prepararAplicacion(); assert.equal(ctx.controlador.obtenerAplicacion().confirmar, true)
+    ctx.controlador.confirmarAplicacion(); await hastaQue(() => !ctx.controlador.obtenerAplicacion().enviando); assert.equal(posts, 1)
+    await ctx.controlador.reintentarDetalle(); await hastaQue(() => !ctx.controlador.obtenerDetalle().cargando)
+    assert.equal(ctx.controlador.obtenerAplicacion().requiereRecarga, false); assert.equal(ctx.controlador.obtenerDetalle().datos?.acciones_permitidas.includes('aplicar'), false)
+    ctx.controlador.prepararAplicacion(); assert.equal(ctx.controlador.obtenerAplicacion().confirmar, false); assert.equal(posts, 1)
+  } },
+  { nombre: '401 conserva confirmación y reautenticación no reenvía; 500/red/timeout/503 mantienen bloqueo hasta recarga', async fn() {
+    let posts = 0
+    const ctx = await contexto(() => { posts++; return errorJson(401) }, ['ver', 'aplicar'], 20_000, () => respuestaJson(200, aprobada()))
+    ctx.controlador.seleccionar(ID); await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null); ctx.controlador.prepararAplicacion(); ctx.controlador.confirmarAplicacion(); await hastaQue(() => !ctx.controlador.obtenerAplicacion().enviando)
+    assert.equal(ctx.controlador.tieneToken(), false); assert.equal(ctx.controlador.obtenerAplicacion().confirmar, true); assert.equal(posts, 1)
+    ctx.gis.entregar({ credential: TOKEN }); await hastaQue(() => ctx.controlador.obtenerEstado().fase === 'autorizado'); await esperar(); assert.equal(posts, 1)
+  } },
+  { nombre: 'errores HTTP, red/CORS, timeout, JSON inválido y respuesta grande al aplicar son seguros e inciertos cuando corresponde', async fn() {
+    const snap = instantaneaAplicacionDe(aprobada() as ReturnType<typeof castDetalle>)!
+    for (const [status, fallo] of [[403, 'permiso'], [404, 'no_encontrado'], [409, 'cambio'], [422, 'no_aplica'], [400, 'solicitud'], [413, 'solicitud'], [415, 'solicitud'], [503, 'no_disponible'], [500, 'incierto']] as const) {
+      const r = await enviarAplicacion(CONFIG.apiOrigen, TOKEN, ID, snap, async () => errorJson(status))
+      assert.equal(r.tipo, 'error'); if (r.tipo === 'error') { assert.equal(r.error.fallo, fallo); assert.equal(r.error.requestId, REQUEST_ID); assert.ok(!JSON.stringify(r).includes('NO_MOSTRAR')) }
+    }
+    const red = await enviarAplicacion(CONFIG.apiOrigen, TOKEN, ID, snap, async () => { throw new TypeError(`CORS ${TOKEN}`) })
+    assert.equal(red.tipo, 'error'); if (red.tipo === 'error') assert.equal(red.error.fallo, 'incierto')
+    const timeout = await enviarAplicacion(CONFIG.apiOrigen, TOKEN, ID, snap, async () => new Promise<Response>(() => {}), undefined, 2)
+    assert.equal(timeout.tipo, 'error'); if (timeout.tipo === 'error') assert.equal(timeout.error.fallo, 'incierto')
+    const invalido = await enviarAplicacion(CONFIG.apiOrigen, TOKEN, ID, snap, async () => new Response('{no-json', { status: 200 }))
+    assert.equal(invalido.tipo, 'error'); if (invalido.tipo === 'error') assert.equal(invalido.error.fallo, 'incierto')
+    const grande = await enviarAplicacion(CONFIG.apiOrigen, TOKEN, ID, snap, async () => new Response(' '.repeat(512 * 1024 + 1), { status: 200 }))
+    assert.equal(grande.tipo, 'error'); if (grande.tipo === 'error') assert.equal(grande.error.fallo, 'incierto')
+  } },
   { nombre: 'instantánea exacta y motivo: puntos de código, trim Unicode, LF/TAB y controles del backend', fn() {
     assert.deepEqual(instantaneaDe(detalleTipado()), { estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: HASH, version_coordinacion_esperada: 7 })
     for (const motivo of [' x ', '😀'.repeat(500), 'ñ'.repeat(500), 'a\nb', 'a\tb', '　x　']) assert.equal(esMotivoValido(motivo), true, JSON.stringify(motivo))
@@ -165,7 +229,7 @@ export const pruebas: Prueba[] = [
       return respuestaJson(200, pagina)
     }, ['ver', 'decidir'], 20_000, lectura => {
       const d = detalle() as import('../../src/panel/detalle.ts').Detalle
-      if (lectura > 1) { d.acciones_permitidas = ['rechazar']; d.acciones_bloqueadas = { aprobar: ['hash_no_coincide'], rechazar: [] } }
+      if (lectura > 1) { d.acciones_permitidas = ['rechazar']; d.acciones_bloqueadas = { aprobar: ['hash_no_coincide'], rechazar: [], aplicar: ['estado_no_permite_aplicar'] } }
       return respuestaJson(200, d)
     })
     await seleccionar(ctx.controlador, 'aprobar'); await enviar(ctx.controlador)
@@ -197,7 +261,7 @@ export const pruebas: Prueba[] = [
       return respuestaJson(200, pagina)
     }, ['ver', 'decidir'], 20_000, lectura => {
       const d = detalle() as import('../../src/panel/detalle.ts').Detalle
-      if (lectura > 1) { d.acciones_permitidas = []; d.acciones_bloqueadas = { aprobar: ['decision_previa_existente'], rechazar: ['decision_previa_existente'] } }
+      if (lectura > 1) { d.acciones_permitidas = []; d.acciones_bloqueadas = { aprobar: ['decision_previa_existente'], rechazar: ['decision_previa_existente'], aplicar: ['estado_no_permite_aplicar'] } }
       return respuestaJson(200, d)
     })
     await seleccionar(ctx.controlador, 'rechazar'); ctx.controlador.fijarMotivoDecision('Borrador conservado')

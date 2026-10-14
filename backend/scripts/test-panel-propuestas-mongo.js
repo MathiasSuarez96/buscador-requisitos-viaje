@@ -561,10 +561,10 @@ async function volcado() {
         avisos: []
       });
       assert.deepStrictEqual(d.acciones_permitidas, ['aprobar', 'rechazar']);
-      assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: [], rechazar: [] });
+      assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: [], rechazar: [], aplicar: ['estado_no_permite_aplicar', 'sin_permiso_aplicar', 'decision_aprobacion_invalida'] });
       assert.deepStrictEqual(d.eventos, []);
       const soloVer = await detalle(P.valida, '3000');
-      assert.deepStrictEqual([soloVer.json.acciones_permitidas, soloVer.json.acciones_bloqueadas], [[], { aprobar: ['sin_permiso_decidir'], rechazar: ['sin_permiso_decidir'] }]);
+      assert.deepStrictEqual([soloVer.json.acciones_permitidas, soloVer.json.acciones_bloqueadas], [[], { aprobar: ['sin_permiso_decidir'], rechazar: ['sin_permiso_decidir'], aplicar: ['estado_no_permite_aplicar', 'sin_permiso_aplicar', 'decision_aprobacion_invalida'] }]);
       console.log('3) detalle válido: forma exacta, hash recalculado, requisito y valor coinciden → [aprobar, rechazar]; operador sin "decidir" → []: OK');
     }
 
@@ -588,7 +588,7 @@ async function volcado() {
         const d = (await detalle(p, '1000')).json;
         assert.strictEqual(d.requisito_actual.estado, estado, `${p.nombre}: estado`);
         assert.strictEqual(d.requisito_actual.valor, valor, `${p.nombre}: valor`);
-        assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: motivos, rechazar: rechazo }, `${p.nombre}: bloqueadas`);
+        assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: motivos, rechazar: rechazo, aplicar: [...motivos, 'estado_no_permite_aplicar', 'sin_permiso_aplicar', 'decision_aprobacion_invalida'] }, `${p.nombre}: bloqueadas`);
         // Íntegra → aprobar y rechazar; con problemas → solo rechazar; hash inválido → ninguna.
         const esperadas = ['aprobar', 'rechazar'].filter((a) => ({ aprobar: motivos, rechazar: rechazo })[a].length === 0);
         assert.deepStrictEqual(d.acciones_permitidas, esperadas, `${p.nombre}: acciones`);
@@ -596,7 +596,7 @@ async function volcado() {
         const soloVer = (await detalle(p, '3000')).json;
         assert.deepStrictEqual(
           [soloVer.acciones_permitidas, soloVer.acciones_bloqueadas],
-          [[], { aprobar: [...motivos, 'sin_permiso_decidir'], rechazar: [...rechazo, 'sin_permiso_decidir'] }],
+          [[], { aprobar: [...motivos, 'sin_permiso_decidir'], rechazar: [...rechazo, 'sin_permiso_decidir'], aplicar: [...motivos, 'estado_no_permite_aplicar', 'sin_permiso_aplicar', 'decision_aprobacion_invalida'] }],
           `${p.nombre}: solo ver`
         );
       }
@@ -614,7 +614,7 @@ async function volcado() {
     // ============================================================
     {
       const ap = (await detalle(P.aprobada, '1000')).json;
-      assert.deepStrictEqual([ap.acciones_permitidas, ap.acciones_bloqueadas], [[], { aprobar: ['estado_no_permite_decision'], rechazar: ['estado_no_permite_decision'] }]);
+      assert.deepStrictEqual([ap.acciones_permitidas, ap.acciones_bloqueadas], [[], { aprobar: ['estado_no_permite_decision'], rechazar: ['estado_no_permite_decision'], aplicar: ['sin_permiso_aplicar'] }]);
       assert.strictEqual(ap.propuesta.decision_aprobacion_id, EVENTO_APROBACION);
       assert.deepStrictEqual(ap.eventos, [
         {

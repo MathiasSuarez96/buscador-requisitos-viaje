@@ -22,7 +22,7 @@ const VARIABLE = 'OPERADORES_PANEL_JSON';
 // EventoPropuesta.detalle.comando (la CLI usa { nombre: 'decidir-propuesta' }).
 const COMANDO_PANEL = Object.freeze({ nombre: 'panel-propuestas', version: '1' });
 const PROVEEDORES = Object.freeze(['google']);
-const PERMISOS = Object.freeze(['ver', 'decidir']);
+const PERMISOS = Object.freeze(['ver', 'decidir', 'aplicar']);
 const CLAVES = ['email', 'identificador', 'permisos', 'proveedor', 'sub'];
 
 class ErrorConfiguracionPanel extends Error {}

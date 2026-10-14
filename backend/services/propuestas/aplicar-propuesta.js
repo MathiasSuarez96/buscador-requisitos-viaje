@@ -121,7 +121,7 @@ const CAMPOS_APLICABLES = ['costo'];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const OBJECT_ID_HEX = /^[0-9a-f]{24}$/;
-const CAMPOS_ENTRADA = ['propuesta_id', 'payload_hash_esperado', 'version_coordinacion_esperada'];
+const CAMPOS_ENTRADA = ['propuesta_id', 'estado_esperado', 'payload_hash_esperado', 'version_coordinacion_esperada', 'decision_aprobacion_id_esperado'];
 
 class ErrorEntradaInvalida extends Error {}
 class ErrorInconsistencia extends Error {}
@@ -220,11 +220,15 @@ function validarEntrada(e) {
   const extras = Object.keys(e).filter((k) => !CAMPOS_ENTRADA.includes(k));
   if (extras.length > 0) falla(`campos no admitidos: ${extras.join(', ')} (el operador lo resuelve el servicio, nunca la entrada).`);
   if (typeof e.propuesta_id !== 'string' || !UUID.test(e.propuesta_id)) falla('propuesta_id debe ser un UUID.');
+  if (e.estado_esperado !== 'aprobada') falla('estado_esperado debe ser aprobada.');
   if (typeof e.payload_hash_esperado !== 'string' || !SHA256_HEX.test(e.payload_hash_esperado)) {
     falla('payload_hash_esperado debe ser SHA-256 hex en minúsculas.');
   }
   if (!Number.isInteger(e.version_coordinacion_esperada) || e.version_coordinacion_esperada < 0) {
     falla('version_coordinacion_esperada debe ser un entero >= 0.');
+  }
+  if (typeof e.decision_aprobacion_id_esperado !== 'string' || !UUID.test(e.decision_aprobacion_id_esperado)) {
+    falla('decision_aprobacion_id_esperado debe ser un UUID.');
   }
 }
 
@@ -319,6 +323,9 @@ function verificarPrecondicionesPropuesta(entrada, propuesta, eventoAprobacion) 
     });
   }
   const diffsAprobacion = diferenciasAprobacion(propuesta, eventoAprobacion);
+  if ((propuesta.decision_aprobacion_id ?? null) !== entrada.decision_aprobacion_id_esperado) {
+    fallas.push({ codigo: 'decision_aprobacion_id_no_coincide', detalle: { esperado: entrada.decision_aprobacion_id_esperado, leido: propuesta.decision_aprobacion_id ?? null } });
+  }
   if (diffsAprobacion.length > 0) {
     fallas.push({
       codigo: 'aprobacion_invalida',
@@ -448,8 +455,8 @@ function filtroCasPropuesta(ctx) {
     estado: 'aprobada',
     payload_hash: ctx.hash_esperado,
     version_coordinacion: ctx.version_esperada,
-    decision_aprobacion_id: ctx.decision_aprobacion_id,
-    ultimo_evento_id: ctx.decision_aprobacion_id
+    decision_aprobacion_id: ctx.decision_aprobacion_id_esperado,
+    ultimo_evento_id: ctx.decision_aprobacion_id_esperado
   };
 }
 
@@ -499,7 +506,7 @@ function construirIntento(ctx, r) {
     adaptador: { ...ctx.adaptador },
     hash_contenido_referenciado: ctx.hash_leido,
     version_coordinacion_esperada: ctx.version_esperada,
-    decision_aprobacion_id: ctx.decision_aprobacion_id,
+    decision_aprobacion_id: ctx.decision_aprobacion_id_esperado,
     iniciado_en: ctx.iniciado_en,
     finalizado_en: r.finalizado_en,
     resultado: r.resultado,
@@ -521,7 +528,7 @@ function construirHistorial(ctx, t) {
     valor_nuevo: { presente: true, valor: ctx.valor_nuevo },
     aplicado_en: t,
     propuesta_id: ctx.propuesta_id,
-    decision_aprobacion_id: ctx.decision_aprobacion_id,
+    decision_aprobacion_id: ctx.decision_aprobacion_id_esperado,
     intento_aplicacion_id: ctx.intento_id,
     revalidacion_id: ctx.revalidacion_id
   };
@@ -543,7 +550,8 @@ function construirEvento(ctx, tipoEvento, t, resultado, motivo) {
       operador: { ...ctx.operador },
       identidad_operador: { ...ctx.identidad_operador },
       proceso_aplicador: { ...PROCESO_APLICADOR },
-      adaptador: { ...ctx.adaptador }
+      adaptador: { ...ctx.adaptador },
+      ...(ctx.auditoria_panel ? { auditoria_panel: ctx.auditoria_panel } : {})
     },
     intento_aplicacion_id: ctx.intento_id
   };
@@ -966,10 +974,14 @@ async function registrarTransicion(ctx, resultado, etapa, extras, evidencia, mot
 // Servicio
 // ------------------------------------------------------------------
 
-async function aplicarPropuesta(entrada, deps = crearDependenciasMongoose()) {
+async function aplicarPropuesta(entrada, deps = crearDependenciasMongoose(), auditoriaPanel = null) {
   validarEntrada(entrada);
-  const operadores = deps.operadoresAutorizados();
-  const resolucion = resolverActor(await deps.usuariosAutenticados(), operadores);
+  // La ruta panel ya autenticó la identidad OIDC y exigió el permiso aplicar.
+  // La CLI conserva su resolución por connectionStatus/allowlist de Atlas.
+  const operadores = auditoriaPanel ? [] : deps.operadoresAutorizados();
+  const resolucion = auditoriaPanel
+    ? { actor: { tipo: 'humano', identificador: auditoriaPanel.operador }, identidad_operador: { metodo: auditoriaPanel.identidad.metodo, sub: auditoriaPanel.identidad.sub } }
+    : resolverActor(await deps.usuariosAutenticados(), operadores);
   await deps.verificarIndices();
 
   // Una sola vez: todo reintento reutiliza exactamente estos valores.
@@ -1001,6 +1013,8 @@ async function aplicarPropuesta(entrada, deps = crearDependenciasMongoose()) {
     version_esperada: entrada.version_coordinacion_esperada,
     hash_leido: propuesta.payload_hash,
     decision_aprobacion_id: decision,
+    decision_aprobacion_id_esperado: entrada.decision_aprobacion_id_esperado,
+    auditoria_panel: auditoriaPanel,
     intento_id: intentoId,
     evento_id: eventoId,
     historial_id: historialId,

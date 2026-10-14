@@ -299,7 +299,7 @@ const cuerpoDe = (p, extra = {}) => ({ estado_esperado: 'pendiente_aprobacion', 
         if (variante === 'hashInvalido') {
           // Ninguna acción: con el hash almacenado no hay body válido (400) y
           // con cualquier hash válido la coordinación no coincide (409).
-          assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: ['payload_hash_invalido'], rechazar: ['payload_hash_invalido'] });
+          assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: ['payload_hash_invalido'], rechazar: ['payload_hash_invalido'], aplicar: ['payload_hash_invalido', 'estado_no_permite_aplicar', 'sin_permiso_aplicar', 'decision_aprobacion_invalida'] });
           for (const [tipo, extra] of [['aprobacion', {}], ['rechazo', { motivo: 'm' }]]) {
             const r400 = await sinEscrituras(() => decidir(p, tipo, cuerpoDe(p, extra)), `${tipo} con el hash almacenado`);
             assert.deepStrictEqual([r400.status, codigo(r400)], [400, 'solicitud_invalida'], r400.body);
@@ -313,7 +313,7 @@ const cuerpoDe = (p, extra = {}) => ({ estado_esperado: 'pendiente_aprobacion', 
 
         if (variante === 'versionInvalida') {
           // Ninguna acción. POST actual: con 1.5 el body es 400; con un entero, 409.
-          assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: ['version_coordinacion_invalida'], rechazar: ['version_coordinacion_invalida'] });
+          assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: ['version_coordinacion_invalida'], rechazar: ['version_coordinacion_invalida'], aplicar: ['version_coordinacion_invalida', 'estado_no_permite_aplicar', 'sin_permiso_aplicar', 'decision_aprobacion_invalida'] });
           for (const [tipo, extra] of [['aprobacion', {}], ['rechazo', { motivo: 'm' }]]) {
             const r400 = await sinEscrituras(() => decidir(p, tipo, cuerpoDe(p, extra)), `${tipo} con la versión almacenada 1.5`);
             assert.deepStrictEqual([r400.status, codigo(r400)], [400, 'solicitud_invalida'], r400.body);
@@ -331,7 +331,7 @@ const cuerpoDe = (p, extra = {}) => ({ estado_esperado: 'pendiente_aprobacion', 
         if (variante === 'decisionPrevia') {
           // Ninguna acción. POST: con lo visto vigente → 422
           // [decision_previa_existente]; con otra versión u otro hash → 409.
-          assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: ['decision_previa_existente'], rechazar: ['decision_previa_existente'] });
+          assert.deepStrictEqual(d.acciones_bloqueadas, { aprobar: ['decision_previa_existente'], rechazar: ['decision_previa_existente'], aplicar: ['decision_previa_existente', 'estado_no_permite_aplicar', 'sin_permiso_aplicar', 'decision_aprobacion_invalida'] });
           for (const [tipo, extra] of [['aprobacion', {}], ['rechazo', { motivo: 'm' }]]) {
             const r = await sinEscrituras(() => decidir(p, tipo, cuerpoDe(p, extra)), `${tipo} con decisión previa`);
             assert.deepStrictEqual([r.status, codigo(r), r.json.error.motivos], [422, 'propuesta_no_decidible', d.acciones_bloqueadas.aprobar], r.body);

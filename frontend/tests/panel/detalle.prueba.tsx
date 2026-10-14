@@ -32,7 +32,7 @@ function ejemplo(id = ID) {
       requisito: { requisito_id: HEX, tipo: 'autorizacion', nombre: 'UK ETA' }, valor_actual: { presente: true, valor: '£16' }, valor: 'coincide',
     },
     eventos: [evento(1), evento(2)], eventos_truncados: false,
-    acciones_permitidas: ['aprobar', 'rechazar'], acciones_bloqueadas: { aprobar: [] as string[], rechazar: [] as string[] },
+    acciones_permitidas: ['aprobar', 'rechazar'], acciones_bloqueadas: { aprobar: [] as string[], rechazar: [] as string[], aplicar: ['estado_no_permite_aplicar'] as string[] },
   }
 }
 function evento(n: number) {

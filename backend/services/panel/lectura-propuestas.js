@@ -453,7 +453,7 @@ function evaluarRequisitoActual(p, destino, adaptador) {
   return { estado, destino: destinoPublico, requisito, valor_actual: valorActualSeguro, valor };
 }
 
-const ACCIONES = Object.freeze(['aprobar', 'rechazar']);
+const ACCIONES = Object.freeze(['aprobar', 'rechazar', 'aplicar']);
 
 // Pura. Precondiciones de COORDINACIÓN: sin ellas no se puede armar un body
 // válido o el CAS no puede coincidir con los datos actuales. Bloquean
@@ -482,14 +482,22 @@ function motivosIntegridad({ hash, problemas, requisitoActual }) {
 // Pura. Motivos por los que cada acción no está disponible; permitidas son
 // las que quedan sin motivos. version/decisionAprobacionId: los del
 // documento (el detalle los pasa siempre).
-function calcularAcciones({ hash, problemas, requisitoActual, estado, operador, version = 0, decisionAprobacionId = null }) {
+function calcularAcciones({ hash, problemas, requisitoActual, estado, operador, version = 0, decisionAprobacionId = null, decisionAprobacionValida = true }) {
   const coordinacion = motivosCoordinacion({ hash, version, decisionAprobacionId, estado });
+  const idAprobacionValido = typeof decisionAprobacionId === 'string' && UUID.test(decisionAprobacionId);
   const bloqueos = [];
   if (estado !== 'pendiente_aprobacion') bloqueos.push('estado_no_permite_decision');
   if (!operador.permisos.includes('decidir')) bloqueos.push('sin_permiso_decidir');
   const acciones_bloqueadas = {
     aprobar: [...coordinacion, ...motivosIntegridad({ hash, problemas, requisitoActual }), ...bloqueos],
-    rechazar: [...coordinacion, ...bloqueos]
+    rechazar: [...coordinacion, ...bloqueos],
+    aplicar: [
+      ...coordinacion,
+      ...motivosIntegridad({ hash, problemas, requisitoActual }),
+      ...(estado === 'aprobada' ? [] : ['estado_no_permite_aplicar']),
+      ...(operador.permisos.includes('aplicar') ? [] : ['sin_permiso_aplicar']),
+      ...(decisionAprobacionValida && idAprobacionValido ? [] : ['decision_aprobacion_invalida'])
+    ]
   };
   return { acciones_permitidas: ACCIONES.filter((a) => acciones_bloqueadas[a].length === 0), acciones_bloqueadas };
 }
@@ -573,6 +581,14 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
       .collection(COLECCIONES.eventos)
       .find({ propuesta_id: propuestaId }, { sort: { version_coordinacion_nueva: 1, _id: 1 }, limit: MAXIMO_EVENTOS + 1, projection: PROYECCION_EVENTOS })
       .toArray();
+    let aprobacionValida = false;
+    if (typeof p.decision_aprobacion_id === 'string' && UUID.test(p.decision_aprobacion_id)) {
+      const aprobacion = await d.collection(COLECCIONES.eventos).findOne({ evento_id: p.decision_aprobacion_id });
+      aprobacionValida = aprobacion?.evento_id === p.decision_aprobacion_id && aprobacion.tipo_evento === 'aprobacion' &&
+        aprobacion.propuesta_id === propuestaId && aprobacion.estado_anterior === 'pendiente_aprobacion' && aprobacion.estado_nuevo === 'aprobada' &&
+        aprobacion.hash_contenido_referenciado === p.payload_hash && aprobacion.version_coordinacion_nueva === p.version_coordinacion &&
+        aprobacion.actor?.tipo === 'humano' && p.ultimo_evento_id === p.decision_aprobacion_id;
+    }
 
     const base = resumenListado(p);
     delete base.alertas;
@@ -600,7 +616,8 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
         estado: p.estado,
         operador,
         version: p.version_coordinacion ?? null,
-        decisionAprobacionId: p.decision_aprobacion_id ?? null
+        decisionAprobacionId: p.decision_aprobacion_id ?? null,
+        decisionAprobacionValida: aprobacionValida
       })
     };
   }

@@ -11,6 +11,7 @@ import { consultarSesion, type HacerFetch, type SesionPanel } from './sesion.ts'
 import { consultarPropuestas, filtroValido, unirPropuestas, type Filtro, type Propuesta, type FalloListado } from './propuestas.ts'
 import { consultarDetalle, type Detalle, type FalloDetalle } from './detalle.ts'
 import { enviarDecision, instantaneaDe, esMotivoValido, type AccionDecision, type ErrorDecision, type InstantaneaDecision, type ResultadoDecision } from './decisiones.ts'
+import { enviarAplicacion, instantaneaAplicacionDe, type AplicacionRegistrada, type ErrorAplicacion, type InstantaneaAplicacion } from './aplicaciones.ts'
 
 export interface EstadoDetalle {
   propuestaId: string | null
@@ -34,6 +35,11 @@ export interface EstadoDecision {
   requestId: string | null
 }
 const decisionInicial = (propuestaId: string | null = null): EstadoDecision => ({ propuestaId, accion: null, instantanea: null, identidad: null, motivo: '', enviando: false, requiereRecarga: false, accionesBloqueadas: [], error: null, registrada: null, requestId: null })
+export interface EstadoAplicacion {
+  propuestaId: string | null; confirmar: boolean; instantanea: InstantaneaAplicacion | null; identidad: string | null
+  enviando: boolean; requiereRecarga: boolean; error: ErrorAplicacion | null; registrada: AplicacionRegistrada | null
+}
+const aplicacionInicial = (propuestaId: string | null = null): EstadoAplicacion => ({ propuestaId, confirmar: false, instantanea: null, identidad: null, enviando: false, requiereRecarga: false, error: null, registrada: null })
 
 export interface EstadoListado {
   filtro: Filtro
@@ -84,6 +90,10 @@ export interface ControladorPanel {
   fijarMotivoDecision(motivo: string): void
   cancelarDecision(): void
   confirmarDecision(): void
+  obtenerAplicacion(): EstadoAplicacion
+  prepararAplicacion(): void
+  cancelarAplicacion(): void
+  confirmarAplicacion(): void
 }
 
 export interface DependenciasPanel {
@@ -119,10 +129,13 @@ export function crearControladorPanel({
   let listado = listadoInicial()
   let detalle = detalleInicial()
   let decision = decisionInicial()
+  let aplicacion = aplicacionInicial()
   const exigirRecarga = new Set<string>()
   const bloqueadas = new Map<string, Set<AccionDecision>>()
   const registradas = new Map<string, Extract<ResultadoDecision, { tipo: 'ok' }>['decision']>()
   const instantaneasRegistradas = new Map<string, InstantaneaDecision>()
+  const aplicacionesBloqueadas = new Set<string>()
+  const aplicacionesRegistradas = new Map<string, AplicacionRegistrada>()
   let envioActivo = false
   let solicitudDecision = 0
   let abortarDecision: AbortController | null = null
@@ -151,6 +164,10 @@ export function crearControladorPanel({
     decision = nuevo
     for (const oyente of oyentes) oyente()
   }
+  const fijarAplicacion = (nuevo: EstadoAplicacion) => {
+    aplicacion = nuevo
+    for (const oyente of oyentes) oyente()
+  }
   function invalidarDetalle() {
     lecturaDetalle += 1
     abortarDetalle?.abort()
@@ -161,6 +178,7 @@ export function crearControladorPanel({
     invalidarDetalle()
     fijarDetalle(detalleInicial())
     fijarDecision(decisionInicial())
+    fijarAplicacion(aplicacionInicial())
   }
   async function cargarDetalle(id: string, explicita = false) {
     if (!config || !token || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('ver')) return
@@ -184,6 +202,8 @@ export function crearControladorPanel({
         } else instantaneasRegistradas.delete(id)
         const registrada = registradas.get(id) ?? null
         fijarDecision({ ...decisionInicial(id), motivo: decision.propuestaId === id ? decision.motivo : '', registrada })
+        aplicacionesBloqueadas.delete(id)
+        fijarAplicacion({ ...aplicacionInicial(id), registrada: aplicacionesRegistradas.get(id) ?? null, requiereRecarga: aplicacionesBloqueadas.has(id) })
       }
     } else {
       if (resultado.fallo === 'sesion') {
@@ -244,8 +264,14 @@ export function crearControladorPanel({
       envioActivo = false
       solicitudDecision += 1
       abortarDecision?.abort()
-      exigirRecarga.add(decision.propuestaId!)
-      fijarDecision({ ...decision, enviando: false, accion: null, instantanea: null, identidad: null, requiereRecarga: true, error: { fallo: 'incierto', requestId: null, actual: null, motivos: [], autenticacionVencida: false } })
+      if (decision.propuestaId) {
+        exigirRecarga.add(decision.propuestaId)
+        fijarDecision({ ...decision, enviando: false, accion: null, instantanea: null, identidad: null, requiereRecarga: true, error: { fallo: 'incierto', requestId: null, actual: null, motivos: [], autenticacionVencida: false } })
+      }
+      if (aplicacion.propuestaId) {
+        aplicacionesBloqueadas.add(aplicacion.propuestaId)
+        fijarAplicacion({ ...aplicacion, enviando: false, requiereRecarga: true, error: { fallo: 'incierto', requestId: null, actual: null, resultado: null, estadoNuevo: null, intentoId: null, autenticacionVencida: false } })
+      }
     }
     consulta += 1
     invalidarLectura()
@@ -270,6 +296,7 @@ export function crearControladorPanel({
           bloqueadas.clear()
           registradas.clear()
           instantaneasRegistradas.clear()
+          aplicacionesBloqueadas.clear(); aplicacionesRegistradas.clear(); fijarAplicacion(aplicacionInicial())
         }
         identidadAnterior = resultado.sesion.identidad.sub
         if (!resultado.sesion.autorizado) limpiarListado()
@@ -342,8 +369,9 @@ export function crearControladorPanel({
     cerrarSesion() {
       consulta += 1
       token = null
-      if (envioActivo && decision.propuestaId) {
-        exigirRecarga.add(decision.propuestaId)
+      if (envioActivo) {
+        if (decision.propuestaId) exigirRecarga.add(decision.propuestaId)
+        if (aplicacion.propuestaId) aplicacionesBloqueadas.add(aplicacion.propuestaId)
         envioActivo = false
         solicitudDecision += 1
         abortarDecision?.abort()
@@ -351,6 +379,7 @@ export function crearControladorPanel({
       registradas.clear()
       instantaneasRegistradas.clear()
       fijarDecision(decisionInicial())
+      fijarAplicacion(aplicacionInicial())
       limpiarListado()
       try {
         gis?.disableAutoSelect()
@@ -370,9 +399,47 @@ export function crearControladorPanel({
     obtenerListado: () => listado,
     obtenerDetalle: () => detalle,
     obtenerDecision: () => decision,
+    obtenerAplicacion: () => aplicacion,
     volverAlListado,
     reintentarDetalle() {
       if (!envioActivo && detalle.propuestaId && !detalle.cargando && token && estado.fase === 'autorizado') void cargarDetalle(detalle.propuestaId, true)
+    },
+    prepararAplicacion() {
+      const d = detalle.datos
+      if (envioActivo || !d || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('aplicar') || !d.acciones_permitidas.includes('aplicar') || aplicacionesBloqueadas.has(d.propuesta.propuesta_id)) return
+      const instantanea = instantaneaAplicacionDe(d)
+      if (!instantanea) return
+      fijarAplicacion({ ...aplicacion, propuestaId: d.propuesta.propuesta_id, confirmar: true, instantanea, identidad: estado.sesion.identidad.sub, error: null })
+    },
+    cancelarAplicacion() {
+      if (!envioActivo) fijarAplicacion({ ...aplicacion, confirmar: false, instantanea: null, identidad: null, error: null })
+    },
+    confirmarAplicacion() {
+      const d = detalle.datos
+      if (envioActivo || !config || !token || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('aplicar') || !aplicacion.confirmar || !aplicacion.instantanea || !aplicacion.propuestaId || aplicacion.identidad !== estado.sesion.identidad.sub || detalle.propuestaId !== aplicacion.propuestaId || !d || !d.acciones_permitidas.includes('aplicar') || aplicacionesBloqueadas.has(aplicacion.propuestaId)) return
+      const id = aplicacion.propuestaId, snapshot = aplicacion.instantanea, credencial = token, usuario = estado.sesion.identidad.sub
+      envioActivo = true
+      const mia = ++solicitudDecision
+      abortarDecision = new AbortController()
+      fijarAplicacion({ ...aplicacion, enviando: true, error: null })
+      void enviarAplicacion(config.apiOrigen, credencial, id, snapshot, hacerFetch, abortarDecision.signal).then(r => {
+        if (!envioActivo || mia !== solicitudDecision || aplicacion.identidad !== usuario) return
+        envioActivo = false; abortarDecision = null
+        if (r.tipo === 'ok') {
+          aplicacionesBloqueadas.add(id); aplicacionesRegistradas.set(id, r.aplicacion)
+          fijarAplicacion({ ...aplicacion, enviando: false, confirmar: false, requiereRecarga: true, registrada: r.aplicacion })
+          return
+        }
+        if (r.error.autenticacionVencida) token = null
+        const bloquear = ['cambio', 'no_aplica', 'incierto', 'no_encontrado'].includes(r.error.fallo) || (r.error.fallo === 'permiso' && !r.error.autenticacionVencida)
+        if (bloquear) aplicacionesBloqueadas.add(id)
+        fijarAplicacion({ ...aplicacion, enviando: false, requiereRecarga: bloquear || aplicacionesBloqueadas.has(id), error: r.error })
+        if (r.error.autenticacionVencida) fijar({ fase: 'sin_sesion', aviso: 'sesion_vencida' })
+      }, () => {
+        if (!envioActivo || mia !== solicitudDecision) return
+        envioActivo = false; aplicacionesBloqueadas.add(id)
+        fijarAplicacion({ ...aplicacion, enviando: false, requiereRecarga: true, error: { fallo: 'incierto', requestId: null, actual: null, resultado: null, estadoNuevo: null, intentoId: null, autenticacionVencida: false } })
+      })
     },
     prepararDecision(accion) {
       const d = detalle.datos
@@ -440,6 +507,7 @@ export function crearControladorPanel({
       if (envioActivo || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('ver') || !listado.propuestas.some(p => p.propuesta_id === id)) return
       if (detalle.propuestaId === id && detalle.cargando) return
       if (decision.propuestaId !== id) fijarDecision({ ...decisionInicial(id), registrada: registradas.get(id) ?? null, requiereRecarga: exigirRecarga.has(id) })
+      if (aplicacion.propuestaId !== id) fijarAplicacion({ ...aplicacionInicial(id), registrada: aplicacionesRegistradas.get(id) ?? null, requiereRecarga: aplicacionesBloqueadas.has(id) })
       fijarListado({ ...listado, seleccion: id })
       void cargarDetalle(id)
     },

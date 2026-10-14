@@ -44,7 +44,7 @@ class ErrorPanel extends Error {
   }
 }
 
-const DATOS_PUBLICOS = Object.freeze({ 409: 'actual', 422: 'motivos' });
+const DATOS_PUBLICOS = Object.freeze({ 409: Object.freeze(['actual']), 422: Object.freeze(['motivos', 'aplicacion']) });
 
 const MENSAJES = Object.freeze({
   no_autenticado: 'Se requiere un token válido.',
@@ -163,8 +163,10 @@ function manejarErroresPanel(registrar) {
   return function manejarErrores(err, req, res, next) {
     const { status, codigo, motivo } = clasificar(err);
     const original = err instanceof ErrorPanel && err.causa ? err.causa : err;
-    const clave = DATOS_PUBLICOS[status];
-    const datos = err instanceof ErrorPanel && clave && err.datos && Object.hasOwn(err.datos, clave) ? { [clave]: err.datos[clave] } : {};
+    const claves = DATOS_PUBLICOS[status] ?? [];
+    const datos = err instanceof ErrorPanel && err.datos
+      ? Object.fromEntries(claves.filter((k) => Object.hasOwn(err.datos, k)).map((k) => [k, err.datos[k]]))
+      : {};
     registrar({
       nivel: status >= 500 ? 'error' : 'aviso',
       evento: 'panel_error',

@@ -18,6 +18,7 @@ export function PanelApp({ controlador, copiar = copiarAlPortapapeles }: Props) 
 
   const detalle = useSyncExternalStore(controlador.suscribir, controlador.obtenerDetalle, controlador.obtenerDetalle)
   const decision = useSyncExternalStore(controlador.suscribir, controlador.obtenerDecision, controlador.obtenerDecision)
+  const aplicacion = useSyncExternalStore(controlador.suscribir, controlador.obtenerAplicacion, controlador.obtenerAplicacion)
 
   useEffect(() => {
     controlador.iniciar()
@@ -44,8 +45,8 @@ export function PanelApp({ controlador, copiar = copiarAlPortapapeles }: Props) 
           <DatosSesion sesion={estado.sesion} copiar={copiar} onCerrar={controlador.cerrarSesion} />
         )}
         {estado.fase === 'error' && <VistaError error={estado.error} onVolver={controlador.volverAlInicio} />}
-        {(estado.fase === 'autorizado' || listado.cargado || listado.propuestas.length > 0 || listado.error !== null) && <div hidden={detalle.propuestaId !== null}><ListadoPropuestas controlador={controlador} habilitado={estado.fase === 'autorizado'} bloqueado={decision.enviando} copiar={copiar} visible={detalle.propuestaId === null} /></div>}
-        {detalle.propuestaId !== null && <DetallePropuesta controlador={controlador} habilitado={estado.fase === 'autorizado' && estado.sesion.permisos.includes('ver')} puedeDecidir={estado.fase === 'autorizado' && estado.sesion.permisos.includes('decidir')} />}
+        {(estado.fase === 'autorizado' || listado.cargado || listado.propuestas.length > 0 || listado.error !== null) && <div hidden={detalle.propuestaId !== null}><ListadoPropuestas controlador={controlador} habilitado={estado.fase === 'autorizado'} bloqueado={decision.enviando || aplicacion.enviando} copiar={copiar} visible={detalle.propuestaId === null} /></div>}
+        {detalle.propuestaId !== null && <DetallePropuesta controlador={controlador} habilitado={estado.fase === 'autorizado' && estado.sesion.permisos.includes('ver')} puedeDecidir={estado.fase === 'autorizado' && estado.sesion.permisos.includes('decidir')} puedeAplicar={estado.fase === 'autorizado' && estado.sesion.permisos.includes('aplicar')} />}
       </div>
     </main>
   )

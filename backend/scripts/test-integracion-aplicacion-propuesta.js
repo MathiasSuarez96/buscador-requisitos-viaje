@@ -132,6 +132,7 @@ const {
   ErrorEscrituraAbortada,
   ErrorInconsistencia
 } = require('../services/propuestas/aplicar-propuesta');
+const { crearAplicacionesPropuestas, ErrorAplicacionCambio } = require('../services/panel/aplicaciones-propuestas');
 const govuk = require('../services/propuestas/adaptadores/govuk-uk-eta');
 const { REQUISITO_ID_ETA, URL_ETA, FUENTE_NOMBRE } = require('../services/propuestas/fuentes/govuk-uk-eta');
 const crearIndices = require('./crear-indices-propuestas');
@@ -240,6 +241,7 @@ async function sembrarPropuesta(destinoId, { aprobar = true } = {}) {
   };
   const doc = construirPropuesta(entrada, propuestaId, new Date().toISOString());
   await new PropuestaCambio(doc).save();
+  let decisionAprobacionId = null;
   if (aprobar) {
     const r = await decidirPropuesta(
       {
@@ -253,8 +255,9 @@ async function sembrarPropuesta(destinoId, { aprobar = true } = {}) {
       crearDepsDecision(mongoose.connection, { operadoresJson: OPERADORES_JSON })
     );
     assert.strictEqual(r.resultado, 'decision_registrada', 'aprobación real registrada');
+    decisionAprobacionId = r.evento_id;
   }
-  return { propuestaId, hash: doc.payload_hash, entrada: { propuesta_id: propuestaId, payload_hash_esperado: doc.payload_hash, version_coordinacion_esperada: 1 } };
+  return { propuestaId, hash: doc.payload_hash, entrada: { propuesta_id: propuestaId, estado_esperado: 'aprobada', payload_hash_esperado: doc.payload_hash, version_coordinacion_esperada: 1, decision_aprobacion_id_esperado: decisionAprobacionId } };
 }
 
 // ----------------------------------------------------------------------
@@ -582,6 +585,58 @@ async function principal() {
       `las 5 con el mismo t = ${new Date(t).toISOString()}; propuesta aplicada v2`,
       'InicioIntentoAplicacion: insert propio en el oplog, fuera de la transacción'
     ];
+  });
+
+  await escenario('CAS de aprobación · cambio del ID entre prelectura y transacción no aplica el destino', async () => {
+    const { destinoId } = await sembrarDestino();
+    const antes = await snapshot('destinos', { _id: destinoId });
+    const p = await sembrarPropuesta(destinoId);
+    const { adaptador } = crearAdaptador();
+    const deps = depsServicio(adaptador);
+    const transaccion = deps.ejecutarTransaccion;
+    const idNuevo = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    let cambiado = false;
+    deps.ejecutarTransaccion = async fn => {
+      const cambio = await col('propuestas_cambio').updateOne({ propuesta_id: p.propuestaId }, { $set: { decision_aprobacion_id: idNuevo } });
+      assert.equal(cambio.modifiedCount, 1);
+      cambiado = true;
+      return transaccion(fn);
+    };
+    const r = await aplicarPropuesta(p.entrada, deps);
+    assert.equal(cambiado, true);
+    assert.equal(r.resultado, 'propuesta_no_aplicable');
+    assert.equal(await snapshot('destinos', { _id: destinoId }), antes, 'destino intacto');
+    const actual = await col('propuestas_cambio').findOne({ propuesta_id: p.propuestaId });
+    assert.equal(actual.decision_aprobacion_id, idNuevo, 'se conserva la modificación externa');
+    assert.equal(actual.estado, 'aprobada');
+    assert.equal(await col('eventos_propuesta').countDocuments({ propuesta_id: p.propuestaId }), 1, 'no hay evento de aplicación');
+    return ['la etapa 0 vio el ID aprobado original; el CAS transaccional encontró el ID cambiado', 'destinos sin escrituras y sin evento de aplicación'];
+  });
+
+  await escenario('panel + Mongo · aplicación, repetición idéntica y otro operador', async () => {
+    const { destinoId } = await sembrarDestino();
+    const p = await sembrarPropuesta(destinoId);
+    const { adaptador } = crearAdaptador();
+    const panel = crearAplicacionesPropuestas({ obtenerDb: () => mongoose.connection.db, aplicar: aplicarPropuesta, dependencias: () => depsServicio(adaptador) });
+    const operador = { identificador: 'operador.panel', permisos: ['ver', 'aplicar'], identidad_operador: { metodo: 'oidc_google', sub: '1000' } };
+    const req1 = crypto.randomUUID();
+    const { propuesta_id: _propuestaId, ...cuerpoPanel } = p.entrada;
+    const antesIntentos = await col('intentos_aplicacion').countDocuments({ propuesta_id: p.propuestaId });
+    const primera = await panel.aplicar(p.propuestaId, cuerpoPanel, operador, req1);
+    assert.strictEqual(primera.aplicacion.destino_modificado, true);
+    assert.strictEqual(primera.aplicacion.ya_aplicada, false);
+    const ev = await col('eventos_propuesta').findOne({ evento_id: primera.aplicacion.evento_id });
+    assert.deepStrictEqual(ev.detalle.auditoria_panel, { origen: 'panel', request_id: req1, operador: 'operador.panel', identidad: { metodo: 'oidc_google', sub: '1000' }, comando: { nombre: 'panel-propuestas', version: '1' }, instantanea: { ...p.entrada } });
+    const destinoAplicado = await snapshot('destinos', { _id: destinoId });
+    const intentosAplicados = await col('intentos_aplicacion').countDocuments({ propuesta_id: p.propuestaId });
+    const reenvio = await panel.aplicar(p.propuestaId, cuerpoPanel, operador, crypto.randomUUID());
+    assert.strictEqual(reenvio.aplicacion.ya_aplicada, true);
+    assert.strictEqual(await col('intentos_aplicacion').countDocuments({ propuesta_id: p.propuestaId }), intentosAplicados, 'reenvío sin nuevo intento');
+    assert.strictEqual(await snapshot('destinos', { _id: destinoId }), destinoAplicado, 'reenvío sin escritura del destino');
+    await assert.rejects(panel.aplicar(p.propuestaId, cuerpoPanel, { ...operador, identificador: 'otro', identidad_operador: { metodo: 'oidc_google', sub: '2000' } }, crypto.randomUUID()), ErrorAplicacionCambio);
+    assert.strictEqual(await snapshot('destinos', { _id: destinoId }), destinoAplicado, 'otro operador no cambia destino');
+    assert.strictEqual(antesIntentos, 0);
+    return ['el panel registra actor OIDC, origen y request_id en el evento persistido', 'repetición exacta → ya_aplicada sin nuevo intento ni escritura', 'otro operador con la misma instantánea → 409 y destino intacto'];
   });
 
   await escenario('C1 · WriteConflict real (otro proceso toca OTRO requisito) → reintento del driver → éxito', async () => {

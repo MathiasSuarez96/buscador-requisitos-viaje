@@ -396,7 +396,9 @@ const sinEscrituras = (llamadas, etiqueta) =>
       'costo',
       VALOR16
     )), null, 2)));
-    assert.deepStrictEqual(Object.keys(entrada).sort(), ['payload_hash_esperado', 'propuesta_id', 'version_coordinacion_esperada']);
+    assert.deepStrictEqual(Object.keys(entrada).sort(), ['decision_aprobacion_id_esperado', 'estado_esperado', 'payload_hash_esperado', 'propuesta_id', 'version_coordinacion_esperada']);
+    assert.equal(entrada.estado_esperado, 'aprobada');
+    assert.equal(entrada.decision_aprobacion_id_esperado, propuesta.decision_aprobacion_id);
 
     // Precondición del valor: ausente → $exists:false, null → $type:'null'; nunca {costo:null}.
     for (const [valorAnterior, fragmento] of [
@@ -617,8 +619,10 @@ const sinEscrituras = (llamadas, etiqueta) =>
   {
     const esperado = {
       propuesta_id: PROPUESTA_ID,
+      estado_esperado: 'aprobada',
       payload_hash_esperado: f.propuesta.payload_hash,
-      version_coordinacion_esperada: 1
+      version_coordinacion_esperada: 1,
+      decision_aprobacion_id_esperado: f.propuesta.decision_aprobacion_id
     };
     const { deps, llamadas, logs, log } = crearEntorno({ respuesta: `  ${f.propuesta.payload_hash.slice(0, 12)}\n` });
     const r = await ejecutar(REAL, deps, log);
@@ -627,7 +631,7 @@ const sinEscrituras = (llamadas, etiqueta) =>
     assert.strictEqual(codigoSalida(r), 0);
     assert.ok(!logs.join('\n').includes('ATENCIÓN'), 'sin aviso cuando se prevé exito');
     assert.strictEqual(llamadas.aplicar.length, 1);
-    assert.deepStrictEqual(llamadas.aplicar[0].entrada, esperado, 'solo propuesta_id, hash y versión: la revalidación de la vista no viaja');
+    assert.deepStrictEqual(llamadas.aplicar[0].entrada, esperado, 'instantánea esperada exacta: propuesta, estado, hash, versión e ID de aprobación; la revalidación de la vista no viaja');
     assert.deepStrictEqual(construirEntradaDesdeVista(f.propuesta), esperado);
     assert.strictEqual(llamadas.aplicar[0].json, OPERADORES_JSON, 'el servicio recibe la misma allowlist');
     assert.deepStrictEqual([llamadas.leer, llamadas.revalidar], [1, 1], 'no relee ni revalida tras confirmar (lo hace el servicio)');

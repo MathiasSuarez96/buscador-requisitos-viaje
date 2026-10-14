@@ -19,7 +19,7 @@ export type ResultadoSesion =
 
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const CODIGO = /^[a-z_]{1,40}$/
-const PERMISOS = ['ver', 'decidir']
+const PERMISOS = ['ver', 'decidir', 'aplicar']
 const LARGO_MAXIMO_CUERPO = 16 * 1024
 
 const esObjeto = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)

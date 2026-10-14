@@ -98,8 +98,10 @@ function previsionDe({ precondiciones, revalidacion, destino }) {
 function construirEntradaDesdeVista(propuesta) {
   return {
     propuesta_id: propuesta.propuesta_id,
+    estado_esperado: propuesta.estado,
     payload_hash_esperado: propuesta.payload_hash,
-    version_coordinacion_esperada: propuesta.version_coordinacion
+    version_coordinacion_esperada: propuesta.version_coordinacion,
+    decision_aprobacion_id_esperado: propuesta.decision_aprobacion_id
   };
 }
 

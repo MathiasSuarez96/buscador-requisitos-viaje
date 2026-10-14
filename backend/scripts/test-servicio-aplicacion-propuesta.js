@@ -26,6 +26,9 @@
 // Uso: node scripts/test-servicio-aplicacion-propuesta.js
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const Module = require('module');
 const mongoose = require('mongoose');
 const { ObjectId } = require('bson');
 
@@ -269,7 +272,7 @@ function escenario({ valorAnterior = VALOR16, costoDestino, propuesta: extraProp
 }
 
 function entradaDe(p, extra = {}) {
-  return { propuesta_id: p.propuesta_id, payload_hash_esperado: p.payload_hash, version_coordinacion_esperada: p.version_coordinacion, ...extra };
+  return { propuesta_id: p.propuesta_id, estado_esperado: 'aprobada', payload_hash_esperado: p.payload_hash, version_coordinacion_esperada: p.version_coordinacion, decision_aprobacion_id_esperado: p.decision_aprobacion_id, ...extra };
 }
 
 function foto(store) {
@@ -1229,10 +1232,10 @@ const ESTADOS_DESTINO = [
         preparar: () => {
           const { propuesta } = propuestaAprobada();
           const p = { ...propuesta, estado: 'pendiente_aprobacion', version_coordinacion: 0, decision_aprobacion_id: null, ultimo_evento_id: null };
-          return { store: crearStore({ propuestas: [p], destinos: [destinoFixture()] }), p, entrada: entradaDe(p) };
+          return { store: crearStore({ propuestas: [p], destinos: [destinoFixture()] }), p, entrada: entradaDe(p, { decision_aprobacion_id_esperado: APROBACION_ID }) };
         },
-        codigos: ['estado_no_aprobada', 'aprobacion_invalida'],
-        decision: null
+        codigos: ['estado_no_aprobada', 'decision_aprobacion_id_no_coincide', 'aprobacion_invalida'],
+        decision: APROBACION_ID
       },
       {
         nombre: 'versión distinta a la vista',
@@ -1620,6 +1623,18 @@ const ESTADOS_DESTINO = [
         update: { $set: { estado: 'aplicada', ultimo_evento_id: EVENTO, updatedAt: T }, $inc: { version_coordinacion: 1 } }
       }
     ]);
+    // Mutación obligatoria: quitar el ID de aprobación del predicado CAS
+    // debe romper la expectativa exacta, no solo la validación prelectura.
+    const rutaServicio = require.resolve('../services/propuestas/aplicar-propuesta');
+    const fuenteServicio = fs.readFileSync(rutaServicio, 'utf8');
+    const mutacionCas = fuenteServicio.replace('    decision_aprobacion_id: ctx.decision_aprobacion_id_esperado,\n', '');
+    assert.notStrictEqual(mutacionCas, fuenteServicio, 'la mutación CAS debe encontrar el campo exacto');
+    const moduloMutado = new Module(rutaServicio, module);
+    moduloMutado.filename = rutaServicio;
+    moduloMutado.paths = Module._nodeModulePaths(path.dirname(rutaServicio));
+    moduloMutado._compile(mutacionCas, rutaServicio);
+    const filtroMutado = moduloMutado.exports.filtroCasPropuesta({ propuesta_id: PROPUESTA_ID, hash_esperado: propuesta.payload_hash, version_esperada: 1, decision_aprobacion_id_esperado: APROBACION_ID });
+    assert.throws(() => assert.deepStrictEqual(filtroMutado, entorno.capturas.casPropuesta[0].filtro), 'la mutación que elimina decision_aprobacion_id del CAS tiene que detectarse');
     // Filtros y update del destino: ObjectId reales.
     const [lectura] = entorno.capturas.filtrosDestino;
     assert.ok(lectura._id instanceof ObjectId && lectura._id.toHexString() === DESTINO_HEX);

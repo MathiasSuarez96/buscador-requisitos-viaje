@@ -33,7 +33,7 @@ function forma<S extends Record<string, Lector<unknown>>>(campos: S): Lector<{ [
   }
 }
 const presencia = nullable(forma({ presente: booleano, valor: texto(512 * 1024) }))
-const acciones = ['aprobar', 'rechazar'] as const
+const acciones = ['aprobar', 'rechazar', 'aplicar'] as const
 const codigos = lista(patron(/^[a-z_]{1,80}$/), 30)
 const fuente = forma({ nombre: texto(101), url: texto(500), capturado_en: fecha })
 const leerDetalle = forma({
@@ -67,8 +67,8 @@ const leerDetalle = forma({
     motivo: texto(501), intento_aplicacion_id: nullable(uuid),
   }), 200),
   eventos_truncados: booleano,
-  acciones_permitidas: lista(enumerado(acciones), 2),
-  acciones_bloqueadas: forma({ aprobar: codigos, rechazar: codigos }),
+  acciones_permitidas: lista(enumerado(acciones), 3),
+  acciones_bloqueadas: forma({ aprobar: codigos, rechazar: codigos, aplicar: codigos }),
 })
 export type Detalle = ReturnType<typeof leerDetalle>
 export type ValorPresente = Detalle['propuesta']['valor_anterior']
