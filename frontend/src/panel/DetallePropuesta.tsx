@@ -2,6 +2,7 @@ import { useEffect, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import type { ControladorPanel } from './controlador.ts'
 import { urlHttpsSegura, type Detalle, type FalloDetalle } from './detalle.ts'
 import { NOMBRES, textoValor, textoPresencia } from './presentacion.ts'
+import { esMotivoValido, type AccionDecision } from './decisiones.ts'
 
 const ERRORES: Record<FalloDetalle, string> = {
   sesion: 'Tu sesión venció (401). Iniciá sesión nuevamente y reintentá manualmente. Conservamos el listado y la selección.',
@@ -28,6 +29,22 @@ const REQUISITO: Record<Detalle['requisito_actual']['estado'], string> = {
   requisito_id_duplicado: 'Identificador de requisito duplicado', identidad_semantica_no_coincide: 'La identidad semántica no coincide',
   identidad_no_verificable: 'Identidad no verificable', no_evaluable: 'No evaluable',
 }
+const ERRORES_DECISION: Record<string, string> = {
+  permiso: 'El servidor rechazó la acción por falta de autorización o permiso.',
+  no_encontrado: 'La propuesta ya no existe.',
+  cambio: 'La propuesta cambió desde que se mostró esta instantánea. Compará lo visto con el estado actual y recargá antes de decidir.',
+  no_decidible: 'El servidor no permite esta acción con el estado e integridad actuales.',
+  solicitud: 'El servidor no aceptó la solicitud. Revisá el motivo y la instantánea antes de confirmarla otra vez.',
+  no_disponible: 'El servicio no está disponible temporalmente. No se repitió la decisión.',
+  incierto: 'No se pudo confirmar el resultado de la decisión. No la repitas. Recargá la propuesta explícitamente antes de habilitar otra acción.',
+}
+const MOTIVOS_DECISION: Record<string, string> = {
+  payload_hash_invalido: 'La huella de la propuesta no es válida.', version_coordinacion_invalida: 'La versión de coordinación no es válida.',
+  decision_previa_existente: 'Existe una decisión previa.', hash_no_coincide: 'La huella no coincide.', datos_inconsistentes: 'Hay datos inconsistentes.',
+  requisito_no_coincide: 'El requisito actual no coincide.', valor_actual_cambio: 'El valor actual cambió o no pudo compararse.',
+  estado_no_permite_decision: 'El estado no permite decidir.', sin_permiso_decidir: 'Falta el permiso para decidir.',
+  propuesta_no_decidible: 'La propuesta no es decidible.', solicitud_invalida: 'La solicitud no es válida.',
+}
 
 function Dato({ nombre, children }: { nombre: string; children: ReactNode }) {
   return <div className="min-w-0"><dt className="text-sm font-medium text-slate-600">{nombre}</dt><dd className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{children}</dd></div>
@@ -49,19 +66,22 @@ function Textos({ valores, vacio }: { valores: (string | null)[]; vacio: string 
   return valores.length === 0 ? <p>{vacio}</p> : <ul className="list-disc space-y-2 pl-5 [overflow-wrap:anywhere]">{valores.map((v, i) => <li key={i}>{textoValor(v)}</li>)}</ul>
 }
 
-export function DetallePropuesta({ controlador, habilitado }: { controlador: ControladorPanel; habilitado: boolean }) {
+export function DetallePropuesta({ controlador, habilitado, puedeDecidir }: { controlador: ControladorPanel; habilitado: boolean; puedeDecidir: boolean }) {
   const vista = useSyncExternalStore(controlador.suscribir, controlador.obtenerDetalle, controlador.obtenerDetalle)
+  const decision = useSyncExternalStore(controlador.suscribir, controlador.obtenerDecision, controlador.obtenerDecision)
   const titulo = useRef<HTMLHeadingElement>(null)
   useEffect(() => { titulo.current?.focus() }, [vista.propuestaId])
   return <article aria-labelledby="titulo-detalle" className="mt-8 space-y-5">
-    <button type="button" onClick={controlador.volverAlListado} className="rounded-lg border border-slate-300 bg-white px-4 py-2">Volver al listado</button>
+    <button type="button" disabled={decision.enviando} onClick={controlador.volverAlListado} className="rounded-lg border border-slate-300 bg-white px-4 py-2">Volver al listado</button>
     <h2 id="titulo-detalle" ref={titulo} tabIndex={-1} className="text-2xl font-semibold">Detalle de propuesta</h2>
     <p className="break-all font-mono text-sm">{vista.propuestaId}</p>
     <p role="status" aria-live="polite">{vista.cargando ? 'Cargando detalle…' : vista.datos ? 'Detalle cargado.' : 'Detalle no disponible.'}</p>
     {vista.error && <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-4">{ERRORES[vista.error]}</p>}
-    {!vista.cargando && !vista.datos && <button type="button" disabled={!habilitado} onClick={controlador.reintentarDetalle} className="rounded-lg bg-slate-800 px-4 py-2 text-white hover:bg-slate-700">Reintentar detalle</button>}
+    {!vista.cargando && !vista.datos && <button type="button" disabled={!habilitado || decision.enviando} onClick={controlador.reintentarDetalle} className="rounded-lg bg-slate-800 px-4 py-2 text-white hover:bg-slate-700">Reintentar detalle</button>}
+    {vista.datos && <button type="button" disabled={!habilitado || decision.enviando} onClick={controlador.reintentarDetalle} className="rounded-lg border border-slate-300 bg-white px-4 py-2">Recargar propuesta</button>}
     {vista.requestId && <p className="text-sm">Request ID: <code className="break-all">{vista.requestId}</code></p>}
     <div aria-busy={vista.cargando} className="space-y-5">{vista.datos && <ContenidoDetalle detalle={vista.datos} />}</div>
+    {vista.datos && <AccionesDecisiones controlador={controlador} detalle={vista.datos} puedeDecidir={puedeDecidir} />}
   </article>
 }
 
@@ -110,13 +130,13 @@ export function ContenidoDetalle({ detalle: d }: { detalle: Detalle }) {
     </Seccion>
     <Seccion titulo="Requisito actual">
       <Datos>
-        <Dato nombre="Estado del requisito">{REQUISITO[r.estado]}</Dato><Dato nombre="Comparación del valor">{r.valor === null ? 'No evaluable (null)' : r.valor === 'coincide' ? 'Coincide' : 'Cambió'}</Dato>
+        <Dato nombre="Estado del requisito">{REQUISITO[r.estado]}</Dato><Dato nombre="Comparación del valor">{r.valor === null ? 'No evaluable (null)' : r.valor === 'coincide' ? 'Coincide' : p.estado === 'aplicada' ? 'El valor actual difiere del valor anterior guardado en la propuesta; la propuesta figura aplicada.' : 'El valor actual difiere del valor anterior guardado en la propuesta.'}</Dato>
         <Dato nombre="Destino ID actual">{textoValor(r.destino?.destino_id ?? null)}</Dato>
       </Datos>
       {r.requisito === null ? <p>Requisito no disponible (null).</p> : <Datos><Dato nombre="Requisito ID actual">{textoValor(r.requisito.requisito_id)}</Dato><Dato nombre="Tipo">{textoValor(r.requisito.tipo)}</Dato><Dato nombre="Nombre">{textoValor(r.requisito.nombre)}</Dato></Datos>}
     </Seccion>
     <Seccion titulo="Acciones informadas por el servidor">
-      <p className="text-sm text-slate-600">Vista de solo lectura. Las decisiones todavía no están habilitadas en este panel.</p>
+      <p className="text-sm text-slate-600">Acciones disponibles según el permiso y las condiciones que informó el servidor.</p>
       <h4 className="font-semibold">Acciones permitidas</h4><Textos valores={d.acciones_permitidas.map(a => a === 'aprobar' ? 'Aprobar' : 'Rechazar')} vacio="Ninguna acción permitida." />
       <div className="grid gap-4 sm:grid-cols-2">{(['aprobar', 'rechazar'] as const).map(a => <section key={a} className="space-y-2 rounded-lg bg-slate-50 p-4"><h4 className="font-semibold">{a === 'aprobar' ? 'Aprobar: bloqueos' : 'Rechazar: bloqueos'}</h4><Textos valores={d.acciones_bloqueadas[a].map(m => MOTIVOS[m] ? `${MOTIVOS[m]} (${m})` : m)} vacio="Sin motivos de bloqueo." /></section>)}</div>
     </Seccion>
@@ -138,4 +158,58 @@ export function ContenidoDetalle({ detalle: d }: { detalle: Detalle }) {
       </li>)}</ol>}
     </Seccion>
   </>
+}
+
+function AccionesDecisiones({ controlador, detalle, puedeDecidir }: { controlador: ControladorPanel; detalle: Detalle; puedeDecidir: boolean }) {
+  const decision = useSyncExternalStore(controlador.suscribir, controlador.obtenerDecision, controlador.obtenerDecision)
+  const id = detalle.propuesta.propuesta_id
+  const bloqueada = decision.propuestaId === id && (decision.requiereRecarga || decision.enviando)
+  const instantanea = decision.instantanea
+  const motivoValido = esMotivoValido(decision.motivo)
+  const estadoVisto = instantanea ? NOMBRES[instantanea.estado_esperado] : 'Pendiente de aprobación'
+  const mostrarAccion = (accion: AccionDecision) => {
+    if (!detalle.acciones_permitidas.includes(accion) || !puedeDecidir || decision.accionesBloqueadas.includes(accion)) return null
+    return <button key={accion} type="button" disabled={bloqueada} onClick={() => controlador.prepararDecision(accion)} className="rounded-lg bg-slate-800 px-4 py-2 font-medium text-white hover:bg-slate-700">{accion === 'aprobar' ? 'Aprobar' : 'Rechazar'}</button>
+  }
+  const error = decision.error
+  return <section aria-labelledby="titulo-decision" className="space-y-4 rounded-xl border border-slate-300 bg-white p-5">
+    <h3 id="titulo-decision" className="text-lg font-semibold">Decisiones</h3>
+    {detalle.acciones_permitidas.length === 0 && <p role="status">El servidor no permite aprobar ni rechazar esta propuesta.</p>}
+    {!puedeDecidir && <p role="status">Tu sesión tiene permiso de lectura, pero no permiso para decidir.</p>}
+    {decision.requiereRecarga && <p role="alert">La instantánea está bloqueada. Recargá la propuesta y comprobá los datos nuevos antes de considerar otra decisión.</p>}
+    <div className="flex flex-wrap gap-3">{mostrarAccion('aprobar')}{mostrarAccion('rechazar')}</div>
+    {decision.registrada?.propuesta_id === id && <div role="status" className="space-y-2 rounded-lg border border-green-300 bg-green-50 p-4">
+      <h4 className="font-semibold">Decisión registrada{decision.registrada.ya_registrada ? ' (ya estaba registrada)' : ''}</h4>
+      <p>{decision.registrada.tipo_evento === 'aprobacion' ? 'Aprobación' : 'Rechazo'} registrada. El estado nuevo es {NOMBRES[decision.registrada.estado_nuevo as keyof typeof NOMBRES] ?? decision.registrada.estado_nuevo}.</p>
+      <Datos><Dato nombre="Actor">{decision.registrada.actor.identificador}</Dato><Dato nombre="Evento ID">{decision.registrada.evento_id}</Dato><Dato nombre="Fecha"><Fecha fecha={decision.registrada.ocurrido_en} /></Dato><Dato nombre="Versión nueva">{decision.registrada.version_coordinacion_nueva}</Dato></Datos>
+      <p>{decision.requiereRecarga ? 'Esta instantánea queda bloqueada. Recargá la propuesta para ver el estado actual.' : 'La propuesta se recargó; revisá la instantánea actual antes de decidir.'}</p>
+    </div>}
+    {error && <div role="alert" className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4">
+      <p>{error.autenticacionVencida ? 'Tu sesión venció (401). Iniciá sesión otra vez; la instantánea y el borrador se conservaron y la decisión no se reenvió.' : ERRORES_DECISION[error.fallo]}</p>
+      {error.fallo === 'no_encontrado' && <button type="button" disabled={decision.enviando} onClick={controlador.volverAlListado} className="rounded border border-slate-300 px-3 py-2">Volver al listado</button>}
+      {error.fallo === 'cambio' && <Datos>
+        <Dato nombre="Lo que vio el operador">Estado: {estadoVisto}; payload_hash: {instantanea?.payload_hash_esperado ?? 'No disponible'}; versión: {instantanea?.version_coordinacion_esperada ?? 'No disponible'}.</Dato>
+        <Dato nombre="Estado actual devuelto por el servidor">{error.actual ? <>Estado: {error.actual.estado ?? 'Null'}; payload_hash: {error.actual.payload_hash ?? 'Null'}; versión: {error.actual.version_coordinacion ?? 'Null'}; último evento: {error.actual.ultimo_evento?.tipo_evento ?? 'No disponible'} (<Fecha fecha={error.actual.ultimo_evento?.ocurrido_en ?? null} />).</> : 'No se pudo validar el estado actual.'}</Dato>
+      </Datos>}
+      {error.fallo === 'no_decidible' && <><h4 className="font-medium">Motivos informados</h4><Textos valores={error.motivos.map(m => `${MOTIVOS_DECISION[m] ?? 'La propuesta no se puede decidir'} (${m})`)} vacio="El servidor no detalló los motivos." /></>}
+      {error.requestId && <p>Request ID: <code className="break-all">{error.requestId}</code></p>}
+    </div>}
+    {decision.accion && instantanea && decision.propuestaId === id && <section aria-labelledby="titulo-confirmacion" className="space-y-4 rounded-lg border border-blue-300 bg-blue-50 p-4">
+      <h4 id="titulo-confirmacion" className="font-semibold">Confirmar {decision.accion === 'aprobar' ? 'aprobación' : 'rechazo'}</h4>
+      <p>Propuesta: <code className="break-all">{id}</code></p>
+      <p>Instantánea exacta: estado {estadoVisto}; payload_hash <code className="break-all">{instantanea.payload_hash_esperado}</code>; versión de coordinación {instantanea.version_coordinacion_esperada}.</p>
+      {decision.accion === 'aprobar' ? <p>Se registrará la aprobación, pero este panel todavía no aplica el cambio al destino.</p> : <>
+        <label htmlFor="motivo-rechazo" className="block font-medium">Motivo obligatorio para rechazar (1–500 puntos de código)</label>
+        <textarea id="motivo-rechazo" rows={4} value={decision.motivo} disabled={decision.enviando} onChange={e => controlador.fijarMotivoDecision(e.currentTarget.value)} aria-describedby="motivo-ayuda motivo-contador motivo-validacion" className="w-full rounded border border-slate-300 p-3" />
+        <p id="motivo-ayuda" className="text-sm">Se permiten saltos de línea y tabulaciones; los demás caracteres de control no están permitidos.</p>
+        <p id="motivo-contador" aria-live="polite" className="text-sm">{[...decision.motivo.trim()].length} / 500 puntos de código</p>
+        <p id="motivo-validacion" role="status" className="text-sm">{motivoValido ? 'Motivo válido.' : 'Ingresá un motivo válido de 1 a 500 puntos de código, sin caracteres de control no permitidos.'}</p>
+      </>}
+      <p role="status" aria-live="polite">{decision.enviando ? 'Enviando decisión…' : 'La instantánea no se actualizará automáticamente.'}</p>
+      <div className="flex flex-wrap gap-3">
+        <button type="button" disabled={decision.enviando || decision.requiereRecarga || decision.accionesBloqueadas.includes(decision.accion) || (decision.accion === 'rechazar' && !motivoValido)} onClick={controlador.confirmarDecision} className="rounded-lg bg-blue-900 px-4 py-2 font-medium text-white">{decision.enviando ? 'Enviando…' : decision.accion === 'aprobar' ? 'Confirmar aprobación' : 'Confirmar rechazo'}</button>
+        <button type="button" disabled={decision.enviando} onClick={controlador.cancelarDecision} className="rounded-lg border border-slate-400 px-4 py-2">Cancelar</button>
+      </div>
+    </section>}
+  </section>
 }

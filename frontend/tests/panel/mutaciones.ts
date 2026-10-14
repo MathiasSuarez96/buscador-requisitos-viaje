@@ -36,6 +36,12 @@ const mutaciones: [string, string, string, string][] = [
   ['historial invierte orden del servidor', 'src/panel/detalle.ts', '    return d\n', '    d.eventos.reverse(); return d\n'],
   ['ausente se confunde con null', 'src/panel/presentacion.ts', '!v.presente', 'false'],
   ['rechazar usa motivos de aprobar', 'src/panel/DetallePropuesta.tsx', 'd.acciones_bloqueadas[a].map', 'd.acciones_bloqueadas.aprobar.map'],
+  ['decision incluye solo la instantánea exacta del detalle', 'src/panel/decisiones.ts', 'payload_hash_esperado: snapshot.payload_hash_esperado', 'payload_hash_esperado: "inventado"'],
+  ['rechazo omite el motivo validado', 'src/panel/decisiones.ts', "if (accion === 'rechazar') body.motivo = motivo", ''],
+  ['POST de decisión incluye cookies', 'src/panel/decisiones.ts', "credentials: 'omit'", "credentials: 'include'"],
+  ['confirmación no bloquea envío simultáneo', controlador, "if (envioActivo || !config || !token || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('decidir') || !decision.accion", "if (!config || !token || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('decidir') || !decision.accion"],
+  ['resultado incierto no exige recarga', controlador, "e.fallo === 'incierto' || e.fallo === 'cambio' || e.fallo === 'no_encontrado'", "e.fallo === 'cambio' || e.fallo === 'no_encontrado'"],
+  ['403 y 422 no bloquean la acción', controlador, "(e.fallo === 'permiso' && !e.autenticacionVencida) || e.fallo === 'no_encontrado' || e.fallo === 'no_decidible'", "e.fallo === 'no_encontrado'"],
 ]
 try {
   for (const p of ['src', 'tests', 'package.json']) cpSync(join(raiz, p), join(copia, p), { recursive: true })

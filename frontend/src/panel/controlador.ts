@@ -10,6 +10,7 @@ import { crearCargadorGis, type CargadorGis } from './cargar-gis.ts'
 import { consultarSesion, type HacerFetch, type SesionPanel } from './sesion.ts'
 import { consultarPropuestas, filtroValido, unirPropuestas, type Filtro, type Propuesta, type FalloListado } from './propuestas.ts'
 import { consultarDetalle, type Detalle, type FalloDetalle } from './detalle.ts'
+import { enviarDecision, instantaneaDe, esMotivoValido, type AccionDecision, type ErrorDecision, type InstantaneaDecision, type ResultadoDecision } from './decisiones.ts'
 
 export interface EstadoDetalle {
   propuestaId: string | null
@@ -19,6 +20,20 @@ export interface EstadoDetalle {
   requestId: string | null
 }
 const detalleInicial = (): EstadoDetalle => ({ propuestaId: null, cargando: false, datos: null, error: null, requestId: null })
+export interface EstadoDecision {
+  propuestaId: string | null
+  accion: AccionDecision | null
+  instantanea: InstantaneaDecision | null
+  identidad: string | null
+  motivo: string
+  enviando: boolean
+  requiereRecarga: boolean
+  accionesBloqueadas: AccionDecision[]
+  error: ErrorDecision | null
+  registrada: Extract<ResultadoDecision, { tipo: 'ok' }>['decision'] | null
+  requestId: string | null
+}
+const decisionInicial = (propuestaId: string | null = null): EstadoDecision => ({ propuestaId, accion: null, instantanea: null, identidad: null, motivo: '', enviando: false, requiereRecarga: false, accionesBloqueadas: [], error: null, registrada: null, requestId: null })
 
 export interface EstadoListado {
   filtro: Filtro
@@ -64,12 +79,18 @@ export interface ControladorPanel {
   obtenerDetalle(): EstadoDetalle
   volverAlListado(): void
   reintentarDetalle(): void
+  obtenerDecision(): EstadoDecision
+  prepararDecision(accion: AccionDecision): void
+  fijarMotivoDecision(motivo: string): void
+  cancelarDecision(): void
+  confirmarDecision(): void
 }
 
 export interface DependenciasPanel {
   config: ConfigPanel | null
   cargarGis?: CargadorGis
   hacerFetch?: HacerFetch
+  tiempoDecisionMs?: number
 }
 
 // Forma JWS compacta y el mismo tope que el backend (LARGO_MAXIMO_TOKEN).
@@ -87,6 +108,7 @@ export function crearControladorPanel({
   config,
   cargarGis = crearCargadorGis(),
   hacerFetch = (url, init) => fetch(url, init),
+  tiempoDecisionMs,
 }: DependenciasPanel): ControladorPanel {
   let estado: EstadoPanel = config ? { fase: 'cargando_gis' } : error('configuracion')
   let token: string | null = null
@@ -96,6 +118,14 @@ export function crearControladorPanel({
   let consulta = 0
   let listado = listadoInicial()
   let detalle = detalleInicial()
+  let decision = decisionInicial()
+  const exigirRecarga = new Set<string>()
+  const bloqueadas = new Map<string, Set<AccionDecision>>()
+  const registradas = new Map<string, Extract<ResultadoDecision, { tipo: 'ok' }>['decision']>()
+  const instantaneasRegistradas = new Map<string, InstantaneaDecision>()
+  let envioActivo = false
+  let solicitudDecision = 0
+  let abortarDecision: AbortController | null = null
   let lecturaDetalle = 0
   let abortarDetalle: AbortController | null = null
   let lectura = 0
@@ -117,16 +147,22 @@ export function crearControladorPanel({
     detalle = nuevo
     for (const oyente of oyentes) oyente()
   }
+  const fijarDecision = (nuevo: EstadoDecision) => {
+    decision = nuevo
+    for (const oyente of oyentes) oyente()
+  }
   function invalidarDetalle() {
     lecturaDetalle += 1
     abortarDetalle?.abort()
     abortarDetalle = null
   }
   function volverAlListado() {
+    if (envioActivo) return
     invalidarDetalle()
     fijarDetalle(detalleInicial())
+    fijarDecision(decisionInicial())
   }
-  async function cargarDetalle(id: string) {
+  async function cargarDetalle(id: string, explicita = false) {
     if (!config || !token || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('ver')) return
     invalidarDetalle()
     const numeroDetalle = lecturaDetalle
@@ -137,6 +173,18 @@ export function crearControladorPanel({
     if (numeroDetalle !== lecturaDetalle || sesionDetalle !== consulta) return
     if (resultado.tipo === 'ok') {
       fijarDetalle({ propuestaId: id, cargando: false, datos: resultado.detalle, error: null, requestId: resultado.requestId })
+      if (explicita) {
+        const instantaneaActual = instantaneaDe(resultado.detalle)
+        const anterior = instantaneasRegistradas.get(id)
+        exigirRecarga.delete(id)
+        bloqueadas.delete(id)
+        if (anterior && instantaneaActual && anterior.estado_esperado === instantaneaActual.estado_esperado && anterior.payload_hash_esperado === instantaneaActual.payload_hash_esperado && anterior.version_coordinacion_esperada === instantaneaActual.version_coordinacion_esperada) {
+          exigirRecarga.add(id)
+          bloqueadas.set(id, new Set(['aprobar', 'rechazar']))
+        } else instantaneasRegistradas.delete(id)
+        const registrada = registradas.get(id) ?? null
+        fijarDecision({ ...decisionInicial(id), motivo: decision.propuestaId === id ? decision.motivo : '', registrada })
+      }
     } else {
       if (resultado.fallo === 'sesion') {
         token = null
@@ -160,7 +208,7 @@ export function crearControladorPanel({
     fijarListado(listadoInicial())
   }
   async function cargarListado(mas: boolean) {
-    if (!config || !token || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('ver') || listado.cargando) return
+    if (envioActivo || !config || !token || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('ver') || listado.cargando) return
     const cursor = mas ? listado.cursor : null
     if (mas && (!cursor || cursores.has(cursor))) return
     invalidarLectura()
@@ -192,6 +240,13 @@ export function crearControladorPanel({
 
   async function recibirCredencial(respuesta: GisCredentialResponse | undefined) {
     if (!config) return
+    if (envioActivo) {
+      envioActivo = false
+      solicitudDecision += 1
+      abortarDecision?.abort()
+      exigirRecarga.add(decision.propuestaId!)
+      fijarDecision({ ...decision, enviando: false, accion: null, instantanea: null, identidad: null, requiereRecarga: true, error: { fallo: 'incierto', requestId: null, actual: null, motivos: [], autenticacionVencida: false } })
+    }
     consulta += 1
     invalidarLectura()
     invalidarDetalle()
@@ -210,7 +265,12 @@ export function crearControladorPanel({
     if (mia !== consulta) return
     switch (resultado.tipo) {
       case 'ok':
-        if (identidadAnterior !== null && identidadAnterior !== resultado.sesion.identidad.sub) limpiarListado()
+        if (identidadAnterior !== null && identidadAnterior !== resultado.sesion.identidad.sub) {
+          limpiarListado()
+          bloqueadas.clear()
+          registradas.clear()
+          instantaneasRegistradas.clear()
+        }
         identidadAnterior = resultado.sesion.identidad.sub
         if (!resultado.sesion.autorizado) limpiarListado()
         fijar(resultado.sesion.autorizado ? { fase: 'autorizado', sesion: resultado.sesion } : { fase: 'no_autorizado', sesion: resultado.sesion })
@@ -282,6 +342,15 @@ export function crearControladorPanel({
     cerrarSesion() {
       consulta += 1
       token = null
+      if (envioActivo && decision.propuestaId) {
+        exigirRecarga.add(decision.propuestaId)
+        envioActivo = false
+        solicitudDecision += 1
+        abortarDecision?.abort()
+      }
+      registradas.clear()
+      instantaneasRegistradas.clear()
+      fijarDecision(decisionInicial())
       limpiarListado()
       try {
         gis?.disableAutoSelect()
@@ -300,12 +369,62 @@ export function crearControladorPanel({
     tieneToken: () => token !== null,
     obtenerListado: () => listado,
     obtenerDetalle: () => detalle,
+    obtenerDecision: () => decision,
     volverAlListado,
     reintentarDetalle() {
-      if (detalle.propuestaId && !detalle.cargando) void cargarDetalle(detalle.propuestaId)
+      if (!envioActivo && detalle.propuestaId && !detalle.cargando && token && estado.fase === 'autorizado') void cargarDetalle(detalle.propuestaId, true)
+    },
+    prepararDecision(accion) {
+      const d = detalle.datos
+      if (envioActivo || !d || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('decidir') || !d.acciones_permitidas.includes(accion) || exigirRecarga.has(d.propuesta.propuesta_id) || bloqueadas.get(d.propuesta.propuesta_id)?.has(accion)) return
+      const instantanea = instantaneaDe(d)
+      if (!instantanea) return
+      const usuario = estado.sesion.identidad.sub
+      fijarDecision({ ...decision, propuestaId: d.propuesta.propuesta_id, accion, instantanea, identidad: usuario, error: null, requestId: null })
+    },
+    fijarMotivoDecision(motivo) {
+      if (!envioActivo) fijarDecision({ ...decision, motivo })
+    },
+    cancelarDecision() {
+      if (!envioActivo) fijarDecision({ ...decision, accion: null, instantanea: null, identidad: null, error: null, requestId: null })
+    },
+    confirmarDecision() {
+      // Esta asignación síncrona es la barrera contra doble clic y dos acciones simultáneas.
+      if (envioActivo || !config || !token || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('decidir') || !decision.accion || !decision.instantanea || !decision.propuestaId || decision.identidad !== estado.sesion.identidad.sub || detalle.propuestaId !== decision.propuestaId || !detalle.datos || !detalle.datos.acciones_permitidas.includes(decision.accion) || exigirRecarga.has(decision.propuestaId) || bloqueadas.get(decision.propuestaId)?.has(decision.accion) || (decision.accion === 'rechazar' && !esMotivoValido(decision.motivo))) return
+      const accion = decision.accion, id = decision.propuestaId, snapshot = decision.instantanea, motivo = decision.motivo, credencial = token, usuario = estado.sesion.identidad.sub
+      envioActivo = true
+      const mia = ++solicitudDecision
+      abortarDecision = new AbortController()
+      fijarDecision({ ...decision, enviando: true, error: null, requestId: null })
+      void enviarDecision(config.apiOrigen, credencial, accion, id, snapshot, motivo, hacerFetch, abortarDecision.signal, tiempoDecisionMs).then(r => {
+        if (!envioActivo || mia !== solicitudDecision || decision.identidad !== usuario) return
+        envioActivo = false
+        abortarDecision = null
+        if (r.tipo === 'ok') {
+          exigirRecarga.add(id)
+          registradas.set(id, r.decision)
+          instantaneasRegistradas.set(id, snapshot)
+          fijarDecision({ ...decision, enviando: false, accion: null, instantanea: null, identidad: null, requiereRecarga: true, registrada: r.decision, error: null, requestId: r.requestId })
+          return
+        }
+        const e = r.error
+        if (e.autenticacionVencida) token = null
+        const bloqueadasAccion = bloqueadas.get(id) ?? new Set<AccionDecision>()
+        if ((e.fallo === 'permiso' && !e.autenticacionVencida) || e.fallo === 'no_encontrado' || e.fallo === 'no_decidible') bloqueadasAccion.add(accion)
+        if (bloqueadasAccion.size) bloqueadas.set(id, bloqueadasAccion)
+        const incierto = e.fallo === 'incierto' || e.fallo === 'cambio' || e.fallo === 'no_encontrado'
+        if (incierto) exigirRecarga.add(id)
+        fijarDecision({ ...decision, enviando: false, requiereRecarga: incierto, accionesBloqueadas: [...bloqueadasAccion], error: e, requestId: e.requestId })
+        if (e.autenticacionVencida) fijar({ fase: 'sin_sesion', aviso: 'sesion_vencida' })
+      }, () => {
+        if (!envioActivo || mia !== solicitudDecision) return
+        envioActivo = false
+        exigirRecarga.add(id)
+        fijarDecision({ ...decision, enviando: false, requiereRecarga: true, error: { fallo: 'incierto', requestId: null, actual: null, motivos: [], autenticacionVencida: false } })
+      })
     },
     filtrar(filtro) {
-      if (!filtroValido(filtro) || estado.fase !== 'autorizado') return
+      if (envioActivo || !filtroValido(filtro) || estado.fase !== 'autorizado') return
       volverAlListado()
       invalidarLectura()
       cursores.clear()
@@ -315,8 +434,9 @@ export function crearControladorPanel({
     cargarMas() { void cargarListado(true) },
     recargar() { void cargarListado(false) },
     seleccionar(id) {
-      if (estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('ver') || !listado.propuestas.some(p => p.propuesta_id === id)) return
+      if (envioActivo || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('ver') || !listado.propuestas.some(p => p.propuesta_id === id)) return
       if (detalle.propuestaId === id && detalle.cargando) return
+      if (decision.propuestaId !== id) fijarDecision({ ...decisionInicial(id), registrada: registradas.get(id) ?? null, requiereRecarga: exigirRecarga.has(id) })
       fijarListado({ ...listado, seleccion: id })
       void cargarDetalle(id)
     },
