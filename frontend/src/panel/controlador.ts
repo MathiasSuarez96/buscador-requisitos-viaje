@@ -410,9 +410,12 @@ export function crearControladorPanel({
         const e = r.error
         if (e.autenticacionVencida) token = null
         const bloqueadasAccion = bloqueadas.get(id) ?? new Set<AccionDecision>()
-        if ((e.fallo === 'permiso' && !e.autenticacionVencida) || e.fallo === 'no_encontrado' || e.fallo === 'no_decidible') bloqueadasAccion.add(accion)
+        if (e.fallo === 'no_decidible') {
+          bloqueadasAccion.add('aprobar')
+          bloqueadasAccion.add('rechazar')
+        } else if ((e.fallo === 'permiso' && !e.autenticacionVencida) || e.fallo === 'no_encontrado') bloqueadasAccion.add(accion)
         if (bloqueadasAccion.size) bloqueadas.set(id, bloqueadasAccion)
-        const incierto = e.fallo === 'incierto' || e.fallo === 'cambio' || e.fallo === 'no_encontrado'
+        const incierto = e.fallo === 'incierto' || e.fallo === 'cambio' || e.fallo === 'no_encontrado' || e.fallo === 'no_decidible'
         if (incierto) exigirRecarga.add(id)
         fijarDecision({ ...decision, enviando: false, requiereRecarga: incierto, accionesBloqueadas: [...bloqueadasAccion], error: e, requestId: e.requestId })
         if (e.autenticacionVencida) fijar({ fase: 'sin_sesion', aviso: 'sesion_vencida' })

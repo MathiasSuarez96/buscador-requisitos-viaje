@@ -24,10 +24,11 @@ function detalle(id = ID, cambios: Record<string, unknown> = {}) {
 }
 const pagina = { propuestas: [{ propuesta_id: ID, estado: 'pendiente_aprobacion', campo: 'costo', destino_id: HEX, destino: { destino_id: HEX, pais: 'Reino Unido', codigo_iso: 'GB' }, requisito_id: HEX, creada_en: FECHA, actualizada_en: null, alertas: [] }], filtro: { estados: ['pendiente_aprobacion'] }, limite: 20, siguiente_cursor: null }
 type Responder = Parameters<typeof crearFetchFalso>[0]
-async function contexto(responder: Responder, permisos: string[] = ['ver', 'decidir'], tiempoDecisionMs = 20_000) {
+async function contexto(responder: Responder, permisos: string[] = ['ver', 'decidir'], tiempoDecisionMs = 20_000, responderDetalle?: (lectura: number) => Response) {
   const gis = crearGisFalso()
   let sesion = { ...SESION_AUTORIZADA, permisos }
-  const red = crearFetchFalso((url, init) => url.endsWith('/sesion') ? respuestaJson(200, sesion) : url.includes('/propuestas?') ? respuestaJson(200, pagina) : url.endsWith('/' + ID) ? respuestaJson(200, detalle()) : responder(url, init))
+  let lecturasDetalle = 0
+  const red = crearFetchFalso((url, init) => url.endsWith('/sesion') ? respuestaJson(200, sesion) : url.includes('/propuestas?') ? respuestaJson(200, pagina) : url.endsWith('/' + ID) ? responderDetalle?.(++lecturasDetalle) ?? respuestaJson(200, detalle()) : responder(url, init))
   const controlador = crearControladorPanel({ config: CONFIG, cargarGis: gis.cargar, hacerFetch: red.hacerFetch, tiempoDecisionMs })
   controlador.iniciar(); await hastaQue(() => controlador.obtenerEstado().fase === 'sin_sesion')
   gis.entregar({ credential: TOKEN }); await hastaQue(() => controlador.obtenerListado().cargado)
@@ -123,7 +124,13 @@ export const pruebas: Prueba[] = [
     assert.equal(posts, 1); assert.ok(!vista.includes('NO_MOSTRAR')); assert.ok(!vista.includes('codigo_interno')); assert.ok(!vista.includes('privado'))
     const estado = ctx.controlador.obtenerDecision()
     if (status === 409) { assert.equal(estado.error?.fallo, 'cambio'); assert.match(vista, /Estado actual devuelto por el servidor/) ; assert.match(vista, /Lo que vio el operador/) }
-    if (status === 422) { assert.equal(estado.accionesBloqueadas.includes('aprobar'), true); assert.match(vista, /hash_no_coincide/) }
+    if (status === 422) {
+      assert.equal(estado.accionesBloqueadas.includes('aprobar'), true)
+      assert.equal(estado.accionesBloqueadas.includes('rechazar'), true)
+      assert.equal(estado.requiereRecarga, true)
+      assert.equal(estado.requestId, REQUEST_ID)
+      assert.match(vista, /hash_no_coincide/)
+    }
     if (status === 403) { assert.equal(estado.accionesBloqueadas.includes('aprobar'), true); assert.match(vista, /falta de autorización/) }
     if (status === 404 || status === 409) assert.equal(estado.requiereRecarga, true)
     if (status === 503) assert.equal(estado.error?.fallo, 'no_disponible')
@@ -150,20 +157,88 @@ export const pruebas: Prueba[] = [
       assert.equal(ctx.controlador.obtenerDecision().error, null)
     }
   } },
-  { nombre: '422 aprobación: recarga explícita vuelve a habilitar un rechazo permitido', async fn() {
-    let reads = 0, posts = 0
+  { nombre: '422 de aprobación bloquea ambas acciones hasta recarga explícita válida', async fn() {
+    let posts = 0
     const ctx = await contexto(url => {
       if (url.includes('/aprobacion')) { posts++; return errorJson(422, { motivos: ['hash_no_coincide'] }) }
       if (url.includes('/rechazo')) { posts++; return respuestaJson(200, decisionBody('rechazar')) }
-      if (url.endsWith('/' + ID)) { reads++; const d = detalle() as import('../../src/panel/detalle.ts').Detalle; if (reads > 1) { d.acciones_permitidas = ['rechazar']; d.acciones_bloqueadas = { aprobar: ['hash_no_coincide'], rechazar: [] } } return respuestaJson(200, d) }
       return respuestaJson(200, pagina)
+    }, ['ver', 'decidir'], 20_000, lectura => {
+      const d = detalle() as import('../../src/panel/detalle.ts').Detalle
+      if (lectura > 1) { d.acciones_permitidas = ['rechazar']; d.acciones_bloqueadas = { aprobar: ['hash_no_coincide'], rechazar: [] } }
+      return respuestaJson(200, d)
     })
     await seleccionar(ctx.controlador, 'aprobar'); await enviar(ctx.controlador)
     assert.equal(ctx.controlador.obtenerDecision().accionesBloqueadas.includes('aprobar'), true)
+    assert.equal(ctx.controlador.obtenerDecision().accionesBloqueadas.includes('rechazar'), true)
+    assert.equal(ctx.controlador.obtenerDecision().requiereRecarga, true)
+    const req = ctx.controlador.obtenerDecision().requestId
+    const aprobacionVista = ctx.controlador.obtenerDecision().instantanea
+    ctx.controlador.prepararDecision('rechazar')
+    assert.equal(ctx.controlador.obtenerDecision().accion, 'aprobar')
+    ctx.controlador.confirmarDecision(); await esperar()
+    assert.equal(posts, 1)
     ctx.controlador.reintentarDetalle(); await hastaQue(() => !ctx.controlador.obtenerDetalle().cargando)
     assert.equal(ctx.controlador.obtenerDetalle().datos?.acciones_permitidas.includes('rechazar'), true)
+    assert.equal(ctx.controlador.obtenerDecision().requiereRecarga, false)
+    assert.equal(ctx.controlador.obtenerDecision().accion, null)
+    assert.equal(ctx.controlador.obtenerDecision().instantanea, null)
+    assert.equal(ctx.controlador.obtenerDecision().requestId, null)
+    assert.deepEqual(aprobacionVista, { estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: HASH, version_coordinacion_esperada: 7 })
+    assert.equal(req, REQUEST_ID)
     await seleccionar(ctx.controlador, 'rechazar'); ctx.controlador.fijarMotivoDecision('Inconsistencia')
     assert.match(renderizar(ctx.controlador), /Rechazar/); await enviar(ctx.controlador); assert.equal(posts, 2)
+  } },
+  { nombre: '422 de rechazo conserva motivo y request_id; recarga sin acciones sigue bloqueada', async fn() {
+    let posts = 0
+    const ctx = await contexto(url => {
+      if (url.includes('/rechazo')) { posts++; return errorJson(422, { motivos: ['decision_previa_existente'] }) }
+      if (url.includes('/aprobacion')) { posts++; return respuestaJson(200, decisionBody('aprobar')) }
+      return respuestaJson(200, pagina)
+    }, ['ver', 'decidir'], 20_000, lectura => {
+      const d = detalle() as import('../../src/panel/detalle.ts').Detalle
+      if (lectura > 1) { d.acciones_permitidas = []; d.acciones_bloqueadas = { aprobar: ['decision_previa_existente'], rechazar: ['decision_previa_existente'] } }
+      return respuestaJson(200, d)
+    })
+    await seleccionar(ctx.controlador, 'rechazar'); ctx.controlador.fijarMotivoDecision('Borrador conservado')
+    const snap = ctx.controlador.obtenerDecision().instantanea
+    await enviar(ctx.controlador)
+    assert.equal(ctx.controlador.obtenerDecision().requiereRecarga, true)
+    assert.equal(ctx.controlador.obtenerDecision().motivo, 'Borrador conservado')
+    assert.equal(ctx.controlador.obtenerDecision().requestId, REQUEST_ID)
+    assert.deepEqual(ctx.controlador.obtenerDecision().instantanea, snap)
+    assert.match(renderizar(ctx.controlador), /decision_previa_existente/)
+    ctx.controlador.prepararDecision('aprobar'); ctx.controlador.confirmarDecision(); await esperar()
+    assert.equal(posts, 1)
+    ctx.controlador.reintentarDetalle(); await hastaQue(() => !ctx.controlador.obtenerDetalle().cargando)
+    assert.equal(ctx.controlador.obtenerDecision().requiereRecarga, false)
+    assert.equal(ctx.controlador.obtenerDecision().motivo, 'Borrador conservado')
+    assert.equal(ctx.controlador.obtenerDecision().accion, null)
+    assert.deepEqual(ctx.controlador.obtenerDetalle().datos?.acciones_permitidas, [])
+    ctx.controlador.prepararDecision('aprobar'); ctx.controlador.prepararDecision('rechazar'); ctx.controlador.confirmarDecision(); await esperar()
+    assert.equal(ctx.controlador.obtenerDecision().accion, null)
+    assert.equal(posts, 1)
+  } },
+  { nombre: 'recarga fallida por red o 503 conserva requiereRecarga, motivo y request_id', async fn() {
+    for (const fallo of ['red', '503'] as const) {
+      let posts = 0
+      const ctx = await contexto(url => {
+        if (url.includes('/aprobacion')) { posts++; return errorJson(422, { motivos: ['hash_no_coincide'] }) }
+        return respuestaJson(200, pagina)
+      }, ['ver', 'decidir'], 20_000, lectura => {
+        if (lectura === 1) return respuestaJson(200, detalle())
+        return fallo === 'red' ? (() => { throw new Error('network') })() : errorJson(503)
+      })
+      await seleccionar(ctx.controlador, 'aprobar'); ctx.controlador.fijarMotivoDecision('Borrador')
+      await enviar(ctx.controlador)
+      assert.equal(ctx.controlador.obtenerDecision().requiereRecarga, true)
+      ctx.controlador.reintentarDetalle(); await hastaQue(() => !ctx.controlador.obtenerDetalle().cargando)
+      assert.equal(ctx.controlador.obtenerDecision().requiereRecarga, true)
+      assert.equal(ctx.controlador.obtenerDecision().motivo, 'Borrador')
+      assert.equal(ctx.controlador.obtenerDecision().requestId, REQUEST_ID)
+      ctx.controlador.prepararDecision('aprobar'); ctx.controlador.prepararDecision('rechazar'); ctx.controlador.confirmarDecision(); await esperar()
+      assert.equal(posts, 1)
+    }
   } },
   { nombre: 'permisos de solo ver, detalle sin acciones, cambio de identidad y cierre de sesión', async fn() {
     const sinPermiso = await contexto(() => { assert.fail('no debe enviar') }, ['ver'])

@@ -40,8 +40,8 @@ const mutaciones: [string, string, string, string][] = [
   ['rechazo omite el motivo validado', 'src/panel/decisiones.ts', "if (accion === 'rechazar') body.motivo = motivo", ''],
   ['POST de decisión incluye cookies', 'src/panel/decisiones.ts', "credentials: 'omit'", "credentials: 'include'"],
   ['confirmación no bloquea envío simultáneo', controlador, "if (envioActivo || !config || !token || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('decidir') || !decision.accion", "if (!config || !token || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('decidir') || !decision.accion"],
-  ['resultado incierto no exige recarga', controlador, "e.fallo === 'incierto' || e.fallo === 'cambio' || e.fallo === 'no_encontrado'", "e.fallo === 'cambio' || e.fallo === 'no_encontrado'"],
-  ['403 y 422 no bloquean la acción', controlador, "(e.fallo === 'permiso' && !e.autenticacionVencida) || e.fallo === 'no_encontrado' || e.fallo === 'no_decidible'", "e.fallo === 'no_encontrado'"],
+  ['resultado incierto no exige recarga', controlador, "e.fallo === 'incierto' || e.fallo === 'cambio' || e.fallo === 'no_encontrado' || e.fallo === 'no_decidible'", "e.fallo === 'cambio' || e.fallo === 'no_encontrado'"],
+  ['422 no bloquea simultáneamente ambas acciones', controlador, "if (e.fallo === 'no_decidible') {\n          bloqueadasAccion.add('aprobar')", "if (false) {\n          bloqueadasAccion.add('aprobar')"],
 ]
 try {
   for (const p of ['src', 'tests', 'package.json']) cpSync(join(raiz, p), join(copia, p), { recursive: true })
