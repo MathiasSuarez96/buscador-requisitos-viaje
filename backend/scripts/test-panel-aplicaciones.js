@@ -50,7 +50,7 @@ const servicio = { aplicar: async (...args) => { const keys = Object.keys(args[1
     assert.equal(llamadas[0][2].identidad_operador.sub, '5000');
     assert.match(llamadas[0][3], /^[0-9a-f-]{36}$/);
     assert.ok(!/email|sub|payload|evidencia|host|credencial/i.test(ok.body));
-    assert.ok(registros.some(e => e.evento === 'panel_aplicacion' && e.origen === 'panel' && e.request_id === llamadas[0][3]));
+    assert.ok(registros.some(e => e.evento === 'panel_aplicacion' && e.origen === 'panel' && e.request_id === llamadas[0][3] && e.intento_id === aplicacion.intento_id && e.evento_id === aplicacion.evento_id));
     falloAplicacion = new ErrorAplicacionNoAplica({ destino_modificado: false, resultado: 'fuente_cambio', estado_propuesta_nuevo: 'revision_requerida', intento_id: 'f54d03c8-e9ba-4352-8370-e4f88534f612' });
     const semantic = await post('5000'); const semanticJson = JSON.parse(semantic.body);
     assert.equal(semantic.status, 422); assert.deepEqual(semanticJson.error.aplicacion, { destino_modificado: false, resultado: 'fuente_cambio', estado_propuesta_nuevo: 'revision_requerida', intento_id: 'f54d03c8-e9ba-4352-8370-e4f88534f612' });
@@ -58,7 +58,10 @@ const servicio = { aplicar: async (...args) => { const keys = Object.keys(args[1
     falloAplicacion = new ErrorAplicacionCambio({ estado: 'aplicada', payload_hash: 'b'.repeat(64), version_coordinacion: 8, decision_aprobacion_id: 'a54d03c8-e9ba-4352-8370-e4f88534f613', ultimo_evento_id: 'e54d03c8-e9ba-4352-8370-e4f88534f612' });
     assert.equal((await post('5000')).status, 409);
     falloAplicacion = new ErrorAplicacionIncierta('f54d03c8-e9ba-4352-8370-e4f88534f612');
-    assert.equal((await post('5000')).status, 500);
+    const incierto = await post('5000');
+    assert.equal(incierto.status, 500);
+    assert.deepStrictEqual(Object.keys(JSON.parse(incierto.body).error).sort(), ['codigo', 'mensaje', 'request_id']);
+    assert.ok(registros.some(e => e.evento === 'panel_aplicacion' && e.resultado === 'incierto' && e.intento_id === aplicacion.intento_id));
     falloAplicacion = new ErrorAplicacionNoDisponible();
     assert.equal((await post('5000')).status, 503);
     process.stdout.write('Ruta aplicar: permiso ver+aplicar sin decidir, cuerpo por lista blanca, actor/request_id auditados y respuesta mínima: OK\n');

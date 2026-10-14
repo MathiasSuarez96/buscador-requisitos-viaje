@@ -87,6 +87,7 @@
  * el flujo sin conexión — ver scripts/test-servicio-aplicacion-propuesta.js.
  */
 
+const { validarAuditoria } = require('./auditoria-aplicacion');
 const crypto = require('crypto');
 const os = require('os');
 const mongoose = require('mongoose');
@@ -478,6 +479,7 @@ function construirInicio(ctx, proceso) {
     hash_contenido_referenciado: ctx.hash_leido,
     version_coordinacion_esperada: ctx.version_esperada,
     operador: { ...ctx.operador },
+    auditoria: ctx.auditoria,
     proceso_aplicador: { ...PROCESO_APLICADOR },
     adaptador: { ...ctx.adaptador },
     iniciado_en: ctx.iniciado_en
@@ -502,6 +504,7 @@ function construirIntento(ctx, r) {
     intento_id: ctx.intento_id,
     propuesta_id: ctx.propuesta_id,
     operador: { ...ctx.operador },
+    auditoria: ctx.auditoria,
     proceso_aplicador: { ...PROCESO_APLICADOR },
     adaptador: { ...ctx.adaptador },
     hash_contenido_referenciado: ctx.hash_leido,
@@ -547,6 +550,7 @@ function construirEvento(ctx, tipoEvento, t, resultado, motivo) {
     actor: { ...ACTOR_SISTEMA },
     detalle: {
       resultado,
+      auditoria: ctx.auditoria,
       operador: { ...ctx.operador },
       identidad_operador: { ...ctx.identidad_operador },
       proceso_aplicador: { ...PROCESO_APLICADOR },
@@ -976,7 +980,11 @@ async function registrarTransicion(ctx, resultado, etapa, extras, evidencia, mot
 
 async function aplicarPropuesta(entrada, deps = crearDependenciasMongoose(), auditoriaPanel = null) {
   validarEntrada(entrada);
-  // La ruta panel ya autenticó la identidad OIDC y exigió el permiso aplicar.
+  // Defensa interna antes de cualquier dependencia o escritura; HTTP no es la única frontera.
+  if (auditoriaPanel !== null) {
+    try { auditoriaPanel = validarAuditoria(auditoriaPanel, entrada, true); }
+    catch { throw new ErrorEntradaInvalida('aplicarPropuesta: auditoría panel inválida.'); }
+  }
   // La CLI conserva su resolución por connectionStatus/allowlist de Atlas.
   const operadores = auditoriaPanel ? [] : deps.operadoresAutorizados();
   const resolucion = auditoriaPanel
@@ -1015,6 +1023,7 @@ async function aplicarPropuesta(entrada, deps = crearDependenciasMongoose(), aud
     decision_aprobacion_id: decision,
     decision_aprobacion_id_esperado: entrada.decision_aprobacion_id_esperado,
     auditoria_panel: auditoriaPanel,
+    auditoria: auditoriaPanel ?? validarAuditoria({ origen: 'comando_administrativo', operador: resolucion.actor.identificador, identidad: resolucion.identidad_operador, comando: PROCESO_APLICADOR }),
     intento_id: intentoId,
     evento_id: eventoId,
     historial_id: historialId,
@@ -1030,90 +1039,95 @@ async function aplicarPropuesta(entrada, deps = crearDependenciasMongoose(), aud
     valor_nuevo: propuesta.payload.valor_propuesto?.valor
   };
 
-  const inicio = construirInicio(ctx, deps.contextoProceso());
-  await deps.validarInicio(inicio);
-  await deps.insertarInicio(inicio);
-
-  if (fallas.length > 0) {
-    const doc = construirIntento(ctx, {
-      resultado: 'propuesta_no_aplicable',
-      etapa_fallo: 'precondiciones_propuesta',
-      finalizado_en: deps.ahora(),
-      error_mensaje: `La propuesta no es aplicable (${fallas.map((f) => f.codigo).join(', ')}); no se consultó la fuente.`,
-      evidencia_fresca: { precondiciones: fallas }
-    });
-    const r = await registrarFueraDeTransaccion(ctx, doc, deps);
-    return resultadoDesdeIntento(ctx, r.doc);
-  }
-
-  // ---- Etapa 1: revalidación externa, sin transacción abierta ----
-  const respuesta = await adaptador.revalidar(propuesta, { ahora: deps.ahora });
-  const clasificacion = clasificarRevalidacion(propuesta, respuesta, revalidacionId);
-  const evidenciaBase = { revalidacion_externa: respuesta };
-
-  if (clasificacion.resultado === 'fuente_temporalmente_no_disponible') {
-    const doc = construirIntento(ctx, {
-      resultado: 'fuente_temporalmente_no_disponible',
-      etapa_fallo: 'revalidacion_externa',
-      finalizado_en: deps.ahora(),
-      error_mensaje: `La fuente no está disponible (${clasificacion.motivo}); se puede reintentar.`,
-      evidencia_fresca: evidenciaBase
-    });
-    const r = await registrarFueraDeTransaccion(ctx, doc, deps);
-    return resultadoDesdeIntento(ctx, r.doc);
-  }
-
-  // Después de la revalidación, inmediatamente antes de abrir la transacción.
-  const t = deps.ahora();
-  if (!esFechaValida(t)) throw new Error('deps.ahora() no devolvió un Date válido.');
-
-  if (clasificacion.resultado === 'extraccion_ambigua') {
-    const motivo = `La fuente respondió sin un valor inequívoco (${clasificacion.motivo}); requiere revisión humana.`;
-    return registrarTransicion(ctx, 'extraccion_ambigua', 'revalidacion_externa', {}, evidenciaBase, motivo, t, deps);
-  }
-  const { revalidacion } = clasificacion;
-  if (clasificacion.resultado === 'fuente_cambio') {
-    return registrarTransicion(ctx, 'fuente_cambio', 'revalidacion_externa', { revalidacion }, evidenciaBase, clasificacion.motivo, t, deps);
-  }
-
-  // ---- Ventana (solo antes de escribir en destinos) ----
-  const vigencia = revalidacionVigente(revalidacion.revalidada_en, t);
-  const evidencia = {
-    ...evidenciaBase,
-    ventana: { revalidada_en: revalidacion.revalidada_en, t, edad_ms: vigencia.edad_ms, ventana_ms: vigencia.ventana_ms }
-  };
-  if (!vigencia.vigente) {
-    const doc = construirIntento(ctx, {
-      resultado: 'revalidacion_vencida',
-      etapa_fallo: 'escritura_aplicacion',
-      finalizado_en: t,
-      error_mensaje: `La revalidación tiene ${vigencia.edad_ms} ms respecto de t (ventana [0, ${vigencia.ventana_ms}]); no se escribe.`,
-      evidencia_fresca: evidencia,
-      revalidacion
-    });
-    const r = await registrarFueraDeTransaccion(ctx, doc, deps);
-    return resultadoDesdeIntento(ctx, r.doc);
-  }
-
-  // ---- Etapa 2: transacción de escritura ----
-  const plan = planExito(ctx, revalidacion, evidencia, t, deps);
-  await deps.validarHistorial(plan.documentos.historial);
-  await deps.validarIntento(plan.documentos.intento);
-  await deps.validarEvento(plan.documentos.evento);
   try {
-    return await escribirConConfirmacion(ctx, plan, deps);
+    const inicio = construirInicio(ctx, deps.contextoProceso());
+    await deps.validarInicio(inicio);
+    await deps.insertarInicio(inicio);
+
+    if (fallas.length > 0) {
+      const doc = construirIntento(ctx, {
+        resultado: 'propuesta_no_aplicable',
+        etapa_fallo: 'precondiciones_propuesta',
+        finalizado_en: deps.ahora(),
+        error_mensaje: `La propuesta no es aplicable (${fallas.map((f) => f.codigo).join(', ')}); no se consultó la fuente.`,
+        evidencia_fresca: { precondiciones: fallas }
+      });
+      const r = await registrarFueraDeTransaccion(ctx, doc, deps);
+      return resultadoDesdeIntento(ctx, r.doc);
+    }
+
+    // ---- Etapa 1: revalidación externa, sin transacción abierta ----
+    const respuesta = await adaptador.revalidar(propuesta, { ahora: deps.ahora });
+    const clasificacion = clasificarRevalidacion(propuesta, respuesta, revalidacionId);
+    const evidenciaBase = { revalidacion_externa: respuesta };
+
+    if (clasificacion.resultado === 'fuente_temporalmente_no_disponible') {
+      const doc = construirIntento(ctx, {
+        resultado: 'fuente_temporalmente_no_disponible',
+        etapa_fallo: 'revalidacion_externa',
+        finalizado_en: deps.ahora(),
+        error_mensaje: `La fuente no está disponible (${clasificacion.motivo}); se puede reintentar.`,
+        evidencia_fresca: evidenciaBase
+      });
+      const r = await registrarFueraDeTransaccion(ctx, doc, deps);
+      return resultadoDesdeIntento(ctx, r.doc);
+    }
+
+    // Después de la revalidación, inmediatamente antes de abrir la transacción.
+    const t = deps.ahora();
+    if (!esFechaValida(t)) throw new Error('deps.ahora() no devolvió un Date válido.');
+
+    if (clasificacion.resultado === 'extraccion_ambigua') {
+      const motivo = `La fuente respondió sin un valor inequívoco (${clasificacion.motivo}); requiere revisión humana.`;
+      return await registrarTransicion(ctx, 'extraccion_ambigua', 'revalidacion_externa', {}, evidenciaBase, motivo, t, deps);
+    }
+    const { revalidacion } = clasificacion;
+    if (clasificacion.resultado === 'fuente_cambio') {
+      return await registrarTransicion(ctx, 'fuente_cambio', 'revalidacion_externa', { revalidacion }, evidenciaBase, clasificacion.motivo, t, deps);
+    }
+
+    // ---- Ventana (solo antes de escribir en destinos) ----
+    const vigencia = revalidacionVigente(revalidacion.revalidada_en, t);
+    const evidencia = {
+      ...evidenciaBase,
+      ventana: { revalidada_en: revalidacion.revalidada_en, t, edad_ms: vigencia.edad_ms, ventana_ms: vigencia.ventana_ms }
+    };
+    if (!vigencia.vigente) {
+      const doc = construirIntento(ctx, {
+        resultado: 'revalidacion_vencida',
+        etapa_fallo: 'escritura_aplicacion',
+        finalizado_en: t,
+        error_mensaje: `La revalidación tiene ${vigencia.edad_ms} ms respecto de t (ventana [0, ${vigencia.ventana_ms}]); no se escribe.`,
+        evidencia_fresca: evidencia,
+        revalidacion
+      });
+      const r = await registrarFueraDeTransaccion(ctx, doc, deps);
+      return resultadoDesdeIntento(ctx, r.doc);
+    }
+
+    // ---- Etapa 2: transacción de escritura ----
+    const plan = planExito(ctx, revalidacion, evidencia, t, deps);
+    await deps.validarHistorial(plan.documentos.historial);
+    await deps.validarIntento(plan.documentos.intento);
+    await deps.validarEvento(plan.documentos.evento);
+    try {
+      return await escribirConConfirmacion(ctx, plan, deps);
+    } catch (err) {
+      if (!(err instanceof ErrorFalloSemantico)) throw err;
+      return await registrarTransicion(
+        ctx,
+        err.resultado,
+        'escritura_aplicacion',
+        { revalidacion, ...err.extras },
+        { ...evidencia, ...err.evidencia },
+        err.motivo,
+        t,
+        deps
+      );
+    }
   } catch (err) {
-    if (!(err instanceof ErrorFalloSemantico)) throw err;
-    return registrarTransicion(
-      ctx,
-      err.resultado,
-      'escritura_aplicacion',
-      { revalidacion, ...err.extras },
-      { ...evidencia, ...err.evidencia },
-      err.motivo,
-      t,
-      deps
-    );
+    if (err instanceof Error && Object.isExtensible(err) && !err.intento_id) err.intento_id = ctx.intento_id;
+    throw err;
   }
 }
 

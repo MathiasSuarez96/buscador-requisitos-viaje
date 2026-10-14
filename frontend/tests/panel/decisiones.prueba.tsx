@@ -47,6 +47,78 @@ const seleccionar = async (c: ReturnType<typeof crearControladorPanel>, accion: 
 const enviar = async (c: ReturnType<typeof crearControladorPanel>) => { c.confirmarDecision(); await terminar(c) }
 
 export const pruebas: Prueba[] = [
+  ...(['409', '422', '500', 'red', 'timeout', 'respuesta inválida'] as const).map(caso => ({
+    nombre: `aplicación ${caso}: bloquea sin reintentos; recarga fallida conserva bloqueo y exitosa lo libera`,
+    async fn() {
+      let posts = 0, recargas = 0
+      const ctx = await contexto(() => {
+        posts++
+        if (posts > 1) return respuestaJson(200, aplicacionBody())
+        if (caso === 'red') throw new TypeError('red caída')
+        if (caso === 'timeout') return new Promise<Response>(() => {})
+        if (caso === 'respuesta inválida') return respuestaJson(200, { aplicacion: { ...aplicacionBody().aplicacion, destino_modificado: false } })
+        return errorJson(Number(caso))
+      }, ['ver', 'aplicar'], 20_000, () => {
+        recargas++
+        return recargas === 2 ? errorJson(503) : respuestaJson(200, aprobada())
+      })
+      ctx.controlador.seleccionar(ID); await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null)
+      ctx.controlador.prepararAplicacion()
+      const original = globalThis.setTimeout
+      let vencer: (() => void) | undefined
+      let plazo: number | undefined
+      if (caso === 'timeout') globalThis.setTimeout = ((fn: () => void, ms: number) => { plazo = ms; vencer = fn; return 123 }) as unknown as typeof setTimeout
+      try { ctx.controlador.confirmarAplicacion() } finally { globalThis.setTimeout = original }
+      if (caso === 'timeout') {
+        assert.equal(plazo, 30_000, 'el timeout real del controlador debe ser 30 segundos')
+        assert.equal(ctx.controlador.obtenerAplicacion().enviando, true)
+        vencer!()
+      }
+      await hastaQue(() => !ctx.controlador.obtenerAplicacion().enviando)
+      assert.equal(ctx.controlador.obtenerAplicacion().error?.fallo, caso === '409' ? 'cambio' : caso === '422' ? 'no_aplica' : 'incierto')
+      assert.equal(ctx.controlador.obtenerAplicacion().requiereRecarga, true)
+      await esperar(); assert.equal(posts, 1, 'sin reintento automático después del fallo')
+      ctx.controlador.prepararAplicacion(); ctx.controlador.confirmarAplicacion(); await esperar()
+      assert.equal(posts, 1, 'bloqueo efectivo del POST')
+      ctx.controlador.reintentarDetalle(); await hastaQue(() => !ctx.controlador.obtenerDetalle().cargando)
+      assert.equal(ctx.controlador.obtenerAplicacion().requiereRecarga, true, 'recarga fallida conserva bloqueo')
+      ctx.controlador.confirmarAplicacion(); await esperar(); assert.equal(posts, 1)
+      ctx.controlador.reintentarDetalle(); await hastaQue(() => !ctx.controlador.obtenerDetalle().cargando)
+      assert.equal(ctx.controlador.obtenerAplicacion().requiereRecarga, false, 'solo recarga exitosa libera bloqueo')
+      assert.equal(posts, 1, 'recargar no reenvía')
+      ctx.controlador.prepararAplicacion(); ctx.controlador.confirmarAplicacion()
+      await hastaQue(() => !ctx.controlador.obtenerAplicacion().enviando)
+      assert.equal(posts, 2, 'nuevo envío explícito permitido')
+    },
+  })),
+  { nombre: 'aplicación 503 sin escritura: conserva confirmación, permite intento explícito y no reintenta automáticamente', async fn() {
+    let posts = 0
+    const ctx = await contexto(() => { posts++; return errorJson(503) }, ['ver', 'aplicar'], 20_000, () => respuestaJson(200, aprobada()))
+    ctx.controlador.seleccionar(ID); await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null)
+    ctx.controlador.prepararAplicacion(); ctx.controlador.confirmarAplicacion()
+    await hastaQue(() => !ctx.controlador.obtenerAplicacion().enviando)
+    assert.equal(ctx.controlador.obtenerAplicacion().error?.fallo, 'no_disponible')
+    assert.equal(ctx.controlador.obtenerAplicacion().requiereRecarga, false)
+    assert.equal(ctx.controlador.obtenerAplicacion().confirmar, true)
+    await esperar(); assert.equal(posts, 1)
+    ctx.controlador.confirmarAplicacion(); await hastaQue(() => !ctx.controlador.obtenerAplicacion().enviando)
+    assert.equal(posts, 2)
+  } },
+  { nombre: 'aplicación 200 valida todos los campos; destino_modificado exige true literal', async fn() {
+    const snap = instantaneaAplicacionDe(aprobada() as ReturnType<typeof castDetalle>)!
+    const invalidados: [string, unknown][] = [
+      ['propuesta_id', REQUEST_ID], ['resultado', 'fuente_cambio'], ['estado_propuesta_nuevo', 'aprobada'],
+      ['version_coordinacion_nueva', 7], ['decision_aprobacion_id', REQUEST_ID], ['evento_id', 'x'], ['intento_id', 'x'],
+      ['aplicado_en', 'ayer'], ['ya_aplicada', 'true'], ['extra', 'no admitido'],
+      ...[false, null, undefined, 0, 1, 'true', {}, []].map(v => ['destino_modificado', v] as [string, unknown]),
+    ]
+    for (const [campo, valor] of invalidados) {
+      const body = { aplicacion: { ...aplicacionBody().aplicacion, [campo]: valor } }
+      const r = await enviarAplicacion(CONFIG.apiOrigen, TOKEN, ID, snap, async () => respuestaJson(200, body))
+      assert.equal(r.tipo, 'error', campo)
+      if (r.tipo === 'error') assert.equal(r.error.fallo, 'incierto', campo)
+    }
+  } },
   { nombre: 'aplicación: CAS visible, body exacto, confirmación accesible, doble clic y reenvío idéntico', async fn() {
     const d = aprobada() as ReturnType<typeof castDetalle>
     const snap = instantaneaAplicacionDe(d)!
@@ -57,25 +129,32 @@ export const pruebas: Prueba[] = [
       return respuestaJson(200, aplicacionBody(true))
     })
     assert.equal(r.tipo, 'ok'); if (r.tipo === 'ok') assert.equal(r.aplicacion.ya_aplicada, true)
-    let resolver: (r: Response) => void = () => {}, llamadas = 0
-    const ctx = await contexto(() => { llamadas++; return new Promise(r => { resolver = r }) }, ['ver', 'aplicar'], 20_000, () => respuestaJson(200, aprobada()))
+    let llamadas = 0
+    const pendientes: ((r: Response) => void)[] = []
+    const ctx = await contexto(() => { llamadas++; return new Promise(r => { pendientes.push(r) }) }, ['ver', 'aplicar'], 20_000, () => respuestaJson(200, aprobada()))
     ctx.controlador.seleccionar(ID); await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null)
     ctx.controlador.prepararAplicacion(); assert.match(renderizar(ctx.controlador), /Esto modificará el buscador público/); assert.match(renderizar(ctx.controlador), /Reino Unido/); assert.match(renderizar(ctx.controlador), /Valor nuevo/)
     ctx.controlador.confirmarAplicacion(); ctx.controlador.confirmarAplicacion(); ctx.controlador.filtrar({ estados: ['aplicada'], limite: 5 }); ctx.controlador.volverAlListado()
-    assert.equal(llamadas, 1); assert.equal(ctx.controlador.obtenerAplicacion().enviando, true)
-    resolver(respuestaJson(200, aplicacionBody())); await hastaQue(() => !ctx.controlador.obtenerAplicacion().enviando)
+    try { assert.equal(llamadas, 1); assert.equal(ctx.controlador.obtenerAplicacion().enviando, true) }
+    finally { for (const resolver of pendientes) resolver(respuestaJson(200, aplicacionBody())) }
+    await hastaQue(() => !ctx.controlador.obtenerAplicacion().enviando)
     assert.equal(ctx.controlador.obtenerAplicacion().registrada?.destino_modificado, true); assert.equal(ctx.controlador.obtenerAplicacion().requiereRecarga, true)
     assert.equal(ctx.red.llamadas.filter(p => p.url.endsWith('/aplicacion')).length, 1)
   } },
-  { nombre: 'aplicación sin permiso, sin acción o con respuesta no válida no permite un POST', async fn() {
+  { nombre: 'aplicación sin permiso o sin acción no permite un POST', async fn() {
     const ctx = await contexto(async () => { assert.fail('sin permiso no debe enviar') }, ['ver'], 20_000, () => respuestaJson(200, aprobada()))
     ctx.controlador.seleccionar(ID); await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null); ctx.controlador.prepararAplicacion(); ctx.controlador.confirmarAplicacion()
     assert.equal(ctx.controlador.obtenerAplicacion().confirmar, false); assert.equal(ctx.red.llamadas.filter(p => p.url.endsWith('/aplicacion')).length, 0)
-    const detalleSinAccion = aprobada({ acciones_permitidas: [], acciones_bloqueadas: { aprobar: [], rechazar: [], aplicar: ['sin_permiso_aplicar'] } })
+    const detalleSinAccion = aprobada({ acciones_permitidas: [], acciones_bloqueadas: { aprobar: ['estado_no_permite_decision'], rechazar: ['estado_no_permite_decision'], aplicar: ['sin_permiso_aplicar'] } })
     const snap = instantaneaAplicacionDe(detalleSinAccion as ReturnType<typeof castDetalle>)
     assert.ok(snap)
+    const sinAccion = await contexto(async () => { assert.fail('sin acción no debe enviar') }, ['ver', 'aplicar'], 20_000, () => respuestaJson(200, detalleSinAccion))
+    sinAccion.controlador.seleccionar(ID); await hastaQue(() => sinAccion.controlador.obtenerDetalle().datos !== null)
+    sinAccion.controlador.prepararAplicacion(); sinAccion.controlador.confirmarAplicacion()
+    assert.equal(sinAccion.controlador.obtenerAplicacion().confirmar, false)
+    assert.equal(sinAccion.red.llamadas.filter(p => p.init.method === 'POST').length, 0)
   } },
-  { nombre: '409 y 422 bloquean; solo una recarga completa permite volver a aplicar usando la nueva acción del servidor', async fn() {
+  { nombre: '409 bloquea; recarga completa sin acción aplicar impide otro POST', async fn() {
     let lecturas = 0, posts = 0
     const ctx = await contexto(() => { posts++; return errorJson(posts === 1 ? 409 : 422, posts === 1 ? { actual: { estado: 'aprobada', payload_hash: HASH, version_coordinacion: 7, decision_aprobacion_id: 'd54d03c8-e9ba-4352-8370-e4f88534f612', ultimo_evento_id: 'd54d03c8-e9ba-4352-8370-e4f88534f612' } } : { aplicacion: { destino_modificado: false, resultado: 'fuente_cambio', estado_propuesta_nuevo: 'revision_requerida', intento_id: 'f54d03c8-e9ba-4352-8370-e4f88534f612' } }) }, ['ver', 'aplicar'], 20_000, () => { lecturas++; return respuestaJson(200, aprobada({ acciones_permitidas: lecturas > 1 ? [] : ['aplicar'], acciones_bloqueadas: { aprobar: ['estado_no_permite_decision'], rechazar: ['estado_no_permite_decision'], aplicar: lecturas > 1 ? ['fuente_cambio'] : [] } })) })
     ctx.controlador.seleccionar(ID); await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null)
@@ -86,7 +165,7 @@ export const pruebas: Prueba[] = [
     assert.equal(ctx.controlador.obtenerAplicacion().requiereRecarga, false); assert.equal(ctx.controlador.obtenerDetalle().datos?.acciones_permitidas.includes('aplicar'), false)
     ctx.controlador.prepararAplicacion(); assert.equal(ctx.controlador.obtenerAplicacion().confirmar, false); assert.equal(posts, 1)
   } },
-  { nombre: '401 conserva confirmación y reautenticación no reenvía; 500/red/timeout/503 mantienen bloqueo hasta recarga', async fn() {
+  { nombre: '401 conserva confirmación y reautenticación no reenvía aplicación', async fn() {
     let posts = 0
     const ctx = await contexto(() => { posts++; return errorJson(401) }, ['ver', 'aplicar'], 20_000, () => respuestaJson(200, aprobada()))
     ctx.controlador.seleccionar(ID); await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null); ctx.controlador.prepararAplicacion(); ctx.controlador.confirmarAplicacion(); await hastaQue(() => !ctx.controlador.obtenerAplicacion().enviando)

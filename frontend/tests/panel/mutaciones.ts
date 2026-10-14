@@ -8,7 +8,28 @@ import { spawnSync } from 'node:child_process'
 const raiz = resolve(import.meta.dirname, '../..')
 const copia = mkdtempSync(join(tmpdir(), 'mutaciones-listado-'))
 const api = 'src/panel/propuestas.ts', controlador = 'src/panel/controlador.ts'
+const aplicaciones = 'src/panel/aplicaciones.ts'
 const mutaciones: [string, string, string, string][] = [
+  ...(['estado_esperado', 'payload_hash_esperado', 'version_coordinacion_esperada', 'decision_aprobacion_id_esperado'] as const).map(campo => [
+    `aplicación envío altera ${campo}`, aplicaciones, `${campo}: snapshot.${campo}`, `${campo}: null`,
+  ] as [string, string, string, string]),
+  ['aplicación instantánea visible altera estado', aplicaciones, "return Object.freeze({ estado_esperado: 'aprobada'", "return Object.freeze({ estado_esperado: 'aplicada'"],
+  ['aplicación instantánea visible altera hash', aplicaciones, 'payload_hash_esperado: p.payload_hash', "payload_hash_esperado: 'c'.repeat(64)"],
+  ['aplicación instantánea visible altera versión', aplicaciones, 'version_coordinacion_esperada: p.version_coordinacion!', 'version_coordinacion_esperada: 8'],
+  ['aplicación instantánea visible altera decisión', aplicaciones, 'decision_aprobacion_id_esperado: p.decision_aprobacion_id', "decision_aprobacion_id_esperado: '054d03c8-e9ba-4352-8370-e4f88534f612'"],
+  ['aplicación omite permiso al preparar', controlador, "estado.sesion.permisos.includes('aplicar') || !d.acciones_permitidas", "true || !d.acciones_permitidas"],
+  ['aplicación omite bloqueo síncrono', controlador, "const id = aplicacion.propuestaId, snapshot = aplicacion.instantanea, credencial = token, usuario = estado.sesion.identidad.sub\n      envioActivo = true", "const id = aplicacion.propuestaId, snapshot = aplicacion.instantanea, credencial = token, usuario = estado.sesion.identidad.sub\n      queueMicrotask(() => { envioActivo = true })"],
+  ['aplicación timeout incorrecto', aplicaciones, 'const tiempoLimite = 30_000', 'const tiempoLimite = 60_000'],
+  ['aplicación reintenta automáticamente al fallar red', aplicaciones, "catch { if (timer) clearTimeout(timer); return error('incierto') }", "catch { if (timer) clearTimeout(timer); void hacerFetch(`${origen}/api/panel/propuestas/${id}/aplicacion`, { method: 'POST' }).catch(() => {}); return error('incierto') }"],
+  ['aplicación 409 no bloquea', controlador, "['cambio', 'no_aplica', 'incierto', 'no_encontrado']", "['no_aplica', 'incierto', 'no_encontrado']"],
+  ['aplicación 422 no bloquea', controlador, "['cambio', 'no_aplica', 'incierto', 'no_encontrado']", "['cambio', 'incierto', 'no_encontrado']"],
+  ['aplicación 500 no bloquea', aplicaciones, "if ([500].includes(respuesta.status)", "if (respuesta.status === 500) return error('solicitud', requestId);\n  if ([500].includes(respuesta.status)"],
+  ['aplicación red no bloquea', aplicaciones, "catch { if (timer) clearTimeout(timer); return error('incierto') }", "catch { if (timer) clearTimeout(timer); return error('solicitud') }"],
+  ['aplicación respuesta inválida no bloquea', aplicaciones, "return aplicacion ? { tipo: 'ok', aplicacion, requestId } : error('incierto', requestId)", "return aplicacion ? { tipo: 'ok', aplicacion, requestId } : error('solicitud', requestId)"],
+  ['aplicación recarga fallida libera bloqueo', controlador, "} else {\n      if (resultado.fallo === 'sesion')", "} else {\n      aplicacionesBloqueadas.delete(id); fijarAplicacion({ ...aplicacion, requiereRecarga: false });\n      if (resultado.fallo === 'sesion')"],
+  ['aplicación recarga exitosa conserva bloqueo', controlador, '        aplicacionesBloqueadas.delete(id)', '        /* no libera */'],
+  ['aplicación 200 omite validar identidad y versión', aplicaciones, "a.propuesta_id !== id || a.resultado !== 'exito' || a.destino_modificado !== true || a.estado_propuesta_nuevo !== 'aplicada' || a.version_coordinacion_nueva !== snapshot.version_coordinacion_esperada + 1 || a.decision_aprobacion_id !== snapshot.decision_aprobacion_id_esperado ||", ''],
+  ['aplicación 200 admite destino_modificado falso', aplicaciones, 'a.destino_modificado !== true || ', ''],
   ['límite de bytes omitido', api, 'bytes > MAXIMO_RESPUESTA', 'false'],
   ['límite UTF-16 en lugar de bytes', api, 'bytes += value.byteLength', 'bytes += new TextDecoder().decode(value).length'],
   ['cursor sin vínculo al filtro', api, 'return v.endsWith(`.${mascara}`)', 'return mascara.length > 0'],
@@ -61,7 +82,8 @@ try {
     assert.match(r.stdout, /FALLÓ[\s\S]*AssertionError/, `${nombre}: fallo ajeno a las aserciones\n${r.stdout}\n${r.stderr}`)
     assert.doesNotMatch(r.stderr, /Intentos de red bloqueados|SyntaxError|ERR_MODULE_NOT_FOUND/)
     detectadas++
-    process.stdout.write(`Detectada: ${nombre}\n`)
+    const pruebas = [...r.stdout.matchAll(/FALLÓ ([^\r\n]+)/g)].map(m => m[1])
+    process.stdout.write(`Detectada: ${nombre}\n  Pruebas: ${pruebas.join('; ')}\n`)
   }
   process.stdout.write(`${detectadas}/${mutaciones.length} mutaciones detectadas por aserciones; línea base correcta.\n`)
 } finally {

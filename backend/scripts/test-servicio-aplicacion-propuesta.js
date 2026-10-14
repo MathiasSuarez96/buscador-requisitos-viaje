@@ -93,6 +93,7 @@ const OPERADORES_JSON = JSON.stringify([
 const OPERADOR = { tipo: 'humano', identificador: 'operador.prueba' };
 const IDENTIDAD_OPERADOR = { metodo: 'connection_status', usuario_atlas: 'operador-prueba', db_autenticacion: 'admin' };
 const PROCESO = { nombre: 'aplicar-propuesta', version: '1' };
+const AUDITORIA_CLI = { origen: 'comando_administrativo', operador: OPERADOR.identificador, identidad: IDENTIDAD_OPERADOR, comando: PROCESO };
 const ADAPTADOR = { nombre: 'adaptador-prueba', version: '7' };
 const CONTEXTO_PROCESO = { host: 'host-prueba', pid: 4242 };
 const MAX_REINTENTOS_DRIVER = 10;
@@ -730,6 +731,7 @@ function intentoEsperado(p, campos) {
     intento_id: INTENTO,
     propuesta_id: PROPUESTA_ID,
     operador: OPERADOR,
+    auditoria: AUDITORIA_CLI,
     proceso_aplicador: PROCESO,
     adaptador: ADAPTADOR,
     hash_contenido_referenciado: p.payload_hash,
@@ -751,7 +753,7 @@ function eventoEsperado(p, tipo, estadoNuevo, resultado, motivo) {
     version_coordinacion_nueva: 2,
     ocurrido_en: T,
     actor: { tipo: 'sistema', identificador: 'aplicar-propuesta' },
-    detalle: { resultado, operador: OPERADOR, identidad_operador: IDENTIDAD_OPERADOR, proceso_aplicador: PROCESO, adaptador: ADAPTADOR },
+    detalle: { resultado, auditoria: AUDITORIA_CLI, operador: OPERADOR, identidad_operador: IDENTIDAD_OPERADOR, proceso_aplicador: PROCESO, adaptador: ADAPTADOR },
     intento_aplicacion_id: INTENTO
   };
   if (motivo !== undefined) e.motivo = motivo;
@@ -764,6 +766,7 @@ const inicioEsperado = (p) => ({
   hash_contenido_referenciado: p.payload_hash,
   version_coordinacion_esperada: 1,
   operador: OPERADOR,
+  auditoria: AUDITORIA_CLI,
   proceso_aplicador: PROCESO,
   adaptador: ADAPTADOR,
   iniciado_en: T0,
@@ -873,6 +876,51 @@ const ESTADOS_DESTINO = [
 // ==================================================================
 
 (async () => {
+  // Se invoca el servicio directamente, sin wrapper HTTP.
+  const auditoriaPara = entrada => ({ origen: 'panel', request_id: idGen(90), operador: 'operador.panel', identidad: { metodo: 'oidc_google', sub: '1000' }, comando: { nombre: 'panel-propuestas', version: '1' }, instantanea: { ...entrada } });
+  {
+    const { store, propuesta } = escenario();
+    const entrada = entradaDe(propuesta), audit = auditoriaPara(entrada);
+    const casos = [
+      false, [], {}, { ...audit, identidad: {} }, { ...audit, identidad: { metodo: 'oidc_google' } },
+      { ...audit, identidad: { ...audit.identidad, sub: '' } }, { ...audit, identidad: { ...audit.identidad, metodo: 'connection_status' } },
+      { ...audit, token: 'NO_GUARDAR' }, { ...audit, identidad: { ...audit.identidad, email: 'ajeno' } },
+      { ...audit, origen: 'comando_administrativo' }, { ...audit, request_id: 'inválido' }, { ...audit, request_id: null },
+      { ...audit, comando: { ...audit.comando, version: '2' } }, { ...audit, comando: { ...audit.comando, token: 'x' } },
+      { ...audit, instantanea: { ...entrada, version_coordinacion_esperada: 8 } },
+      { ...audit, instantanea: { ...entrada, extra: true } },
+      Object.assign(Object.create({ inyectado: true }), audit), { ...audit, identidad: Object.assign(Object.create(null), audit.identidad) },
+      { ...audit, [Symbol('oculto')]: 'secreto' }, Object.defineProperty({ ...audit }, 'operador', { get() { assert.fail('no ejecutar getters'); } }),
+      { ...audit, identidad: Object.defineProperty({ ...audit.identidad }, 'sub', { get() { assert.fail('no ejecutar getters'); } }) },
+    ];
+    for (const manipulada of casos) {
+      const antes = foto(store);
+      const { deps } = crearEntorno(store);
+      deps.verificarIndices = () => assert.fail('debe validar antes de I/O');
+      await assert.rejects(aplicarPropuesta(entrada, deps, manipulada), ErrorEntradaInvalida);
+      assert.deepStrictEqual(foto(store), antes);
+    }
+    console.log('AUD-INTERNA: identidades incompletas, extras, origen/request_id y estructuras manipuladas fallan antes de I/O: OK');
+  }
+  for (const modo of ['exito', 'sin_evento', 'interrumpido']) {
+    const { store, propuesta } = escenario();
+    const entrada = entradaDe(propuesta), audit = auditoriaPara(entrada), esperado = structuredClone(audit);
+    const { deps } = crearEntorno(store, modo === 'sin_evento' ? { respuesta: RESP_NO_DISPONIBLE } : {});
+    if (modo === 'interrumpido') deps.elegirAdaptador = () => ({ ...ADAPTADOR, validarIdentidad: () => true, revalidar: async () => { throw new Error('interrupción'); } });
+    // Muta la entrada del llamador durante el primer await: la copia debe estar aislada.
+    const verificar = deps.verificarIndices;
+    deps.verificarIndices = async () => { audit.identidad.sub = 'mutado'; audit.instantanea.payload_hash_esperado = 'x'; return verificar(); };
+    if (modo === 'interrumpido') await assert.rejects(aplicarPropuesta(entrada, deps, audit));
+    else await aplicarPropuesta(entrada, deps, audit);
+    assert.deepStrictEqual(limpio(store.inicios[0]).auditoria, esperado, 'AUD-INICIO');
+    await assert.rejects(new InicioIntentoAplicacion({ ...limpio(store.inicios[0]), auditoria: { ...esperado, token: 'no persistir' } }).validate(), /Auditoría inválida|auditoria/);
+    if (modo !== 'interrumpido') await assert.rejects(new IntentoAplicacion({ ...soloIntento(store), auditoria: { ...esperado, identidad: { metodo: 'oidc_google' } } }).validate(), /Auditoría inválida|auditoria/);
+    if (modo !== 'interrumpido') assert.deepStrictEqual(soloIntento(store).auditoria, esperado, 'AUD-INTENTO');
+    if (modo === 'exito') assert.deepStrictEqual(limpio(store.eventos[1]).detalle.auditoria, esperado, 'AUD-EVENTO');
+    if (modo !== 'exito') assert.equal(store.eventos.length, 1, 'sin evento final');
+    console.log(`AUD-PERSISTIDA ${modo}: contexto exacto persistido y aislado: OK`);
+  }
+
   // ============================================================
   // 1) IDs nativos: string hex de 24 → BSON ObjectId, en una sola función
   // ============================================================
@@ -1626,7 +1674,7 @@ const ESTADOS_DESTINO = [
     // Mutación obligatoria: quitar el ID de aprobación del predicado CAS
     // debe romper la expectativa exacta, no solo la validación prelectura.
     const rutaServicio = require.resolve('../services/propuestas/aplicar-propuesta');
-    const fuenteServicio = fs.readFileSync(rutaServicio, 'utf8');
+    const fuenteServicio = fs.readFileSync(rutaServicio, 'utf8').replaceAll('\r\n', '\n');
     const mutacionCas = fuenteServicio.replace('    decision_aprobacion_id: ctx.decision_aprobacion_id_esperado,\n', '');
     assert.notStrictEqual(mutacionCas, fuenteServicio, 'la mutación CAS debe encontrar el campo exacto');
     const moduloMutado = new Module(rutaServicio, module);

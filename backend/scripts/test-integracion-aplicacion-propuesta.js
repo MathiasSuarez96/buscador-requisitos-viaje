@@ -627,6 +627,11 @@ async function principal() {
     assert.strictEqual(primera.aplicacion.ya_aplicada, false);
     const ev = await col('eventos_propuesta').findOne({ evento_id: primera.aplicacion.evento_id });
     assert.deepStrictEqual(ev.detalle.auditoria_panel, { origen: 'panel', request_id: req1, operador: 'operador.panel', identidad: { metodo: 'oidc_google', sub: '1000' }, comando: { nombre: 'panel-propuestas', version: '1' }, instantanea: { ...p.entrada } });
+    for (const coleccion of ['inicios_intento_aplicacion', 'intentos_aplicacion']) {
+      const doc = await col(coleccion).findOne({ intento_id: primera.aplicacion.intento_id });
+      assert.deepStrictEqual(doc.auditoria, ev.detalle.auditoria_panel, `${coleccion}: auditoría real persistida`);
+    }
+    assert.deepStrictEqual(ev.detalle.auditoria, ev.detalle.auditoria_panel);
     const destinoAplicado = await snapshot('destinos', { _id: destinoId });
     const intentosAplicados = await col('intentos_aplicacion').countDocuments({ propuesta_id: p.propuestaId });
     const reenvio = await panel.aplicar(p.propuestaId, cuerpoPanel, operador, crypto.randomUUID());
@@ -637,6 +642,39 @@ async function principal() {
     assert.strictEqual(await snapshot('destinos', { _id: destinoId }), destinoAplicado, 'otro operador no cambia destino');
     assert.strictEqual(antesIntentos, 0);
     return ['el panel registra actor OIDC, origen y request_id en el evento persistido', 'repetición exacta → ya_aplicada sin nuevo intento ni escritura', 'otro operador con la misma instantánea → 409 y destino intacto'];
+  });
+
+  await escenario('panel + Mongo · carrera tras inicio devuelve 409 con auditoría del perdedor', async () => {
+    const { destinoId } = await sembrarDestino();
+    const p = await sembrarPropuesta(destinoId);
+    let llegados = 0, soltar;
+    const juntos = new Promise(resolve => { soltar = resolve; });
+    const barrera = async () => { if (++llegados === 2) soltar(); await juntos; };
+    const { adaptador } = crearAdaptador(respuestaValor(), barrera);
+    const panel = crearAplicacionesPropuestas({ obtenerDb: () => mongoose.connection.db, dependencias: () => depsServicio(adaptador) });
+    const operador = { identificador: 'operador.panel', permisos: ['ver', 'aplicar'], identidad_operador: { metodo: 'oidc_google', sub: '1000' } };
+    const { propuesta_id, ...body } = p.entrada;
+    const requests = [crypto.randomUUID(), crypto.randomUUID()];
+    const resultados = await Promise.allSettled(requests.map(id => panel.aplicar(propuesta_id, body, operador, id)));
+    const ganador = resultados.find(r => r.status === 'fulfilled');
+    const perdedor = resultados.find(r => r.status === 'rejected');
+    assert.ok(ganador && perdedor, 'exactamente un éxito y un conflicto');
+    assert.equal(ganador.value.aplicacion.ya_aplicada, false);
+    assert.ok(perdedor.reason instanceof ErrorAplicacionCambio, 'el perdedor se traduce a HTTP 409');
+    const inicios = await col('inicios_intento_aplicacion').find({ propuesta_id }).toArray();
+    const intentos = await col('intentos_aplicacion').find({ propuesta_id }).toArray();
+    assert.equal(inicios.length, 2); assert.equal(intentos.length, 2);
+    const fallido = intentos.find(i => i.intento_id === perdedor.reason.intentoId);
+    assert.equal(fallido.resultado, 'propuesta_no_aplicable');
+    assert.deepStrictEqual(fallido.auditoria, inicios.find(i => i.intento_id === fallido.intento_id).auditoria);
+    assert.deepStrictEqual(inicios.map(i => i.auditoria.request_id).sort(), requests.sort());
+    assert.equal(await col('historial_cambios').countDocuments({ propuesta_id }), 1);
+    assert.equal(await col('eventos_propuesta').countDocuments({ propuesta_id, tipo_evento: 'aplicacion' }), 1);
+    const antes = await contar();
+    const reenvio = await panel.aplicar(propuesta_id, body, operador, crypto.randomUUID());
+    assert.equal(reenvio.aplicacion.ya_aplicada, true);
+    assert.deepStrictEqual(await contar(), antes, 'el reenvío posterior sí es sin escrituras');
+    return ['dos inicios y dos intentos auditados; un destino aplicado; perdedor 409; reenvío posterior 200 sin escrituras'];
   });
 
   await escenario('C1 · WriteConflict real (otro proceso toca OTRO requisito) → reintento del driver → éxito', async () => {

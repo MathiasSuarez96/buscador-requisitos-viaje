@@ -75,6 +75,7 @@ const {
   observarValor,
   mismoValorConPresencia,
   aplicarPropuesta,
+  validarEntrada,
   verificarIndices,
   crearDependenciasMongoose: crearDependenciasServicio
 } = require('../services/propuestas/aplicar-propuesta');
@@ -208,6 +209,9 @@ async function ejecutar(config, deps, logCrudo = console.log) {
   const previsto = { precondiciones: null, revalidacion: null, destino: null };
 
   const entrada = construirEntradaDesdeVista(propuesta);
+  // En modo real la entrada no aprobada/sin decisión falla antes de preguntar o escribir inicio.
+  // Solo lectura conserva el diagnóstico de las precondiciones, sin invocar el servicio.
+  if (real) validarEntrada(entrada);
   const decision = typeof propuesta.decision_aprobacion_id === 'string' ? propuesta.decision_aprobacion_id : null;
   const eventoAprobacion = decision ? await deps.leerEvento(decision) : null;
   log('=== EVENTO DE APROBACIÓN ===');
@@ -246,7 +250,7 @@ async function ejecutar(config, deps, logCrudo = console.log) {
     propuesta_id: entrada.propuesta_id,
     hash_esperado: entrada.payload_hash_esperado,
     version_esperada: entrada.version_coordinacion_esperada,
-    decision_aprobacion_id: decision
+    decision_aprobacion_id_esperado: entrada.decision_aprobacion_id_esperado
   };
   log('\n=== FILTROS CAS QUE SE USARÍAN ===');
   log('propuestas_cambio.updateOne filtro:');

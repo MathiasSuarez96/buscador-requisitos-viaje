@@ -15,11 +15,11 @@
  *    req.operador, construido y congelado acá, no escribible. Nada del body,
  *    la query ni otros headers participa.
  *  - crearExigirPermiso: permiso adicional sobre el req.operador ya
- *    resuelto (p. ej. "decidir" después del gate de "ver").
+ *    resuelto ("decidir" o "aplicar" después del gate de "ver").
  *  - manejarErroresPanel: { error: { codigo, mensaje, request_id } } con
  *    mensajes fijos; el detalle va solo al registro saneado. Únicas
  *    excepciones, ya armadas por lista blanca: `actual` en un 409 y
- *    `motivos` en un 422.
+ *    `motivos` o `aplicacion` en un 422. Los 500 no exponen datos internos.
  */
 
 const crypto = require('crypto');

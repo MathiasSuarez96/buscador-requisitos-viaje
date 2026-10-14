@@ -355,8 +355,10 @@ const sinEscrituras = (llamadas, etiqueta) =>
       propuesta_id: PROPUESTA_ID,
       hash_esperado: propuesta.payload_hash,
       version_esperada: 1,
-      decision_aprobacion_id: APROBACION_ID
+      decision_aprobacion_id_esperado: APROBACION_ID
     });
+    assert.strictEqual(casEsperado.decision_aprobacion_id, APROBACION_ID);
+    assert.strictEqual(casEsperado.ultimo_evento_id, APROBACION_ID);
     for (const esperado of [
       propuesta.payload_hash,
       propuesta.payload_hash.slice(0, 12),
@@ -571,6 +573,13 @@ const sinEscrituras = (llamadas, etiqueta) =>
     }
 
     for (const [nombre, opciones, previsto] of PROBLEMAS) {
+      if (nombre === 'estado pendiente' || nombre === 'sin decision_aprobacion_id') {
+        const e = crearEntorno(opciones);
+        await assert.rejects(ejecutar(REAL, e.deps, e.log), /estado_esperado|decision_aprobacion_id_esperado/);
+        sinEscrituras(e.llamadas, nombre);
+        assert.equal(e.llamadas.preguntar, 0, 'rechazo anterior a confirmación e intento');
+        continue;
+      }
       // El servicio revalida por su cuenta: su resultado es independiente de la vista.
       const resultado = previsto.startsWith('indeterminado') ? 'fuente_temporalmente_no_disponible' : previsto;
       const { deps, llamadas, logs, log } = crearEntorno({ ...opciones, resultadoAplicar: { resultado } });
@@ -590,7 +599,7 @@ const sinEscrituras = (llamadas, etiqueta) =>
       await assertRechaza(ejecutar(REAL, mal.deps, mal.log), 'no coincide', `${nombre} (confirmación incorrecta)`);
       assert.deepStrictEqual([mal.llamadas.preguntar, mal.llamadas.aplicar.length], [1, 0], nombre);
     }
-    console.log(`7) aplicacion_real: identidad y gate abortan; ${PROBLEMAS.length} resultados operativos previstos se avisan, se confirman y los registra el servicio (código 1): OK`);
+    console.log(`7) aplicacion_real: identidad y gate abortan; ${PROBLEMAS.length - 2} resultados operativos previstos (no aprobada/sin decisión abortan sin intento); los demás se avisan, se confirman y los registra el servicio (código 1): OK`);
   }
 
   // ============================================================

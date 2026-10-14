@@ -23,10 +23,11 @@
  */
 
 const mongoose = require('mongoose');
+const { validarAuditoria } = require('../../services/propuestas/auditoria-aplicacion');
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
-// MVP: el operador siempre es un humano que corre el comando administrativo.
+// Humano autenticado por OIDC (panel) o connection_status (comando administrativo).
 const operadorSchema = new mongoose.Schema(
   {
     tipo: { type: String, required: true, enum: ['humano'] },
@@ -58,6 +59,8 @@ const inicioIntentoAplicacionSchema = new mongoose.Schema(
       validate: { validator: Number.isInteger, message: 'version_coordinacion_esperada debe ser entero.' }
     },
     operador: { type: operadorSchema, required: true, immutable: true },
+    // Opcional para documentos históricos; toda escritura del servicio actual lo exige.
+    auditoria: { type: mongoose.Schema.Types.Mixed, immutable: true, validate: { validator: v => { validarAuditoria(v); return true; }, message: 'Auditoría inválida.' } },
     proceso_aplicador: { type: nombreVersionSchema, required: true, immutable: true },
     adaptador: { type: nombreVersionSchema, required: true, immutable: true },
     iniciado_en: { type: Date, required: true, immutable: true },

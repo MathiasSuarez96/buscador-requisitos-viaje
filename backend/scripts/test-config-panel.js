@@ -35,6 +35,7 @@ function falla(fn, etiqueta, noDebeContener = []) {
 // ============================================================
 {
   assert.deepStrictEqual(cargarOperadoresPanel('[]'), [], '[] es válido');
+  assert.deepStrictEqual(cargarOperadoresPanel(json([{ ...OP, permisos: ['ver', 'aplicar'] }]))[0].permisos, ['ver', 'aplicar']);
   const ops = cargarOperadoresPanel(json([OP, { ...OP, sub: '2000', email: 'otro@example.com', identificador: 'otro', permisos: ['ver'] }]));
   assert.strictEqual(ops.length, 2);
   assert.ok(Object.isFrozen(ops) && Object.isFrozen(ops[0]) && Object.isFrozen(ops[0].permisos), 'congelada en profundidad');
@@ -54,7 +55,7 @@ function falla(fn, etiqueta, noDebeContener = []) {
     ['email inválido', json([{ ...OP, email: 'operador' }])],
     ['identificador vacío', json([{ ...OP, identificador: '' }])],
     ['permisos vacío', json([{ ...OP, permisos: [] }])],
-    ['permiso desconocido', json([{ ...OP, permisos: ['ver', 'aplicar'] }])],
+    ['permiso desconocido', json([{ ...OP, permisos: ['ver', 'administrar'] }])],
     ['permisos repetidos', json([{ ...OP, permisos: ['ver', 'ver'] }])],
     ['permisos no array', json([{ ...OP, permisos: 'ver' }])],
     ['sub duplicado', json([OP, { ...OP, identificador: 'otro' }])],

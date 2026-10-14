@@ -1,5 +1,6 @@
 /** Aplicación explícita desde el panel, con instantánea y auditoría propias. */
 const mongoose = require('mongoose');
+const { validarAuditoria } = require('../propuestas/auditoria-aplicacion');
 const { SHA256_HEX } = require('../propuestas/canonicalizacion-propuestas');
 const { ESTADOS_PROPUESTA } = require('../propuestas/contrato-propuestas');
 const { ErrorPrecondicionIndices } = require('../propuestas/indices-propuestas');
@@ -21,7 +22,7 @@ const estadoValido = (v) => ESTADOS_PROPUESTA.includes(v);
 class ErrorCuerpoAplicacion extends Error {}
 class ErrorAplicacionNoEncontrada extends Error {}
 class ErrorAplicacionCambio extends Error { constructor(actual, intentoId = null) { super('propuesta_cambio'); this.actual = actual; this.intentoId = intentoId; } }
-class ErrorAplicacionNoAplica extends Error { constructor(aplicacion) { super('aplicacion_no_realizada'); this.aplicacion = aplicacion; } }
+class ErrorAplicacionNoAplica extends Error { constructor(aplicacion, eventoId = null) { super('aplicacion_no_realizada'); this.aplicacion = aplicacion; this.eventoId = eventoId; } }
 class ErrorAplicacionNoDisponible extends Error { constructor() { super('no_disponible'); } }
 class ErrorAplicacionIncierta extends Error { constructor(intentoId = null) { super('resultado_incierto'); this.intentoId = intentoId; } }
 
@@ -64,12 +65,12 @@ function auditoriaPanel(operador, requestId, entrada) {
       typeof operador.identidad_operador.metodo !== 'string' || typeof operador.identidad_operador.sub !== 'string' || !UUID.test(requestId)) {
     throw new Error('aplicacion panel: identidad autenticada incompleta.');
   }
-  return Object.freeze({
+  return validarAuditoria({
     origen: 'panel', request_id: requestId, operador: operador.identificador,
     identidad: Object.freeze({ metodo: operador.identidad_operador.metodo, sub: operador.identidad_operador.sub }),
     comando: COMANDO_PANEL,
     instantanea: Object.freeze({ ...entrada })
-  });
+  }, entrada, true);
 }
 
 function esReenvioIdentico(entrada, operador, p, ev, intento, historial) {
@@ -127,6 +128,8 @@ function crearAplicacionesPropuestas({ obtenerDb, aplicar = aplicarPropuesta, de
   };
   async function aplicarDesdePanel(propuestaId, cuerpo, operador, requestId) {
     const entrada = construirEntrada(propuestaId, cuerpo);
+    if (!operador?.permisos?.includes('aplicar')) throw new Error('aplicacion panel: permiso ausente.');
+    const audit = auditoriaPanel(operador, requestId, entrada);
     const d = db();
     const propuesta = await leerPropuesta(propuestaId);
     if (!propuesta) throw new ErrorAplicacionNoEncontrada('propuesta_inexistente');
@@ -139,8 +142,6 @@ function crearAplicacionesPropuestas({ obtenerDb, aplicar = aplicarPropuesta, de
       throw new ErrorAplicacionCambio(actualSeguro(propuesta, ev));
     }
     if (!coincideInstantanea(entrada, propuesta)) throw new ErrorAplicacionCambio(actualSeguro(propuesta, await buscarUltimo(propuesta)));
-    if (!operador.permisos.includes('aplicar')) throw new Error('aplicacion panel: permiso ausente.');
-    const audit = auditoriaPanel(operador, requestId, entrada);
     let resultado;
     try { resultado = await aplicar(entrada, dependencias(), audit); }
     catch (err) {
@@ -150,10 +151,9 @@ function crearAplicacionesPropuestas({ obtenerDb, aplicar = aplicarPropuesta, de
       if (err instanceof ErrorPropuestaNoSoportada || err instanceof ErrorSinAdaptador) throw new ErrorAplicacionNoAplica({ destino_modificado: false, resultado: 'propuesta_no_aplicable', estado_propuesta_nuevo: propuesta.estado, intento_id: null });
       if (err instanceof ErrorEntradaInvalida) throw new ErrorAplicacionIncierta(null);
       if (err instanceof ErrorLecturaNoDisponible) throw new ErrorAplicacionNoDisponible();
-      if (['MongoNetworkError', 'MongoNetworkTimeoutError', 'MongoServerSelectionError', 'MongoNotConnectedError'].includes(err?.name)) throw new ErrorAplicacionNoDisponible();
-      throw err;
+      if (['MongoNetworkError', 'MongoNetworkTimeoutError', 'MongoServerSelectionError', 'MongoNotConnectedError'].includes(err?.name)) throw new ErrorAplicacionIncierta(err.intento_id ?? null);
+      throw new ErrorAplicacionIncierta(err.intento_id ?? null);
     }
-    if (resultado?.resultado === 'fuente_temporalmente_no_disponible') throw new ErrorAplicacionNoDisponible();
     if (resultado?.resultado === 'exito') {
       const actual = await leerTrasAplicacion(() => leerPropuesta(propuestaId), resultado.intento_id);
       const ev = resultado.evento_id ? await leerTrasAplicacion(() => d.collection(COLECCIONES.eventos).findOne({ evento_id: resultado.evento_id }), resultado.intento_id) : null;
@@ -165,12 +165,7 @@ function crearAplicacionesPropuestas({ obtenerDb, aplicar = aplicarPropuesta, de
     const actual = await leerTrasAplicacion(() => leerPropuesta(propuestaId), resultado?.intento_id);
     if (resultado?.resultado === 'propuesta_no_aplicable' && actual && !coincideInstantanea(entrada, actual)) {
       const ev = await leerTrasAplicacion(() => buscarUltimo(actual), resultado?.intento_id);
-      if (actual.estado === 'aplicada') {
-        const intentoId = ev?.intento_aplicacion_id;
-        const intento = intentoId ? await leerTrasAplicacion(() => d.collection(COLECCIONES_APLICACION.intentos).findOne({ intento_id: intentoId }), resultado?.intento_id) : null;
-        const historial = intento?.historial_id ? await leerTrasAplicacion(() => d.collection(COLECCIONES_APLICACION.historial).findOne({ historial_id: intento.historial_id }), resultado?.intento_id) : null;
-        if (esReenvioIdentico(entrada, operador, actual, ev, intento, historial)) return { aplicacion: respuestaAplicada(entrada, actual, ev, intento, true), registro: { ya_aplicada: true, carrera: true } };
-      }
+      // Ya pasó por el servicio: conserva inicio/intento y responde 409, nunca reenvío sin escrituras.
       throw new ErrorAplicacionCambio(actualSeguro(actual, ev), resultado.intento_id ?? null);
     }
     const resultadoSeguro = typeof resultado?.resultado === 'string' && /^[a-z_]{1,80}$/.test(resultado.resultado) ? resultado.resultado : 'propuesta_no_aplicable';
@@ -179,7 +174,7 @@ function crearAplicacionesPropuestas({ obtenerDb, aplicar = aplicarPropuesta, de
       resultado: resultadoSeguro,
       estado_propuesta_nuevo: estadoValido(actual?.estado) ? actual.estado : estadoValido(resultado?.estado_propuesta_nuevo) ? resultado.estado_propuesta_nuevo : null,
       intento_id: typeof resultado?.intento_id === 'string' && UUID.test(resultado.intento_id) ? resultado.intento_id : null
-    });
+    }, typeof resultado?.evento_id === 'string' && UUID.test(resultado.evento_id) ? resultado.evento_id : null);
   }
   return Object.freeze({ aplicar: aplicarDesdePanel });
 }

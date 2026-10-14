@@ -1,6 +1,6 @@
 // Contrato del servicio panel de aplicación. Store in-memory, sin Mongo/red.
 const assert = require('assert');
-const { crearAplicacionesPropuestas, construirEntrada, ErrorCuerpoAplicacion, ErrorAplicacionCambio, ErrorAplicacionNoAplica, ErrorAplicacionIncierta } = require('../services/panel/aplicaciones-propuestas');
+const { crearAplicacionesPropuestas, construirEntrada, respuestaAplicada, ErrorCuerpoAplicacion, ErrorAplicacionCambio, ErrorAplicacionNoAplica, ErrorAplicacionIncierta } = require('../services/panel/aplicaciones-propuestas');
 const ID = '054d03c8-e9ba-4352-8370-e4f88534f612';
 const HASH = 'a'.repeat(64);
 const APROB = 'd54d03c8-e9ba-4352-8370-e4f88534f612';
@@ -30,11 +30,25 @@ async function ejecutar() {
   const primera = await servicio.aplicar(ID, body, operador(), REQUEST);
   assert.equal(primera.aplicacion.destino_modificado, true); assert.equal(primera.aplicacion.ya_aplicada, false);
   assert.equal(aud.origen, 'panel'); assert.equal(aud.request_id, REQUEST); assert.equal(aud.operador, 'op');
+  const evExito = estado.eventos.get(EVENTO), intentoExito = estado.intentos.get(INTENTO);
+  for (const cambio of [{ estado: 'aprobada' }, { ultimo_evento_id: REQUEST }, { version_coordinacion: 10 }, { payload_hash: 'b'.repeat(64) }, { decision_aprobacion_id: REQUEST }]) {
+    assert.throws(() => respuestaAplicada(construirEntrada(ID, body), { ...estado.propuesta, ...cambio }, evExito, intentoExito, false), ErrorAplicacionIncierta);
+  }
+  for (const cambio of [{ tipo_evento: 'aprobacion' }, { evento_id: 'x' }, { intento_aplicacion_id: REQUEST }, { ocurrido_en: new Date('invalid') }]) {
+    assert.throws(() => respuestaAplicada(construirEntrada(ID, body), estado.propuesta, { ...evExito, ...cambio }, intentoExito, false), ErrorAplicacionIncierta);
+  }
   const replay = await servicio.aplicar(ID, body, operador(), 'c54d03c8-e9ba-4352-8370-e4f88534f614');
   assert.equal(replay.aplicacion.ya_aplicada, true); assert.equal(escrituras, 1, 'reenvío sin nuevas escrituras');
   await assert.rejects(servicio.aplicar(ID, body, operador('otro', '6000'), REQUEST), ErrorAplicacionCambio);
   await assert.rejects(servicio.aplicar(ID, { ...body, payload_hash_esperado: 'b'.repeat(64) }, operador(), REQUEST), ErrorAplicacionCambio);
 
+  const antesCarrera = { ...estado.propuesta };
+  estado.propuesta = { ...estado.propuesta, estado: 'aprobada', version_coordinacion: 7, ultimo_evento_id: APROB };
+  const carrera = crearAplicacionesPropuestas({ obtenerDb: () => db, dependencias: () => ({}), aplicar: async () => {
+    estado.propuesta = antesCarrera;
+    return { resultado: 'propuesta_no_aplicable', intento_id: REQUEST };
+  } });
+  await assert.rejects(carrera.aplicar(ID, body, operador(), REQUEST), e => e instanceof ErrorAplicacionCambio && e.intentoId === REQUEST, 'CARRERA: tras escribir inicio no se presenta como reenvío');
   const { estado: e422, db: db422 } = storeInicial();
   const semantico = crearAplicacionesPropuestas({ obtenerDb: () => db422, dependencias: () => ({}), aplicar: async () => ({ resultado: 'fuente_cambio', estado_propuesta_nuevo: 'revision_requerida', intento_id: INTENTO }) });
   await assert.rejects(semantico.aplicar(ID, body, operador(), REQUEST), err => err instanceof ErrorAplicacionNoAplica && err.aplicacion.destino_modificado === false && err.aplicacion.estado_propuesta_nuevo === 'aprobada' && err.aplicacion.intento_id === INTENTO);
@@ -45,6 +59,12 @@ async function ejecutar() {
   await assert.rejects(falso200.aplicar(ID, body, operador(), REQUEST), ErrorAplicacionIncierta);
   const denegado = crearAplicacionesPropuestas({ obtenerDb: () => storeInicial().db, dependencias: () => ({}), aplicar: async () => assert.fail('no ejecutar') });
   await assert.rejects(denegado.aplicar(ID, body, operador('read', '5001', ['ver']), REQUEST), /permiso ausente/);
+  const noDisponible = crearAplicacionesPropuestas({ obtenerDb: () => null, aplicar: async () => assert.fail('503 nunca entra al servicio') });
+  await assert.rejects(noDisponible.aplicar(ID, body, operador(), REQUEST), e => e.constructor.name === 'ErrorAplicacionNoDisponible');
+  const fuenteCaida = crearAplicacionesPropuestas({ obtenerDb: () => storeInicial().db, dependencias: () => ({}), aplicar: async () => ({ resultado: 'fuente_temporalmente_no_disponible', intento_id: INTENTO }) });
+  await assert.rejects(fuenteCaida.aplicar(ID, body, operador(), REQUEST), e => e instanceof ErrorAplicacionNoAplica && e.aplicacion.intento_id === INTENTO);
+  const redIncierta = crearAplicacionesPropuestas({ obtenerDb: () => storeInicial().db, dependencias: () => ({}), aplicar: async () => { throw Object.assign(new Error('NO_MOSTRAR'), { name: 'MongoNetworkError', intento_id: INTENTO }); } });
+  await assert.rejects(redIncierta.aplicar(ID, body, operador(), REQUEST), e => e instanceof ErrorAplicacionIncierta && e.intentoId === INTENTO);
   process.stdout.write('Servicio panel: entrada exacta, CAS snapshot, audit OIDC/request_id, idempotencia, operador distinto, 422 sin destino y ningún 200 falso: OK\n');
 }
 ejecutar().catch(e => { process.stderr.write(`${e.stack || e}\n`); process.exitCode = 1; });
