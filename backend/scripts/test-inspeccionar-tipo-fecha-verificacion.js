@@ -8,6 +8,7 @@ const {
   mensajeSeguro,
   resumirDocumentos,
   tipoBsonDeserializado,
+  valorFechaSeguro,
   vigilarComandos
 } = require('./inspeccionar-tipo-fecha-verificacion');
 
@@ -46,6 +47,9 @@ async function main() {
   assert.equal(tipoBsonDeserializado(null, true), 'null');
   assert.equal(tipoBsonDeserializado(new Date(), true), 'date');
   assert.equal(tipoBsonDeserializado('2026-01-01', true), 'string');
+  assert.equal(valorFechaSeguro(new Date('2026-01-01T00:00:00Z'), true), '2026-01-01T00:00:00.000Z');
+  assert.equal(valorFechaSeguro('2026-01-01', true), '2026-01-01');
+  assert.throws(() => valorFechaSeguro('2026-01-01\nsecreto', true), /forma insegura/);
 
   const id1 = new ObjectId('64addd0e9f54309f9d8272d1');
   const id2 = new ObjectId('64addd0e9f54309f9d8272d2');
@@ -64,6 +68,10 @@ async function main() {
   assert.equal(resumen.tipos_mezclados, true);
   assert.equal(resumen.foco.length, 4);
   assert.equal(resumen.filas[0].requisito_id, String(id1));
+  assert.equal(Object.hasOwn(resumen.filas[0], 'valor_fecha_verificacion'), false);
+  const conValores = resumirDocumentos(documentos, { incluirValores: true });
+  assert.equal(conValores.filas[0].valor_fecha_verificacion, '2026-01-01T00:00:00.000Z');
+  assert.equal(conValores.foco[1].valor_fecha_verificacion, '2026-01-02');
 
   await rechaza(inspeccionar({ uri: '' }), /MONGODB_URI_AUDITORIA ausente/);
   const uriSecreta = 'mongodb+srv://usuario:secreto@host/buscador_requisitos';

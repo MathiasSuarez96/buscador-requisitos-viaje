@@ -30,7 +30,19 @@ function tipoBsonDeserializado(valor, presente) {
   return `otro:${valor?._bsontype || typeof valor}`;
 }
 
-function resumirDocumentos(documentos) {
+function valorFechaSeguro(valor, presente) {
+  if (!presente || valor === null) return valor ?? null;
+  if (valor instanceof Date) return Number.isNaN(valor.getTime()) ? 'fecha_invalida' : valor.toISOString();
+  if (typeof valor === 'string') {
+    if (valor.length > 100 || /[\u0000-\u001f\u007f-\u009f]/u.test(valor)) {
+      throw new Error('fecha_verificacion de texto tiene una forma insegura o inesperada.');
+    }
+    return valor;
+  }
+  return String(valor);
+}
+
+function resumirDocumentos(documentos, { incluirValores = false } = {}) {
   if (!Array.isArray(documentos)) throw new Error('La respuesta de destinos no es una lista.');
   const filas = [];
   for (const destino of documentos) {
@@ -43,14 +55,16 @@ function resumirDocumentos(documentos) {
         throw new Error(`Requisito con forma inválida en ${destino.codigo_iso ?? 'destino sin código'}.`);
       }
       const presente = Object.prototype.hasOwnProperty.call(requisito, 'fecha_verificacion');
-      filas.push({
+      const fila = {
         codigo_iso: destino.codigo_iso,
         pais: destino.pais,
         requisito_id: requisito._id == null ? null : String(requisito._id),
         tipo_requisito: requisito.tipo ?? null,
         nombre: requisito.nombre ?? null,
         tipo_bson: tipoBsonDeserializado(requisito.fecha_verificacion, presente)
-      });
+      };
+      if (incluirValores) fila.valor_fecha_verificacion = valorFechaSeguro(requisito.fecha_verificacion, presente);
+      filas.push(fila);
     }
   }
 
@@ -94,7 +108,11 @@ function mensajeSeguro(error, uri) {
   return mensaje.replace(/\/\/[^\s/@]*:[^\s/@]*@/gu, '//[credenciales ocultas]@');
 }
 
-async function inspeccionar({ uri, crearCliente = (valor) => new MongoClient(valor, { monitorCommands: true }) }) {
+async function inspeccionar({
+  uri,
+  incluirValores = false,
+  crearCliente = (valor) => new MongoClient(valor, { monitorCommands: true })
+}) {
   if (typeof uri !== 'string' || uri.trim() === '') {
     throw new Error(`${VARIABLE_URI} ausente. No se usa MONGODB_URI como alternativa.`);
   }
@@ -112,7 +130,7 @@ async function inspeccionar({ uri, crearCliente = (valor) => new MongoClient(val
       .find({}, { projection: PROYECCION })
       .sort({ codigo_iso: 1, _id: 1 })
       .toArray();
-    resultado = resumirDocumentos(documentos);
+    resultado = resumirDocumentos(documentos, { incluirValores });
   } finally {
     await cliente.close();
   }
@@ -124,7 +142,8 @@ async function main() {
   require('dotenv').config({ quiet: true });
   const uri = process.env[VARIABLE_URI];
   try {
-    const resultado = await inspeccionar({ uri });
+    const incluirValores = process.argv.slice(2).includes('--incluir-valores');
+    const resultado = await inspeccionar({ uri, incluirValores });
     console.log(JSON.stringify(resultado, null, 2));
     console.error('Inspección terminada: solo se ejecutó find; Atlas no fue modificado.');
   } catch (error) {
@@ -149,5 +168,6 @@ module.exports = {
   mensajeSeguro,
   resumirDocumentos,
   tipoBsonDeserializado,
+  valorFechaSeguro,
   vigilarComandos
 };
