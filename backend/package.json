@@ -19,6 +19,7 @@
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jose": "6.2.12",
+    "mongodb": "^7.5.0",
     "mongoose": "^9.9.4"
   },
   "config": {
