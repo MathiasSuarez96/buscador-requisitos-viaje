@@ -13,9 +13,10 @@ interface Prueba {
   fn: () => Promise<void> | void
 }
 
-const ARCHIVOS = process.argv.includes('--solo-huella') ? ['/tests/panel/huella.prueba.ts'] : process.argv.includes('--solo-listado')
-  ? ['/tests/panel/listado.prueba.tsx', '/tests/panel/detalle.prueba.tsx', '/tests/panel/decisiones.prueba.tsx']
-  : ['/tests/panel/unidades.prueba.ts', '/tests/panel/controlador.prueba.ts', '/tests/panel/listado.prueba.tsx', '/tests/panel/detalle.prueba.tsx', '/tests/panel/decisiones.prueba.tsx', '/tests/panel/fuentes.prueba.ts', '/tests/panel/build.prueba.ts', '/tests/panel/huella.prueba.ts']
+const ARCHIVOS = process.argv.includes('--solo-huella') ? ['/tests/panel/huella.prueba.ts'] : process.argv.includes('--solo-build')
+  ? ['/tests/panel/build.prueba.ts'] : process.argv.includes('--solo-listado')
+  ? ['/tests/recomendado.prueba.tsx', '/tests/panel/listado.prueba.tsx', '/tests/panel/detalle.prueba.tsx', '/tests/panel/decisiones.prueba.tsx']
+  : ['/tests/recomendado.prueba.tsx', '/tests/panel/unidades.prueba.ts', '/tests/panel/controlador.prueba.ts', '/tests/panel/listado.prueba.tsx', '/tests/panel/detalle.prueba.tsx', '/tests/panel/decisiones.prueba.tsx', '/tests/panel/fuentes.prueba.ts', '/tests/panel/build.prueba.ts', '/tests/panel/huella.prueba.ts']
 
 const servidor = await createServer({
   root: process.argv.includes('--raiz') ? resolve(process.argv[process.argv.indexOf('--raiz') + 1]) : resolve(import.meta.dirname, '../..'),

@@ -200,6 +200,7 @@ export const SESION_NO_AUTORIZADA = {
 }
 
 export const renderizar = (controlador: ControladorPanel) => renderToString(<PanelApp controlador={controlador} copiar={async () => {}} />)
+export const renderizarElemento = (elemento: React.ReactElement) => renderToString(elemento)
 
 // Sin fugas en ningún lugar observable: espías, estado, HTML, llamadas a
 // GIS y a la red (fuera del header Authorization).

@@ -17,9 +17,19 @@ const ReglaGeneral = require('../models/ReglaGeneral.model');
 
 
 const DESTINOS = [
-  { _id: '000000000000000000000001', pais: 'Argentina', codigo_iso: 'AR', requisitos: [] },
+  { _id: '000000000000000000000001', pais: 'Argentina', codigo_iso: 'AR', requisitos: [{ _id: '6aaddd0e9f54309f9d827201', obligatorio: 'no' }] },
+  ...Array.from({ length: 25 }, (_, i) => ({
+    _id: (i + 3).toString(16).padStart(24, '0'),
+    pais: `Destino legado ${i + 1}`,
+    codigo_iso: `L${String(i + 1).padStart(2, '0')}`,
+    requisitos: [{ _id: `6aaddd0e9f54309f9d827${String(i + 1).padStart(3, '0')}`, obligatorio: 'no' }]
+  })),
   { _id: '000000000000000000000002', pais: 'Reino Unido', codigo_iso: 'GB', requisitos: [{ _id: '6aaddd0e9f54309f9d8272dc', nombre: 'UK ETA', costo: '£20' }] }
 ];
+const DESTINO_CON_RECOMENDADO = {
+  _id: '000000000000000000000099', pais: 'Destino de prueba', codigo_iso: 'XY',
+  requisitos: [{ _id: '6aaddd0e9f54309f9d827299', tipo: 'formulario_digital', obligatorio: 'no', recomendado: 'si' }]
+};
 const REGLA = { _id: 'permiso_menor_uruguay', contenido: 'Regla de prueba', estado: 'confirmado', pendiente_confirmar: [] };
 
 // Dobles de los modelos, controlados por `estado`.
@@ -37,6 +47,7 @@ Destino.find = (filtro) => {
 Destino.findOne = async (filtro) => {
   estado.llamadas.push(['findOne', filtro]);
   if (estado.fallarFindOne) throw new Error('falla simulada');
+  if (filtro.codigo_iso === 'XY') return { toObject: () => ({ ...DESTINO_CON_RECOMENDADO }) };
   const d = DESTINOS.find((x) => x.codigo_iso === filtro.codigo_iso);
   return d ? { toObject: () => ({ ...d }) } : null;
 };
@@ -63,6 +74,8 @@ ReglaGeneral.findById = async (id) => {
       assert.match(r.headers['content-type'], /^application\/json/);
       assert.strictEqual(r.headers['access-control-allow-origin'], '*', 'CORS público sin cambios');
       assert.deepStrictEqual(JSON.parse(r.body), DESTINOS);
+      assert.strictEqual(JSON.parse(r.body).length, 27);
+      assert.ok(JSON.parse(r.body).every((d) => d.requisitos.every((req) => !Object.hasOwn(req, 'recomendado'))), 'los 27 destinos legacy omiten recomendado');
       assert.deepStrictEqual(estado.llamadas, [['find', undefined], ['sort', { pais: 1 }]]);
       console.log('1) GET /api/destinos: 200, JSON, ordenado por país, CORS abierto como antes: OK');
     }
@@ -74,9 +87,19 @@ ReglaGeneral.findById = async (id) => {
       estado.llamadas = [];
       const r = await get(port, '/api/destinos/gb');
       assert.strictEqual(r.status, 200);
-      assert.deepStrictEqual(JSON.parse(r.body), { ...DESTINOS[1], regla_general: REGLA });
+      assert.deepStrictEqual(JSON.parse(r.body), { ...DESTINOS.find((d) => d.codigo_iso === 'GB'), regla_general: REGLA });
       assert.deepStrictEqual(estado.llamadas, [['findOne', { codigo_iso: 'GB' }], ['findById', 'permiso_menor_uruguay']]);
       console.log('2) GET /api/destinos/gb: busca GB, agrega regla_general: OK');
+    }
+
+    {
+      const conCampo = await get(port, '/api/destinos/xy');
+      assert.strictEqual(conCampo.status, 200);
+      assert.strictEqual(JSON.parse(conCampo.body).requisitos[0].recomendado, 'si');
+      const sinCampo = await get(port, '/api/destinos/ar');
+      assert.strictEqual(sinCampo.status, 200);
+      assert.ok(!Object.hasOwn(JSON.parse(sinCampo.body).requisitos[0], 'recomendado'));
+      console.log('2a) API pública conserva recomendado cuando existe y lo omite cuando falta: OK');
     }
 
     // ============================================================

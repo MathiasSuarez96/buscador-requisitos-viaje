@@ -1,11 +1,13 @@
 import { useRef, useState, useEffect } from 'react'
 import logoToctoc from './assets/toctoc-logo.png'
 import logoSantander from './assets/santander-logo.png'
+import { BadgesRequisito } from './BadgesRequisito'
 
 interface Requisito {
   tipo: string
   nombre: string
   obligatorio: 'si' | 'no' | 'verificar'
+  recomendado?: 'si' | 'no' | 'verificar'
   descripcion: string
   fuente: string
   link?: string
@@ -279,20 +281,11 @@ function App() {
                       }}
                     >
                   <div className="flex flex-col md:flex-row justify-between items-start gap-2 mb-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold text-gray-800">
                         {req.nombre || nombresPorTipo[req.tipo]}
                       </span>
-                      {req.obligatorio === 'si' && (
-                        <span className="text-xs font-medium text-red-600">
-                          Obligatorio
-                        </span>
-                      )}
-                      {req.obligatorio === 'verificar' && (
-                        <span className="text-xs font-medium text-amber-600">
-                          Obligatoriedad a verificar
-                        </span>
-                      )}
+                      <BadgesRequisito obligatorio={req.obligatorio} recomendado={req.recomendado} />
                     </div>
                     <span
                       className="text-xs font-medium px-2 py-1 rounded-full"

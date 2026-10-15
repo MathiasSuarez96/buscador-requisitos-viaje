@@ -14,7 +14,7 @@ export const pruebas: Prueba[] = [
       assert.match(css, /@import "tailwindcss" source\(none\);/)
       assert.doesNotMatch(css, /@source\s+"[^"\n]*(?:scripts|tests)/)
     }
-    assert.deepEqual([...publico.matchAll(/@source "([^"]+)"/g)].map(m => m[1]), ['./App.tsx', './main.tsx', '../index.html'])
+    assert.deepEqual([...publico.matchAll(/@source "([^"]+)"/g)].map(m => m[1]), ['./App.tsx', './main.tsx', './BadgesRequisito.tsx', '../index.html'])
     assert.deepEqual([...panel.matchAll(/@source "([^"]+)"/g)].map(m => m[1]), ['./**/*.tsx'])
     assert.ok(!leer('src/panel/main.tsx').includes('index.css'))
     const scan = new Scanner({ sources: [{ base: join(raiz, 'src/panel').replaceAll('\\', '/'), pattern: '**/*.tsx', negated: false }] })

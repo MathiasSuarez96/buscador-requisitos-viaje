@@ -9,6 +9,14 @@ const requisitoSchema = new mongoose.Schema({
   },
   nombre: { type: String },
   obligatorio: { type: String, required: true, enum: ['si', 'no', 'verificar'] },
+  recomendado: {
+    type: String,
+    enum: ['si', 'no', 'verificar'],
+    validate: {
+      validator: (valor) => valor !== null,
+      message: 'recomendado no admite null; omití el campo si no hay dato'
+    }
+  },
   descripcion: { type: String, required: true },
   fuente: {
     type: String,
@@ -29,6 +37,12 @@ const requisitoSchema = new mongoose.Schema({
     type: String,
     required: true,
     enum: ['confirmado', 'verificar']
+  }
+});
+
+requisitoSchema.pre('validate', function() {
+  if (this.obligatorio === 'si' && ['si', 'verificar'].includes(this.recomendado)) {
+    this.invalidate('recomendado', 'un requisito obligatorio no puede tener una recomendación positiva o pendiente', this.recomendado);
   }
 });
 

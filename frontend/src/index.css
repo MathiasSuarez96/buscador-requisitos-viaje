@@ -1,6 +1,7 @@
 @import "tailwindcss" source(none);
 @source "./App.tsx";
 @source "./main.tsx";
+@source "./BadgesRequisito.tsx";
 @source "../index.html";
 /* Compatibilidad con main-dSpg_NR1.css de aa1558f: utilidades históricas
    congeladas, sin escanear panel, scripts ni tests. No ampliar con el panel. */

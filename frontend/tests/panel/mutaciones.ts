@@ -7,9 +7,15 @@ import { spawnSync } from 'node:child_process'
 
 const raiz = resolve(import.meta.dirname, '../..')
 const copia = mkdtempSync(join(tmpdir(), 'mutaciones-listado-'))
+const badges = 'src/BadgesRequisito.tsx'
 const api = 'src/panel/propuestas.ts', controlador = 'src/panel/controlador.ts'
 const aplicaciones = 'src/panel/aplicaciones.ts'
 const mutaciones: [string, string, string, string][] = [
+  ['badge pierde obligatoriedad afirmativa', badges, "if (obligatorio === 'si') etiquetas.push('Obligatorio')", "if (obligatorio === 'si') etiquetas.push('')"],
+  ['badge muestra recomendación opcional sin valor si', badges, "else if (recomendado === 'si') etiquetas.push('Opcional · recomendado')", "else if (recomendado === 'si') etiquetas.push('Recomendado')"],
+  ['badge muestra recomendación a verificar solo si no es obligatorio', badges, "if (obligatorio === 'no' && recomendado === 'verificar')", "if (obligatorio !== 'verificar' && recomendado === 'verificar')"],
+  ['badge agrega etiqueta a recomendación ausente', badges, "else if (recomendado === 'si') etiquetas.push('Opcional · recomendado')", "else if (recomendado !== 'no') etiquetas.push('Opcional · recomendado')"],
+  ['badge elimina prioridad de obligatoriedad a verificar', badges, "if (obligatorio === 'no' && recomendado === 'verificar')", "if (recomendado === 'verificar')"],
   ...(['estado_esperado', 'payload_hash_esperado', 'version_coordinacion_esperada', 'decision_aprobacion_id_esperado'] as const).map(campo => [
     `aplicación envío altera ${campo}`, aplicaciones, `${campo}: snapshot.${campo}`, `${campo}: null`,
   ] as [string, string, string, string]),
