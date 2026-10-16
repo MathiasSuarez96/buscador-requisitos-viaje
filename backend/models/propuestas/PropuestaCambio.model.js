@@ -108,10 +108,11 @@ const {
   hashSobreCanonico
 } = require('../../services/propuestas/canonicalizacion-propuestas');
 const { ESTADOS_PROPUESTA, ESTADOS_ACTIVOS } = require('../../services/propuestas/contrato-propuestas');
+const { validarSobreRequisitoV2 } = require('../../services/propuestas/payload-requisito-v2');
 
-// MVP: solo 'costo'. No agregar campos sin implementar su validador
-// particular (nombre/obligatorio/fuente/link, etc. quedan afuera).
-const CAMPOS_PROPONIBLES = ['costo'];
+// El campo externo selecciona contrato: 1.0 usa costo; 2.0 usa requisito.
+// El registro productivo de propuestas 2.0 permanece cerrado.
+const CAMPOS_PROPONIBLES = ['costo', 'requisito'];
 
 // Validaciones manuales de shape para el contenido de negocio que vive
 // dentro de `payload` (Mixed) — ya no lo tipa Mongoose directamente.
@@ -241,6 +242,20 @@ propuestaCambioSchema.pre('validate', function () {
     throw new Error('propuestas_cambio: payload debe ser un objeto.');
   }
 
+  // Despacho exclusivo por version_contrato. Las barreras posteriores
+  // vincularan payload_hash con CAS de decision y hash_contenido_referenciado
+  // del evento.
+  const version = this.payload.version_contrato;
+  if (version !== VERSION_CONTRATO_PROPUESTA && version !== '2.0') {
+    throw new Error(`propuestas_cambio: version_contrato desconocida (${JSON.stringify(version)}).`);
+  }
+  if (version === VERSION_CONTRATO_PROPUESTA && this.campo === 'requisito') {
+    throw new Error('propuestas_cambio: contrato 1.0 solo admite campo costo.');
+  }
+  if (version === '2.0' && this.campo === 'costo') {
+    throw new Error('propuestas_cambio: contrato 2.0 solo admite campo requisito.');
+  }
+
   // destino_id/requisito_id/campo/run_id_origen/propuesta_id externos
   // deben coincidir EXACTAMENTE con los del payload canónico.
   const camposAComparar = [
@@ -259,20 +274,34 @@ propuestaCambioSchema.pre('validate', function () {
     }
   }
 
-  // valor_anterior/valor_propuesto/fuente solo existen dentro de
-  // payload — se validan a mano porque Mongoose ya no los tipa.
-  validarContrato(this.payload);
-  validarValorConPresencia(this.payload.valor_anterior, 'valor_anterior');
-  validarValorPropuesto(this.payload.valor_propuesto);
-  validarFuente(this.payload.fuente);
+  if (version === VERSION_CONTRATO_PROPUESTA) {
+    // Rama 1.0: mismas validaciones manuales y mismo hash del sobre.
+    validarContrato(this.payload);
+    validarValorConPresencia(this.payload.valor_anterior, 'valor_anterior');
+    validarValorPropuesto(this.payload.valor_propuesto);
+    validarFuente(this.payload.fuente);
 
-  if (this.algoritmo_canonicalizacion === ALGORITMO_CANONICALIZACION && this.algoritmo_hash === ALGORITMO_HASH) {
-    const hashRecalculado = hashSobreCanonico(this.payload, this.algoritmo_canonicalizacion, this.algoritmo_hash);
-    if (hashRecalculado !== this.payload_hash) {
-      throw new Error(
-        `propuestas_cambio: payload_hash (${this.payload_hash}) no coincide con el hash recalculado del sobre canónico completo (${hashRecalculado}).`
-      );
+    if (this.algoritmo_canonicalizacion === ALGORITMO_CANONICALIZACION && this.algoritmo_hash === ALGORITMO_HASH) {
+      const hashRecalculado = hashSobreCanonico(this.payload, this.algoritmo_canonicalizacion, this.algoritmo_hash);
+      if (hashRecalculado !== this.payload_hash) {
+        throw new Error(
+          `propuestas_cambio: payload_hash (${this.payload_hash}) no coincide con el hash recalculado del sobre can\u00f3nico completo (${hashRecalculado}).`
+        );
+      }
     }
+    return;
+  }
+
+  // El validador 2.0 reconstruye y canonicaliza el contenido. El hash
+  // confiable es el almacenado en este documento y debe coincidir exacto.
+  const sobreValidado = validarSobreRequisitoV2({
+    algoritmo_canonicalizacion: this.algoritmo_canonicalizacion,
+    algoritmo_hash: this.algoritmo_hash,
+    payload: this.payload,
+    payload_hash: hashSobreCanonico(this.payload, this.algoritmo_canonicalizacion, this.algoritmo_hash)
+  });
+  if (sobreValidado.payload_hash !== this.payload_hash) {
+    throw new Error('propuestas_cambio: payload_hash 2.0 no coincide con la referencia almacenada.');
   }
 });
 

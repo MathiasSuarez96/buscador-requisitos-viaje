@@ -1,8 +1,8 @@
 const assert = require('node:assert/strict');
 const {
   VERSION_CONTRATO, TIPO_PROPUESTA, CAMPO_EXTERNO, POLITICA_FECHA,
-  CAMPOS_INSTANTANEA, CAMPOS_MODIFICABLES,
-  capturarInstantanea, aplicarCambiosAInstantanea
+  CAMPOS_INSTANTANEA, CAMPOS_MODIFICABLES, TIPOS_REQUISITO,
+  capturarInstantanea, capturarIdentidadEInstantanea, aplicarCambiosAInstantanea
 } = require('../services/propuestas/contrato-requisito-v2');
 
 const requisito = {
@@ -21,6 +21,25 @@ assert.deepEqual(
 assert.deepEqual(CAMPOS_MODIFICABLES, ['obligatorio', 'recomendado', 'descripcion', 'fuente', 'link', 'plazo_antes_del_vuelo', 'estado']);
 
 const foto = capturarInstantanea(requisito);
+const conjunto = capturarIdentidadEInstantanea(requisito);
+assert.deepStrictEqual(conjunto.identidad_requisito, { tipo: 'formulario_digital', nombre: valor('Check-Mig') });
+assert.deepStrictEqual(conjunto.instantanea_anterior, foto);
+assert.ok(Object.isFrozen(conjunto) && Object.isFrozen(conjunto.identidad_requisito) && Object.isFrozen(conjunto.instantanea_anterior));
+assert.deepStrictEqual(TIPOS_REQUISITO, ['visa', 'formulario_digital', 'vacuna', 'validez_pasaporte', 'documentacion_menor', 'tasa_aeropuerto', 'seguro_medico']);
+for (const nombre of [{}, { nombre: null }, { nombre: '' }, { nombre: 'X' }]) {
+  const requisitoNombre = { ...requisito };
+  delete requisitoNombre.nombre;
+  if (Object.hasOwn(nombre, 'nombre')) requisitoNombre.nombre = nombre.nombre;
+  const capturado = capturarIdentidadEInstantanea(requisitoNombre);
+  const esperado = Object.hasOwn(nombre, 'nombre') ? valor(nombre.nombre) : ausente();
+  assert.deepStrictEqual(capturado.identidad_requisito.nombre, esperado);
+}
+assert.throws(() => capturarIdentidadEInstantanea({ ...requisito, tipo: 'otro' }), /pertenece al/);
+const entradaConjunta = { ...requisito };
+const conjuntaAislada = capturarIdentidadEInstantanea(entradaConjunta);
+entradaConjunta.tipo = 'visa'; entradaConjunta.nombre = 'cambiado'; entradaConjunta.descripcion = 'cambiado';
+assert.deepStrictEqual(conjuntaAislada.identidad_requisito.tipo, 'formulario_digital');
+assert.deepStrictEqual(conjuntaAislada.instantanea_anterior.descripcion, valor('Texto anterior'));
 assert.deepEqual(Object.keys(foto), CAMPOS_INSTANTANEA);
 assert.deepEqual(foto.recomendado, ausente());
 assert.deepEqual(foto.fecha_verificacion, valor('2026-08-18'));
@@ -86,4 +105,5 @@ assert.deepEqual(sinRecomendacion.recomendado, ausente());
 console.log('1) Contrato 2.0 y allowlists cerradas: OK');
 console.log('2) Instantánea distingue texto, null y ausencia sin casts: OK');
 console.log('3) Cambios atómicos no mutan la foto ni pueden tocar fecha/costo: OK');
+console.log('5) Captura conjunta de identidad e instantanea: OK');
 console.log('4) Claves desconocidas, duplicados y combinaciones contradictorias se rechazan: OK');

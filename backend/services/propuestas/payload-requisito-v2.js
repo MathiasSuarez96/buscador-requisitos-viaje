@@ -9,6 +9,7 @@ const {
 const {
   VERSION_CONTRATO,
   TIPO_PROPUESTA,
+  TIPOS_REQUISITO,
   CAMPO_EXTERNO,
   POLITICA_FECHA,
   CAMPOS_INSTANTANEA,
@@ -24,10 +25,6 @@ const SHA256 = /^[0-9a-f]{64}$/u;
 const ALGORITMO_HECHOS_HASH = 'sha256-toc-hechos-v1';
 const ADVERTENCIAS = Object.freeze(['quita_obligatoriedad', 'degrada_estado_verificacion', 'cambia_dominio_link']);
 // Identidad del requisito: no forma parte de los campos modificables.
-const TIPOS_REQUISITO = Object.freeze([
-  'visa', 'formulario_digital', 'vacuna', 'validez_pasaporte',
-  'documentacion_menor', 'tasa_aeropuerto', 'seguro_medico'
-]);
 const CLAVES_ENTRADA = Object.freeze([
   'fecha_propuesta', 'destino_id', 'requisito_id', 'identidad_requisito',
   'run_id_origen', 'propuesta_id', 'instantanea_anterior', 'cambios', 'fuentes', 'advertencias'

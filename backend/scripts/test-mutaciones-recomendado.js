@@ -21,6 +21,8 @@ try {
   mkdirSync(join(temporal, 'models'));
   mkdirSync(join(temporal, 'scripts'));
   cpSync(join(raiz, 'models/Destino.model.js'), join(temporal, 'models/Destino.model.js'));
+  mkdirSync(join(temporal, 'services/propuestas'), { recursive: true });
+  cpSync(join(raiz, 'services/propuestas/contrato-requisito-v2.js'), join(temporal, 'services/propuestas/contrato-requisito-v2.js'));
   cpSync(join(raiz, 'scripts/test-recomendado-destino.js'), join(temporal, 'scripts/test-recomendado-destino.js'));
   symlinkSync(join(raiz, 'node_modules'), join(temporal, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
 

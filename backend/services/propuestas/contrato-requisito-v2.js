@@ -4,6 +4,10 @@ const VERSION_CONTRATO = '2.0';
 const TIPO_PROPUESTA = 'actualizacion_requisito';
 const CAMPO_EXTERNO = 'requisito';
 const POLITICA_FECHA = 'fecha_revalidacion_yyyy_mm_dd';
+const TIPOS_REQUISITO = Object.freeze([
+  'visa', 'formulario_digital', 'vacuna', 'validez_pasaporte',
+  'documentacion_menor', 'tasa_aeropuerto', 'seguro_medico'
+]);
 
 const CLAVES_REQUISITO_CONOCIDAS = Object.freeze([
   '_id', 'tipo', 'nombre', 'obligatorio', 'recomendado', 'descripcion',
@@ -57,6 +61,15 @@ function capturarInstantanea(requisito) {
   const fecha = foto.fecha_verificacion;
   if (fecha.bson_tipo === 'string' && !esFechaCalendario(fecha.valor)) falla('fecha_verificacion no es YYYY-MM-DD válido.');
   return Object.freeze(foto);
+}
+
+function capturarIdentidadEInstantanea(requisito) {
+  validarClavesConocidas(requisito);
+  const tipo = requisito.tipo;
+  if (typeof tipo !== 'string' || !TIPOS_REQUISITO.includes(tipo)) falla('tipo no pertenece al catalogo de requisitos.');
+  const identidad_requisito = Object.freeze({ tipo, nombre: capturarValor(requisito, 'nombre') });
+  const instantanea_anterior = capturarInstantanea(requisito);
+  return Object.freeze({ identidad_requisito, instantanea_anterior });
 }
 
 function validarInstantanea(instantanea) {
@@ -140,6 +153,7 @@ module.exports = {
   TIPO_PROPUESTA,
   CAMPO_EXTERNO,
   POLITICA_FECHA,
+  TIPOS_REQUISITO,
   CLAVES_REQUISITO_CONOCIDAS,
   CAMPOS_INSTANTANEA,
   CAMPOS_MODIFICABLES,
@@ -147,6 +161,7 @@ module.exports = {
   esFechaCalendario,
   capturarValor,
   capturarInstantanea,
+  capturarIdentidadEInstantanea,
   validarValorCapturado,
   mismoValorCapturado,
   validarInstantanea,

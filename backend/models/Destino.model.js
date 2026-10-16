@@ -1,11 +1,11 @@
 const mongoose = require('mongoose');
+const { TIPOS_REQUISITO } = require('../services/propuestas/contrato-requisito-v2');
 
 const requisitoSchema = new mongoose.Schema({
   tipo: {
     type: String,
     required: true,
-    enum: ['visa', 'formulario_digital', 'vacuna', 'validez_pasaporte',
-           'documentacion_menor', 'tasa_aeropuerto', 'seguro_medico']
+    enum: TIPOS_REQUISITO
   },
   nombre: { type: String },
   obligatorio: { type: String, required: true, enum: ['si', 'no', 'verificar'] },
