@@ -26,11 +26,13 @@ const {
 } = require('../services/propuestas/canonicalizacion-propuestas');
 const {
   CATEGORIAS_QUE_GENERAN_PROPUESTA,
+  VERSION_CONTRATO_REGISTRO,
   ESTADOS_ACTIVOS,
   INDICE_PROPUESTA_ACTIVA,
   CLAVE_INDICE_PROPUESTA_ACTIVA,
   MAX_INTENTOS,
   ErrorEntradaInvalida,
+  ErrorVersionContratoNoSoportada,
   ErrorPrecondicionIndices,
   ErrorEjecucionDuplicada,
   esColisionPropuestaActiva,
@@ -323,6 +325,47 @@ async function assertRechaza(promesaOFn, claseOMensaje, etiqueta) {
       assert.deepStrictEqual(estado.llamadas, [], `[${etiqueta}] no debe llamar a ninguna dependencia`);
     }
 
+    const versionesNoSoportadas = ['2.0', null, 1, new String('1.0'), ['1.0'], { toString: () => '1.0' }, { valueOf: () => '1.0' }, Symbol('1.0')];
+    for (const version_contrato of versionesNoSoportadas) {
+      const { estado, deps } = crearRepoFalso();
+      const err = await assertRechaza(
+        () => registrarEjecucionLectura(entradaOk({ version_contrato }), deps),
+        ErrorVersionContratoNoSoportada,
+        `version cerrada ${typeof version_contrato}`
+      );
+      assert.strictEqual(err.codigo, 'version_contrato_no_soportada');
+      assert.strictEqual(err.message, 'registrarEjecucionLectura: version_contrato no soportada.');
+      assert.deepStrictEqual(estado.llamadas, [], 'la versión se rechaza antes de cualquier dependencia');
+    }
+
+    let lecturasVersion = 0;
+    const entradaConGetter = entradaOk();
+    Object.defineProperty(entradaConGetter, 'version_contrato', {
+      enumerable: true,
+      get() { lecturasVersion++; return lecturasVersion === 1 ? '1.0' : '2.0'; }
+    });
+    validarEntrada(entradaConGetter);
+    assert.strictEqual(lecturasVersion, 1, 'version_contrato se lee exactamente una vez');
+
+    {
+      const { estado, deps } = crearRepoFalso();
+      const err = await assertRechaza(
+        () => registrarEjecucionLectura(entradaFallo({ version_contrato: '2.0' }), deps),
+        ErrorVersionContratoNoSoportada,
+        'fallo 2.0 cerrado'
+      );
+      assert.strictEqual(err.codigo, 'version_contrato_no_soportada');
+      assert.deepStrictEqual(estado.llamadas, [], 'un fallo 2.0 tampoco llega a dependencias');
+    }
+
+    {
+      const { estado, deps } = crearRepoFalso();
+      const resultado = await registrarEjecucionLectura(entradaOk({ version_contrato: '1.0' }), deps);
+      assert.strictEqual(resultado.accion, 'propuesta_creada');
+      assert.strictEqual(estado.propuestas.length, 1);
+      assert.strictEqual(estado.propuestas[0].payload.version_contrato, '1.0');
+    }
+
     // capturado_en: solo ISO exacto de Date#toISOString.
     assert.ok(esFechaIsoUtcExacta('2026-09-24T12:00:01.000Z'));
     for (const invalida of ['2026-09-24', '2026-09-24T12:00:01Z', '2026-09-24T09:00:01.000-03:00', '2026-02-30T00:00:00.000Z', 'x', '']) {
@@ -341,6 +384,8 @@ async function assertRechaza(promesaOFn, claseOMensaje, etiqueta) {
       );
     }
     // Donde no se propone, capturado_en puede faltar (ej. falló el fetch).
+    assert.strictEqual(VERSION_CONTRATO_REGISTRO, '1.0');
+    validarEntrada(entradaOk({ version_contrato: '1.0' }));
     validarEntrada(entradaFallo());
     validarEntrada(
       entradaOk({

@@ -48,7 +48,6 @@ const PropuestaCambio = require('../../models/propuestas/PropuestaCambio.model')
 const {
   ALGORITMO_CANONICALIZACION,
   ALGORITMO_HASH,
-  VERSION_CONTRATO_PROPUESTA,
   TIPO_PROPUESTA,
   esFechaIsoUtcExacta,
   canonicalizarValor,
@@ -66,6 +65,11 @@ const {
 } = require('./indices-propuestas');
 
 const CATEGORIAS_QUE_GENERAN_PROPUESTA = ['SIN_COSTO_PREVIO_EN_MONGO', 'IMPORTE_NO_COINCIDE'];
+// Cierre preventivo: este servicio registra únicamente el contrato 1.0.
+// La ausencia conserva compatibilidad con los adaptadores actuales; una
+// versión declarada debe coincidir exactamente. Habilitar 2.0 exige otro
+// cambio de código revisado, nunca una variable de entorno.
+const VERSION_CONTRATO_REGISTRO = '1.0';
 
 // Índices de corrección que este servicio exige (ver indices-propuestas.js).
 const INDICES_REQUERIDOS = INDICES_REGISTRO;
@@ -74,6 +78,13 @@ const MAX_INTENTOS = 3;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 class ErrorEntradaInvalida extends Error {}
+class ErrorVersionContratoNoSoportada extends ErrorEntradaInvalida {
+  constructor() {
+    super('registrarEjecucionLectura: version_contrato no soportada.');
+    this.name = 'ErrorVersionContratoNoSoportada';
+    this.codigo = 'version_contrato_no_soportada';
+  }
+}
 class ErrorEjecucionDuplicada extends Error {}
 
 function debeGenerarPropuesta(categoria) {
@@ -111,6 +122,10 @@ function validarEntrada(e) {
     throw new ErrorEntradaInvalida(`registrarEjecucionLectura: ${m}`);
   };
   if (e === null || typeof e !== 'object') falla('la entrada debe ser un objeto.');
+  const versionDeclarada = e.version_contrato;
+  if (versionDeclarada !== undefined && versionDeclarada !== VERSION_CONTRATO_REGISTRO) {
+    throw new ErrorVersionContratoNoSoportada();
+  }
   if (typeof e.run_id !== 'string' || !UUID.test(e.run_id)) falla('run_id debe ser un UUID.');
   if (!(e.iniciado_en instanceof Date) || Number.isNaN(e.iniciado_en.getTime())) {
     falla('iniciado_en debe ser un Date válido.');
@@ -177,7 +192,7 @@ function construirPayloadPropuesta(e, propuestaId, fechaPropuesta) {
     );
   }
   return {
-    version_contrato: VERSION_CONTRATO_PROPUESTA,
+    version_contrato: VERSION_CONTRATO_REGISTRO,
     tipo_propuesta: TIPO_PROPUESTA,
     fecha_propuesta: fechaPropuesta,
     destino_id: String(e.destino_id),
@@ -395,12 +410,14 @@ function crearDependenciasMongoose(conexion = mongoose.connection) {
 
 module.exports = {
   CATEGORIAS_QUE_GENERAN_PROPUESTA,
+  VERSION_CONTRATO_REGISTRO,
   ESTADOS_ACTIVOS,
   INDICE_PROPUESTA_ACTIVA,
   CLAVE_INDICE_PROPUESTA_ACTIVA,
   INDICES_REQUERIDOS,
   MAX_INTENTOS,
   ErrorEntradaInvalida,
+  ErrorVersionContratoNoSoportada,
   ErrorPrecondicionIndices,
   ErrorEjecucionDuplicada,
   debeGenerarPropuesta,
