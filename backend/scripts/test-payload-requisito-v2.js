@@ -1,7 +1,8 @@
+'use strict';
 const assert = require('node:assert/strict');
 const { hashSobreCanonico } = require('../services/propuestas/canonicalizacion-propuestas');
 const { capturarInstantanea } = require('../services/propuestas/contrato-requisito-v2');
-const { ALGORITMO_HECHOS_HASH, hashHechos, crearSobreRequisitoV2 } = require('../services/propuestas/payload-requisito-v2');
+const { ALGORITMO_HECHOS_HASH, hashHechos, crearSobreRequisitoV2, validarSobreRequisitoV2 } = require('../services/propuestas/payload-requisito-v2');
 
 const valor = (v) => ({ presente: true, bson_tipo: 'string', valor: v });
 const foto = capturarInstantanea({
@@ -15,6 +16,7 @@ const base = {
   fecha_propuesta: '2026-10-15T20:30:00.000Z',
   destino_id: '6a87828da8282a4aa6ddfbce', requisito_id: '6aaddd0e9f54309f9d82727b',
   run_id_origen: '11111111-1111-4111-8111-111111111111', propuesta_id: '22222222-2222-4222-8222-222222222222',
+  identidad_requisito: { tipo: 'formulario_digital', nombre: valor('Check-Mig') },
   instantanea_anterior: foto,
   cambios: [
     { campo: 'recomendado', propuesto: valor('si') },
@@ -37,7 +39,7 @@ assert.deepEqual(sobre.payload.fuentes.map((f) => f.url), [
   'https://www.migracioncolombia.gov.co/pagina-b'
 ]);
 assert.equal(sobre.payload_hash, hashSobreCanonico(sobre.payload, 'toc-v1', 'sha256'));
-assert.equal(sobre.payload_hash, '073775ab2126dc73c8763f7255a56a709c8180add3f05d6c91626e238de6fd1b', 'vector fijo 2.0');
+assert.equal(sobre.payload_hash, '0970cc514303767000796a7e0a58da69e70a92eb02b3ea74825ed511df0eb7cd', 'vector fijo 2.0');
 
 const reordenado = crearSobreRequisitoV2({ ...base, cambios: [...base.cambios].reverse(), fuentes: [...base.fuentes].reverse() });
 assert.equal(reordenado.payload_hash, sobre.payload_hash, 'orden de cambios/fuentes no altera el hash');
@@ -65,3 +67,86 @@ console.log('1) Payload 2.0 exacto, normalizado y hasheado con toc-v1: OK');
 console.log('2) Orden de cambios y fuentes no altera el hash: OK');
 console.log('3) Evidencia, duplicados, fechas e IDs inválidos se rechazan: OK');
 console.log('4) El hash de payloads 1.0 permanece intacto: OK');
+
+// Identidad capturada, hash e integridad de sobres transportados como JSON.
+const copia = (x) => JSON.parse(JSON.stringify(x));
+const ausente = { presente: false, bson_tipo: 'ausente', valor: null };
+const nulo = { presente: true, bson_tipo: 'null', valor: null };
+const identidad = base.identidad_requisito;
+const conIdentidad = (i) => crearSobreRequisitoV2({ ...base, identidad_requisito: i });
+assert.deepEqual(sobre.payload.identidad_requisito, identidad);
+assert.deepEqual(validarSobreRequisitoV2(copia(sobre)), sobre);
+const hashesNombres = [ausente, nulo, valor(''), valor('Check-Mig'), valor('Otro'), valor(' Check-Mig ')].map(nombre => conIdentidad({ ...identidad, nombre }).payload_hash);
+assert.equal(new Set(hashesNombres).size, hashesNombres.length, 'ausencia, null y strings exactos tienen identidades diferentes');
+assert.notEqual(conIdentidad({ ...identidad, tipo: 'visa' }).payload_hash, sobre.payload_hash, 'tipo participa en el hash');
+for (const tipo of ['visa', 'formulario_digital', 'vacuna', 'validez_pasaporte', 'documentacion_menor', 'tasa_aeropuerto', 'seguro_medico']) {
+  assert.equal(conIdentidad({ ...identidad, tipo }).payload.identidad_requisito.tipo, tipo);
+}
+for (const tipo of [undefined, null, 1, true, [], {}, new String('visa'), '', 'otro', ' visa']) {
+  assert.throws(() => conIdentidad({ ...identidad, tipo }), /identidad_requisito.tipo/);
+}
+for (const i of [null, [], {}, { tipo: 'visa' }, { nombre: valor('A') }, { ...identidad, extra: true }]) {
+  assert.throws(() => conIdentidad(i), /identidad_requisito/);
+}
+for (const nombre of [undefined, null, 'A', [], {}, { ...valor('A'), extra: true },
+  { presente: true, valor: 'A' }, { bson_tipo: 'string', valor: 'A' }, { presente: true, bson_tipo: 'string' },
+  { ...ausente, valor: 'A' }, { ...ausente, bson_tipo: 'null' }, { ...nulo, bson_tipo: 'string' },
+  { ...valor('A'), presente: 'true' }, { ...valor('A'), valor: 1 }, { ...valor('A'), valor: undefined }]) {
+  assert.throws(() => conIdentidad({ ...identidad, nombre }), /identidad_requisito.nombre/);
+}
+const sinIdentidad = { ...base }; delete sinIdentidad.identidad_requisito;
+assert.throws(() => crearSobreRequisitoV2(sinIdentidad), /entrada/);
+assert.throws(() => crearSobreRequisitoV2({ ...base, tipo: 'visa' }), /entrada/);
+for (const campo of ['tipo', 'nombre', 'identidad_requisito']) {
+  assert.throws(() => crearSobreRequisitoV2({ ...base, cambios: [{ campo, propuesto: valor('Otro') }] }), /campo no modificable/);
+}
+const invertir = x => Array.isArray(x) ? x.map(invertir) : x && typeof x === 'object'
+  ? Object.fromEntries(Object.entries(x).reverse().map(([k, v]) => [k, invertir(v)])) : x;
+assert.equal(crearSobreRequisitoV2(invertir(base)).payload_hash, sobre.payload_hash);
+let sobreReordenadoValidado;
+assert.doesNotThrow(() => { sobreReordenadoValidado = validarSobreRequisitoV2(invertir(copia(sobre))); }, 'orden recursivo de claves debe validar');
+assert.equal(sobreReordenadoValidado.payload_hash, sobre.payload_hash, 'orden recursivo de claves no altera identidad');
+for (const mutar of [
+  p => { p.identidad_requisito.tipo = 'visa'; },
+  p => { p.identidad_requisito.nombre = ausente; },
+  p => { p.identidad_requisito.nombre = nulo; },
+  p => { p.identidad_requisito.nombre.valor = 'Otro'; },
+  p => { delete p.identidad_requisito; },
+  p => { delete p.identidad_requisito.nombre; },
+  p => { delete p.identidad_requisito.tipo; },
+  p => { p.identidad_requisito.extra = true; },
+  p => { p.identidad_requisito.tipo = 1; },
+  p => { p.identidad_requisito.nombre.valor = 1; },
+  p => { p.version_contrato = '1.0'; },
+  p => { p.extra = true; }
+]) {
+  const adulterado = copia(sobre); mutar(adulterado.payload);
+  assert.throws(() => validarSobreRequisitoV2(adulterado), /contrato 2.0/);
+}
+for (const nombre of [ausente, nulo]) {
+  const adulterado = copia(conIdentidad({ ...identidad, nombre }));
+  adulterado.payload.identidad_requisito.nombre = valor('Agregado');
+  assert.throws(() => validarSobreRequisitoV2(adulterado), /payload_hash/);
+}
+// Incluso con hash recalculado se rechaza una estructura o version invalida.
+for (const mutar of [p => { delete p.identidad_requisito.nombre; }, p => { p.version_contrato = '1.0'; }]) {
+  const adulterado = copia(sobre); mutar(adulterado.payload);
+  adulterado.payload_hash = hashSobreCanonico(adulterado.payload, 'toc-v1', 'sha256');
+  assert.throws(() => validarSobreRequisitoV2(adulterado), /contrato 2.0/);
+}
+for (const mutar of [s => { s.payload_hash = '0'.repeat(64); }, s => { s.algoritmo_hash = 'md5'; },
+  s => { s.algoritmo_canonicalizacion = 'otro'; }, s => { s.extra = true; }, s => { delete s.payload_hash; }]) {
+  const adulterado = copia(sobre); mutar(adulterado);
+  assert.throws(() => validarSobreRequisitoV2(adulterado), /contrato 2.0/);
+}
+const entradaMutable = copia(base);
+const aislado = crearSobreRequisitoV2(entradaMutable);
+entradaMutable.identidad_requisito.tipo = 'visa';
+entradaMutable.identidad_requisito.nombre.valor = 'Otro';
+assert.deepEqual(aislado.payload.identidad_requisito, identidad, 'copia aislada de entrada');
+for (const objeto of [aislado, aislado.payload, aislado.payload.identidad_requisito, aislado.payload.identidad_requisito.nombre]) assert.ok(Object.isFrozen(objeto));
+assert.throws(() => { aislado.payload.identidad_requisito.tipo = 'visa'; }, TypeError);
+assert.throws(() => { aislado.payload.identidad_requisito.nombre.valor = 'Otro'; }, TypeError);
+assert.throws(() => { delete aislado.payload.identidad_requisito.nombre; }, TypeError);
+assert.throws(() => { aislado.payload.identidad_requisito = identidad; }, TypeError);
+console.log('5) Identidad estricta, inmutable, canonica y protegida por hash: OK');

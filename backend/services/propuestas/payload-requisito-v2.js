@@ -23,6 +23,18 @@ const OBJECT_ID = /^[0-9a-f]{24}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const ALGORITMO_HECHOS_HASH = 'sha256-toc-hechos-v1';
 const ADVERTENCIAS = Object.freeze(['quita_obligatoriedad', 'degrada_estado_verificacion', 'cambia_dominio_link']);
+// Identidad del requisito: no forma parte de los campos modificables.
+const TIPOS_REQUISITO = Object.freeze([
+  'visa', 'formulario_digital', 'vacuna', 'validez_pasaporte',
+  'documentacion_menor', 'tasa_aeropuerto', 'seguro_medico'
+]);
+const CLAVES_ENTRADA = Object.freeze([
+  'fecha_propuesta', 'destino_id', 'requisito_id', 'identidad_requisito',
+  'run_id_origen', 'propuesta_id', 'instantanea_anterior', 'cambios', 'fuentes', 'advertencias'
+]);
+const CLAVES_PAYLOAD = Object.freeze([
+  ...CLAVES_ENTRADA, 'version_contrato', 'tipo_propuesta', 'campo', 'politica_fecha_verificacion'
+]);
 const compararCodigo = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 
 function falla(mensaje) { throw new ErrorContratoRequisitoV2(`payload: ${mensaje}`); }
@@ -83,6 +95,14 @@ function normalizarFuente(fuente, indice) {
   return Object.freeze({ nombre: fuente.nombre, url: fuente.url, capturado_en: fuente.capturado_en, hechos, algoritmo_hechos_hash: ALGORITMO_HECHOS_HASH, hechos_hash: calculado });
 }
 
+function normalizarIdentidad(identidad) {
+  clavesExactas(identidad, ['tipo', 'nombre'], 'identidad_requisito');
+  if (typeof identidad.tipo !== 'string' || !TIPOS_REQUISITO.includes(identidad.tipo)) falla('identidad_requisito.tipo invalido.');
+  // nombre admite ausencia, null y cualquier string, sin casts ni trim.
+  const nombre = validarValorCapturado(identidad.nombre, 'identidad_requisito.nombre');
+  return Object.freeze({ tipo: identidad.tipo, nombre });
+}
+
 function normalizarInstantanea(foto) {
   validarInstantanea(foto);
   return Object.freeze(Object.fromEntries(CAMPOS_INSTANTANEA.map((campo) => [campo, validarValorCapturado(foto[campo], `instantanea_anterior.${campo}`)])));
@@ -110,10 +130,8 @@ function advertenciasRequeridas(foto, resultado) {
 }
 
 function crearPayloadRequisitoV2(entrada) {
-  clavesExactas(entrada, [
-    'fecha_propuesta', 'destino_id', 'requisito_id', 'run_id_origen', 'propuesta_id',
-    'instantanea_anterior', 'cambios', 'fuentes', 'advertencias'
-  ], 'entrada');
+  clavesExactas(entrada, CLAVES_ENTRADA, 'entrada');
+  const identidad = normalizarIdentidad(entrada.identidad_requisito);
   if (!esFechaIsoUtcExacta(entrada.fecha_propuesta)) falla('fecha_propuesta debe ser ISO UTC exacta.');
   for (const campo of ['destino_id', 'requisito_id']) if (!OBJECT_ID.test(entrada[campo])) falla(`${campo} debe ser ObjectId hex minúsculo.`);
   for (const campo of ['run_id_origen', 'propuesta_id']) if (!UUID.test(entrada[campo])) falla(`${campo} debe ser UUID.`);
@@ -140,6 +158,7 @@ function crearPayloadRequisitoV2(entrada) {
     fecha_propuesta: entrada.fecha_propuesta,
     destino_id: entrada.destino_id,
     requisito_id: entrada.requisito_id,
+    identidad_requisito: identidad,
     campo: CAMPO_EXTERNO,
     run_id_origen: entrada.run_id_origen,
     propuesta_id: entrada.propuesta_id,
@@ -161,4 +180,16 @@ function crearSobreRequisitoV2(entrada) {
   });
 }
 
-module.exports = { ALGORITMO_HECHOS_HASH, ADVERTENCIAS, compararCodigo, jsonEstricto, hashHechos, advertenciasRequeridas, crearPayloadRequisitoV2, crearSobreRequisitoV2 };
+// Validador puro para sobres deserializados; no despacha modelos ni escribe propuestas.
+function validarSobreRequisitoV2(sobre) {
+  clavesExactas(sobre, ['algoritmo_canonicalizacion', 'algoritmo_hash', 'payload', 'payload_hash'], 'sobre');
+  clavesExactas(sobre.payload, CLAVES_PAYLOAD, 'payload');
+  if (sobre.algoritmo_canonicalizacion !== ALGORITMO_CANONICALIZACION || sobre.algoritmo_hash !== ALGORITMO_HASH) falla('algoritmos invalidos.');
+  const entrada = Object.fromEntries(CLAVES_ENTRADA.map((clave) => [clave, sobre.payload[clave]]));
+  const esperado = crearSobreRequisitoV2(entrada);
+  if (JSON.stringify(canonicalizarValor(sobre.payload)) !== JSON.stringify(canonicalizarValor(esperado.payload))) falla('payload no coincide con el contrato canonico.');
+  if (typeof sobre.payload_hash !== 'string' || sobre.payload_hash !== esperado.payload_hash) falla('payload_hash no coincide.');
+  return esperado;
+}
+
+module.exports = { ALGORITMO_HECHOS_HASH, ADVERTENCIAS, compararCodigo, jsonEstricto, hashHechos, advertenciasRequeridas, crearPayloadRequisitoV2, crearSobreRequisitoV2, validarSobreRequisitoV2 };
