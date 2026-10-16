@@ -161,10 +161,18 @@ function foto(store) {
 // null o campo ausente. Cualquier operador lanza (no está modelado).
 function coincideFiltro(doc, filtro) {
   for (const [campo, valor] of Object.entries(filtro)) {
-    if (valor !== null && typeof valor === 'object') throw new Error(`fake: operador no soportado en ${campo}`);
+    const real = campo.split('.').reduce((v, k) => v?.[k], doc);
+    if (Array.isArray(valor)) { if (!Array.isArray(real) || JSON.stringify(real) !== JSON.stringify(valor)) return false; continue; }
+    if (valor !== null && typeof valor === 'object') {
+      if (Object.keys(valor).length === 1 && Object.hasOwn(valor, '$eq')) {
+        if (JSON.stringify(real) !== JSON.stringify(valor.$eq)) return false;
+        continue;
+      }
+      throw new Error(`fake: operador no soportado en ${campo}`);
+    }
     if (valor === null) {
-      if (doc[campo] !== null && doc[campo] !== undefined) return false;
-    } else if (doc[campo] !== valor) {
+      if (real !== null && real !== undefined) return false;
+    } else if (real !== valor) {
       return false;
     }
   }
@@ -1111,7 +1119,8 @@ function hashAlterado(h) {
         estado: 'pendiente_aprobacion',
         payload_hash: p.payload_hash,
         version_coordinacion: 0,
-        decision_aprobacion_id: null
+        decision_aprobacion_id: null,
+        'payload.version_contrato': '1.0'
       });
       assert.deepStrictEqual(capturas.update.update.$inc, { version_coordinacion: 1 });
       assert.strictEqual(capturas.update.update.$set.decision_aprobacion_id, r.evento_id);

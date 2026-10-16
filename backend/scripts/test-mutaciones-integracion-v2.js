@@ -48,7 +48,7 @@ for (const mutacion of mutaciones) {
   assert.ok(!r.error && r.status !== null, `Infraestructura: ${mutacion[0]}: ${r.error}`);
   assert.equal(r.status, 1, `Sobrevivio: ${mutacion[0]}\n${r.stdout}\n${r.stderr}`);
   assert.match(r.stderr, /AssertionError/, `Sin asercion: ${mutacion[0]}\n${r.stderr}`);
-  assert.doesNotMatch(r.stderr, /SyntaxError|ReferenceError|MODULE_NOT_FOUND|SOLO-LOOPBACK BLOQUEADO|ANCLA NO UNICA/);
+  assert.doesNotMatch(r.stderr, /SyntaxError|ReferenceError|TypeError|MODULE_NOT_FOUND|SOLO-LOOPBACK BLOQUEADO|ANCLA NO UNICA/);
   console.log(`Detectada por asercion: ${mutacion[0]}`);
 }
 console.log(`${mutaciones.length}/${mutaciones.length} mutaciones de integracion detectadas por asercion.`);

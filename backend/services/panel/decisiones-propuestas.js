@@ -66,6 +66,7 @@ const {
   ErrorEntradaInvalida,
   ErrorTransicionInvalida,
   ErrorInconsistencia,
+  validarAdvertenciasAceptadas,
   decidirPropuesta,
   crearDependenciasMongoose
 } = require('../propuestas/decidir-propuesta');
@@ -79,6 +80,7 @@ const CLAVES_CUERPO = Object.freeze({
   aprobacion: Object.freeze(['estado_esperado', 'payload_hash_esperado', 'version_coordinacion_esperada']),
   rechazo: Object.freeze(['estado_esperado', 'payload_hash_esperado', 'version_coordinacion_esperada', 'motivo'])
 });
+const CLAVES_BASE = Object.freeze(['estado_esperado', 'payload_hash_esperado', 'version_coordinacion_esperada']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 // Cualquier carácter de control (Cc, incluidos C1 y \r) salvo \n y \t.
 const CONTROL_NO_PERMITIDO = /(?![\n\t])\p{Cc}/u;
@@ -136,7 +138,11 @@ function construirEntrada(tipoEvento, propuestaId, cuerpo) {
   };
   if (!TIPOS_PANEL.includes(tipoEvento)) throw new TypeError(`construirEntrada: tipo_evento no soportado por el panel: ${tipoEvento}`);
   if (!esObjeto(cuerpo) || Object.getPrototypeOf(cuerpo) !== Object.prototype) falla('cuerpo');
-  const permitidas = CLAVES_CUERPO[tipoEvento];
+  const versionContrato = Object.prototype.hasOwnProperty.call(cuerpo, 'version_contrato_esperada') ? cuerpo.version_contrato_esperada : '1.0';
+  if (versionContrato !== '1.0' && versionContrato !== '2.0') falla('version_contrato_esperada');
+  const permitidas = versionContrato === '2.0'
+    ? [...CLAVES_BASE, 'version_contrato_esperada', ...(tipoEvento === 'aprobacion' ? ['advertencias_aceptadas'] : ['motivo'])]
+    : CLAVES_CUERPO[tipoEvento];
   const claves = Object.keys(cuerpo);
   if (claves.length !== permitidas.length || claves.some((k) => !permitidas.includes(k))) falla('claves');
 
@@ -161,7 +167,18 @@ function construirEntrada(tipoEvento, propuestaId, cuerpo) {
     if (CONTROL_NO_PERMITIDO.test(motivo)) falla('motivo_control');
     entrada.motivo = motivo;
   }
+  if (versionContrato === '2.0') {
+    entrada.version_contrato_esperada = '2.0';
+    if (tipoEvento === 'aprobacion') {
+      try { entrada.advertencias_aceptadas = validarAdvertenciasAceptadas(cuerpo.advertencias_aceptadas); }
+      catch { falla('advertencias_aceptadas'); }
+    }
+  }
   return entrada;
+}
+
+function arraysExactos(a, b) {
+  return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
 // Pura. ¿Lo que el operador vio (estado, hash, versión) sigue siendo lo actual?
@@ -170,6 +187,8 @@ function coincideLoVisto(entrada, p) {
     p.estado === entrada.estado_esperado &&
     p.payload_hash === entrada.payload_hash_esperado &&
     p.version_coordinacion === entrada.version_coordinacion_esperada
+    && p.payload?.version_contrato === (entrada.version_contrato_esperada ?? '1.0')
+    && (entrada.tipo_evento !== 'aprobacion' || (entrada.version_contrato_esperada ?? '1.0') !== '2.0' || arraysExactos(p.payload?.advertencias, entrada.advertencias_aceptadas))
   );
 }
 
@@ -185,6 +204,11 @@ function esReenvioIdentico(entrada, operador, p, ev) {
   const io = esObjeto(ev.detalle?.identidad_operador) ? ev.detalle.identidad_operador : {};
   const motivo = entrada.motivo === undefined ? null : entrada.motivo.trim();
   const decisionEsperada = entrada.tipo_evento === 'aprobacion' ? ev.evento_id : null;
+  const versionContrato = entrada.version_contrato_esperada ?? '1.0';
+  const detalle = ev.detalle ?? {};
+  const detalleVersionCorrecto = versionContrato === '2.0'
+    ? detalle.version_contrato === '2.0' && (entrada.tipo_evento === 'aprobacion' ? arraysExactos(detalle.advertencias_aceptadas, entrada.advertencias_aceptadas) : !Object.prototype.hasOwnProperty.call(detalle, 'advertencias_aceptadas'))
+    : !Object.prototype.hasOwnProperty.call(detalle, 'version_contrato') && !Object.prototype.hasOwnProperty.call(detalle, 'advertencias_aceptadas');
   return (
     typeof ev.evento_id === 'string' &&
     p.ultimo_evento_id === ev.evento_id &&
@@ -193,6 +217,8 @@ function esReenvioIdentico(entrada, operador, p, ev) {
     p.estado === ev.estado_nuevo &&
     p.version_coordinacion === ev.version_coordinacion_nueva &&
     p.payload_hash === ev.hash_contenido_referenciado &&
+    p.payload?.version_contrato === versionContrato &&
+    (versionContrato !== '2.0' || entrada.tipo_evento !== 'aprobacion' || arraysExactos(p.payload?.advertencias, entrada.advertencias_aceptadas)) &&
     (p.decision_aprobacion_id ?? null) === decisionEsperada &&
     // misma decisión
     ev.tipo_evento === entrada.tipo_evento &&
@@ -205,6 +231,7 @@ function esReenvioIdentico(entrada, operador, p, ev) {
     ev.actor?.tipo === 'humano' &&
     ev.actor?.identificador === operador.actor.identificador &&
     ev.detalle?.comando?.nombre === COMANDO_PANEL.nombre &&
+    detalleVersionCorrecto &&
     io.metodo === operador.identidad_operador.metodo &&
     io.sub === operador.identidad_operador.sub
   );
@@ -274,7 +301,10 @@ function crearDecisionesPropuestas({
     if (!d || typeof d.collection !== 'function') throw new ErrorLecturaNoDisponible('sin_conexion_mongo');
     return d;
   };
-  const leerPropuesta = (propuestaId) => db().collection(COLECCIONES.propuestas).findOne({ propuesta_id: propuestaId });
+  const leerPropuesta = (propuestaId) => db().collection(COLECCIONES.propuestas).findOne({ propuesta_id: propuestaId }, { projection: {
+    _id: 0, propuesta_id: 1, estado: 1, payload_hash: 1, version_coordinacion: 1, decision_aprobacion_id: 1,
+    ultimo_evento_id: 1, 'payload.version_contrato': 1, 'payload.advertencias': 1
+  } });
   const leerUltimoEvento = (p) =>
     typeof p.ultimo_evento_id === 'string' && UUID.test(p.ultimo_evento_id)
       ? db().collection(COLECCIONES.eventos).findOne({ evento_id: p.ultimo_evento_id })
@@ -304,8 +334,11 @@ function crearDecisionesPropuestas({
     if (!p) throw new ErrorPropuestaInexistente('propuesta_inexistente');
     const previa = await resolverActual(entrada, operador, p, 'relectura_previa');
     if (previa) return previa;
-    if (tipoEvento === 'aprobacion') {
-      const { motivos } = await evaluarIntegridad(db(), p, adaptadores);
+    if (tipoEvento === 'aprobacion' && (entrada.version_contrato_esperada ?? '1.0') === '1.0') {
+      const completa = await db().collection(COLECCIONES.propuestas).findOne({ propuesta_id: propuestaId });
+      if (!completa || !coincideLoVisto(entrada, completa)) throw new ErrorPropuestaCambio(actualSeguro(p, await leerUltimoEvento(p)));
+      // El lector de integridad actual verifica el payload 1.0 completo; 2.0 usa su propio contrato y su CAS de advertencias.
+      const { motivos } = await evaluarIntegridad(db(), completa, adaptadores);
       if (motivos.length > 0) throw new ErrorPropuestaNoDecidible(motivos);
     }
 

@@ -41,6 +41,8 @@
  * existe y coincide exactamente (evento_id, propuesta, tipo, estados,
  * hash, versión, ocurrido_en, actor, motivo y detalle completo; actor y
  * detalle se comparan canonicalizados, sin depender del orden de claves).
+ * Para 2.0, payload_hash_esperado vincula el CAS y hash_contenido_referenciado
+ * del evento al mismo payload de referencia.
  * Un E11000 sin esa coincidencia es ErrorInconsistencia: alguien escribió
  * por fuera del servicio.
  *
@@ -70,6 +72,7 @@ const EventoPropuesta = require('../../models/propuestas/EventoPropuesta.model')
 const { SHA256_HEX, canonicalizarValor } = require('./canonicalizacion-propuestas');
 const { ESTADOS_PROPUESTA, TRANSICIONES, TIPOS_QUE_REQUIEREN_MOTIVO, motivoTransicionInvalida } = require('./contrato-propuestas');
 const { ErrorPrecondicionIndices, INDICES_DECISION, verificarConjuntoIndices } = require('./indices-propuestas');
+const { ADVERTENCIAS, compararCodigo } = require('./payload-requisito-v2');
 const {
   ErrorConfiguracionOperadores,
   ErrorActorNoAutorizado,
@@ -94,7 +97,9 @@ const CAMPOS_ENTRADA = [
   'payload_hash_esperado',
   'version_coordinacion_esperada',
   'decision_aprobacion_id_esperado',
-  'motivo'
+  'motivo',
+  'version_contrato_esperada',
+  'advertencias_aceptadas'
 ];
 
 class ErrorEntradaInvalida extends Error {}
@@ -112,6 +117,16 @@ function validarEntrada(e) {
   if (extras.length > 0) {
     falla(`campos no admitidos: ${extras.join(', ')} (el actor lo resuelve el servicio, nunca la entrada).`);
   }
+  const version = Object.prototype.hasOwnProperty.call(e, 'version_contrato_esperada') ? e.version_contrato_esperada : '1.0';
+  if (version !== '1.0' && version !== '2.0') falla('version_contrato_esperada debe ser "1.0" o "2.0".');
+  const tieneAdvertencias = Object.prototype.hasOwnProperty.call(e, 'advertencias_aceptadas');
+  let advertenciasAceptadas;
+  if (version === '1.0') {
+    if (tieneAdvertencias) falla('advertencias_aceptadas no se admite en contrato 1.0.');
+  } else if (e.tipo_evento === 'aprobacion') {
+    if (!tieneAdvertencias) falla('advertencias_aceptadas es obligatoria para aprobar contrato 2.0.');
+    advertenciasAceptadas = validarAdvertenciasAceptadas(e.advertencias_aceptadas, falla);
+  } else if (tieneAdvertencias) falla('advertencias_aceptadas no se admite en rechazo o cancelación 2.0.');
   if (!TIPOS_DECISION.includes(e.tipo_evento)) {
     falla(`tipo_evento debe ser una decisión humana (${TIPOS_DECISION.join(', ')}), recibido ${JSON.stringify(e.tipo_evento)}.`);
   }
@@ -147,16 +162,40 @@ function validarEntrada(e) {
   } else if (d !== null) {
     falla(`"${e.tipo_evento}" exige decision_aprobacion_id_esperado === null.`);
   }
+  return Object.freeze({ ...e, version_contrato_esperada: version, ...(version === '2.0' && e.tipo_evento === 'aprobacion' ? { advertencias_aceptadas: advertenciasAceptadas } : {}) });
+}
+
+function validarAdvertenciasAceptadas(valor, falla = (m) => { throw new ErrorEntradaInvalida(`decidirPropuesta: ${m}`); }) {
+  if (!Array.isArray(valor) || Object.getPrototypeOf(valor) !== Array.prototype) falla('advertencias_aceptadas debe ser un array ordinario.');
+  const claves = Reflect.ownKeys(valor);
+  if (claves.length !== valor.length + 1 || claves.some((k) => k !== 'length' && (typeof k !== 'string' || !/^(0|[1-9][0-9]*)$/.test(k)))) falla('advertencias_aceptadas contiene propiedades adicionales.');
+  const copia = [];
+  for (let i = 0; i < valor.length; i++) {
+    const d = Object.getOwnPropertyDescriptor(valor, String(i));
+    if (!d || !Object.prototype.hasOwnProperty.call(d, 'value')) falla('advertencias_aceptadas no admite huecos ni getters.');
+    const codigo = d.value;
+    if (typeof codigo !== 'string' || !ADVERTENCIAS.includes(codigo)) falla('advertencias_aceptadas contiene un código inválido.');
+    if (i > 0 && compararCodigo(copia[i - 1], codigo) >= 0) falla('advertencias_aceptadas debe estar ordenada y no contener duplicados.');
+    copia.push(codigo);
+  }
+  return Object.freeze(copia);
 }
 
 function construirFiltroCas(e) {
-  return {
+  const filtro = {
     propuesta_id: e.propuesta_id,
     estado: e.estado_esperado,
     payload_hash: e.payload_hash_esperado,
     version_coordinacion: e.version_coordinacion_esperada,
-    decision_aprobacion_id: e.decision_aprobacion_id_esperado
+    decision_aprobacion_id: e.decision_aprobacion_id_esperado,
+    'payload.version_contrato': e.version_contrato_esperada ?? '1.0'
   };
+  // Mongoose castea un array directo en un filtro como `$in`. `$eq` evita
+  // ese cast y exige el array completo, con el mismo orden y longitud.
+  if ((e.version_contrato_esperada ?? '1.0') === '2.0' && e.tipo_evento === 'aprobacion') {
+    filtro['payload.advertencias'] = { $eq: [...e.advertencias_aceptadas] };
+  }
+  return filtro;
 }
 
 function construirUpdateCas(e, eventoId, ocurridoEn) {
@@ -174,6 +213,10 @@ function construirEvento(e, eventoId, ocurridoEn, resolucion) {
     throw new TypeError('construirEvento: resolucion.comando { nombre, version } es obligatorio.');
   }
   const detalle = { identidad_operador: { ...resolucion.identidad_operador }, comando: { nombre: comando.nombre, version: comando.version } };
+  if (e.version_contrato_esperada === '2.0') {
+    detalle.version_contrato = '2.0';
+    if (e.tipo_evento === 'aprobacion') detalle.advertencias_aceptadas = [...e.advertencias_aceptadas];
+  }
   if (e.tipo_evento === 'cancelacion') detalle.decision_aprobacion_id_cancelada = e.decision_aprobacion_id_esperado;
   const evento = {
     evento_id: eventoId,
@@ -215,6 +258,10 @@ function diferenciasDecisionConfirmada(e, evento, propuesta, eventoLeido) {
   if (!propuesta) {
     diffs.push('la propuesta no existe');
   } else {
+    comparar('propuesta.payload.version_contrato', propuesta.payload?.version_contrato, e.version_contrato_esperada ?? '1.0');
+    if ((e.version_contrato_esperada ?? '1.0') === '2.0' && e.tipo_evento === 'aprobacion') {
+      comparar('propuesta.payload.advertencias', canonico(propuesta.payload?.advertencias), canonico(e.advertencias_aceptadas));
+    }
     comparar('propuesta.ultimo_evento_id', propuesta.ultimo_evento_id ?? null, evento.evento_id);
     comparar('propuesta.estado', propuesta.estado, evento.estado_nuevo);
     comparar('propuesta.version_coordinacion', propuesta.version_coordinacion, evento.version_coordinacion_nueva);
@@ -327,7 +374,7 @@ async function identidadPorConnectionStatus(deps) {
 }
 
 async function decidirPropuesta(entrada, deps = crearDependenciasMongoose()) {
-  validarEntrada(entrada);
+  entrada = validarEntrada(entrada);
   const resolucion = validarResolucionIdentidad(
     typeof deps.resolverIdentidad === 'function' ? await deps.resolverIdentidad() : await identidadPorConnectionStatus(deps)
   );
@@ -478,6 +525,7 @@ module.exports = {
   ErrorActorNoAutorizado,
   ErrorPrecondicionIndices,
   validarEntrada,
+  validarAdvertenciasAceptadas,
   validarResolucionIdentidad,
   identidadPorConnectionStatus,
   construirFiltroCas,

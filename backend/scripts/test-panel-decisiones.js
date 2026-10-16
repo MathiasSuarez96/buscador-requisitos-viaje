@@ -574,7 +574,7 @@ const cuerpoDe = (p, extra = {}) => ({ estado_esperado: 'pendiente_aprobacion', 
       const ok = fakeDb.poner(propuesta());
       fakeDb.lecturas.length = 0;
       assert.strictEqual((await post(ruta(ok, 'aprobacion'), cuerpoDe(ok))).status, 200);
-      assert.deepStrictEqual(fakeDb.lecturas.map((l) => l.coleccion), ['propuestas_cambio', 'destinos']);
+      assert.deepStrictEqual(fakeDb.lecturas.map((l) => l.coleccion), ['propuestas_cambio', 'propuestas_cambio', 'destinos']);
       // 409 antes que 422: coordinación distinta e integridad rota → 409.
       const ambas = fakeDb.poner(propuesta({ alterarHash: true, extra: { version_coordinacion: 5 } }));
       error(await post(ruta(ambas, 'aprobacion'), cuerpoDe(ambas, { version_coordinacion_esperada: 4 })), 409, 'propuesta_cambio', '409 antes que 422');
