@@ -37,11 +37,13 @@
  *         en aprobación y rechazo. Recargar no lo resuelve. Acá no puede
  *         haber reenvío: la propuesta sigue pendiente y un reenvío exige
  *         que esté en el estado posterior a su último evento.
- *   3. solo aprobación: evaluarIntegridad del lector (la MISMA función que
- *      calcula acciones_bloqueadas.aprobar en el detalle GET: hash, datos,
- *      identidad del requisito y valor actual) → ErrorPropuestaNoDecidible
- *      (422). El rechazo solo necesita las precondiciones de coordinación:
- *      NO se bloquea por integridad, identidad ni cambio del valor actual.
+ *   3. solo aprobación: 1.0 usa evaluarIntegridad del lector (la MISMA
+ *      función que calcula acciones_bloqueadas.aprobar en el detalle GET:
+ *      hash, datos, identidad del requisito y valor actual); 2.0 relee el
+ *      documento completo y valida su contrato canónico contra el hash
+ *      almacenado. Cualquier falla → ErrorPropuestaNoDecidible (422). El
+ *      rechazo solo necesita las precondiciones de coordinación: NO se
+ *      bloquea por integridad, identidad ni cambio del valor actual.
  * Después del CAS, cas_no_coincide aplica la misma resolverActual (si todo
  * coincide igual, 409).
  *
@@ -60,6 +62,8 @@
 
 const mongoose = require('mongoose');
 const { SHA256_HEX } = require('../propuestas/canonicalizacion-propuestas');
+const { validarSobreRequisitoV2 } = require('../propuestas/payload-requisito-v2');
+const { ErrorContratoRequisitoV2 } = require('../propuestas/contrato-requisito-v2');
 const { ESTADOS_PROPUESTA, TIPOS_EVENTO, TRANSICIONES } = require('../propuestas/contrato-propuestas');
 const { ErrorPrecondicionIndices } = require('../propuestas/indices-propuestas');
 const {
@@ -179,6 +183,24 @@ function construirEntrada(tipoEvento, propuestaId, cuerpo) {
 
 function arraysExactos(a, b) {
   return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+// Pura. La aprobación 2.0 no confía solo en los campos mínimos usados por
+// el CAS: valida el sobre completo y vincula el contenido reconstruido con
+// el payload_hash almacenado. El detalle del error nunca sale por HTTP.
+function motivosIntegridadV2(p) {
+  try {
+    validarSobreRequisitoV2({
+      algoritmo_canonicalizacion: p.algoritmo_canonicalizacion,
+      algoritmo_hash: p.algoritmo_hash,
+      payload: p.payload,
+      payload_hash: p.payload_hash
+    });
+    return [];
+  } catch (err) {
+    if (err instanceof ErrorContratoRequisitoV2) return ['payload_2_invalido'];
+    throw err;
+  }
 }
 
 // Pura. ¿Lo que el operador vio (estado, hash, versión) sigue siendo lo actual?
@@ -337,8 +359,14 @@ function crearDecisionesPropuestas({
     if (tipoEvento === 'aprobacion' && (entrada.version_contrato_esperada ?? '1.0') === '1.0') {
       const completa = await db().collection(COLECCIONES.propuestas).findOne({ propuesta_id: propuestaId });
       if (!completa || !coincideLoVisto(entrada, completa)) throw new ErrorPropuestaCambio(actualSeguro(p, await leerUltimoEvento(p)));
-      // El lector de integridad actual verifica el payload 1.0 completo; 2.0 usa su propio contrato y su CAS de advertencias.
+      // El lector de integridad actual verifica el payload 1.0 completo.
       const { motivos } = await evaluarIntegridad(db(), completa, adaptadores);
+      if (motivos.length > 0) throw new ErrorPropuestaNoDecidible(motivos);
+    }
+    if (tipoEvento === 'aprobacion' && entrada.version_contrato_esperada === '2.0') {
+      const completa = await db().collection(COLECCIONES.propuestas).findOne({ propuesta_id: propuestaId });
+      if (!completa || !coincideLoVisto(entrada, completa)) throw new ErrorPropuestaCambio(actualSeguro(p, await leerUltimoEvento(p)));
+      const motivos = motivosIntegridadV2(completa);
       if (motivos.length > 0) throw new ErrorPropuestaNoDecidible(motivos);
     }
 
@@ -389,6 +417,7 @@ module.exports = {
   ErrorTransicionInvalida,
   ErrorInconsistencia,
   construirEntrada,
+  motivosIntegridadV2,
   coincideLoVisto,
   tieneDecisionPrevia,
   esReenvioIdentico,

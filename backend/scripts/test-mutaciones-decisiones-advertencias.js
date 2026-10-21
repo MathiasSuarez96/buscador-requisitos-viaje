@@ -21,6 +21,10 @@ const mutaciones = [
   ['trata distinto reenvío como idéntico', panel, [["(versionContrato !== '2.0' || entrada.tipo_evento !== 'aprobacion' || arraysExactos(p.payload?.advertencias, entrada.advertencias_aceptadas))", 'true'], ['detalleVersionCorrecto &&', 'true &&']], suite],
   ['omite versión esperada del panel al comparar', panel, [["&& p.payload?.version_contrato === (entrada.version_contrato_esperada ?? '1.0')", '&& true']], suite],
   ['omite CAS exacto de advertencias en relectura del panel', panel, [["&& (entrada.tipo_evento !== 'aprobacion' || (entrada.version_contrato_esperada ?? '1.0') !== '2.0' || arraysExactos(p.payload?.advertencias, entrada.advertencias_aceptadas))", '&& true']], suite],
+  ['omite validacion integral 2.0 del panel', panel, [["const motivos = motivosIntegridadV2(completa);", "const motivos = [];"]], suite],
+  ['disfraza bug del validador como 422', panel, [["if (err instanceof ErrorContratoRequisitoV2) return ['payload_2_invalido'];\n    throw err;", "return ['payload_2_invalido'];"]], suite],
+  ['omite 409 en segunda lectura 2.0', panel, [["if (!completa || !coincideLoVisto(entrada, completa)) throw new ErrorPropuestaCambio(actualSeguro(p, await leerUltimoEvento(p)));\n      const motivos = motivosIntegridadV2(completa);", "if (!completa) throw new ErrorPropuestaCambio(actualSeguro(p, await leerUltimoEvento(p)));\n      const motivos = motivosIntegridadV2(completa);"]], suite],
+  ['valida integridad tambien al rechazar 2.0', panel, [["if (tipoEvento === 'aprobacion' && entrada.version_contrato_esperada === '2.0')", "if (entrada.version_contrato_esperada === '2.0')"]], suite],
   ['habilita registro productivo 2.0', registro, [["if (versionDeclarada !== undefined && versionDeclarada !== VERSION_CONTRATO_REGISTRO)", 'if (false)']], 'scripts/test-servicio-ejecucion-lectura.js']
 ];
 function run(mut) {
