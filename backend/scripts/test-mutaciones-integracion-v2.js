@@ -18,6 +18,7 @@ const mutaciones = [
   ['omite coincidencia de campos externos', modelo, 'if (valorEnPayload !== valorExterno)', 'if (false)', 'test-modelo-propuesta-v2.js'],
   ['separa captura de identidad e instantanea', contrato, 'const instantanea_anterior = capturarInstantanea(requisito);', "const instantanea_anterior = capturarInstantanea({ ...requisito, descripcion: 'instantanea de otro requisito' });", 'test-contrato-requisito-v2.js'],
   ['desincroniza catalogo de tipos', contrato, "  'documentacion_menor', 'tasa_aeropuerto', 'seguro_medico'", "  'documentacion_menor', 'tasa_aeropuerto', 'seguro_medico', 'otro'", 'test-contrato-requisito-v2.js'],
+  ['acepta link invalido en instantanea', contrato, "if (link.presente && (link.bson_tipo !== 'string' || link.valor !== link.valor.trim() || !esHttps(link.valor)))", 'if (false)', 'test-payload-requisito-v2.js'],
   ['habilita registro productivo 2.0', registro, 'if (versionDeclarada !== undefined && versionDeclarada !== VERSION_CONTRATO_REGISTRO)', 'if (false)', 'test-servicio-ejecucion-lectura.js']
 ];
 function ejecutar(mutacion) {

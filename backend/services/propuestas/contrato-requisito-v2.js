@@ -80,6 +80,10 @@ function validarInstantanea(instantanea) {
   for (const campo of CAMPOS_INSTANTANEA) validarValorCapturado(instantanea[campo], `instantanea.${campo}`);
   const fecha = instantanea.fecha_verificacion;
   if (fecha.bson_tipo === 'string' && !esFechaCalendario(fecha.valor)) falla('instantanea.fecha_verificacion no es YYYY-MM-DD válido.');
+  const link = instantanea.link;
+  if (link.presente && (link.bson_tipo !== 'string' || link.valor !== link.valor.trim() || !esHttps(link.valor))) {
+    falla('instantanea.link debe ser URL https sin credenciales ni espacios externos.');
+  }
 }
 
 function presenteStringNoVacio(campo, nombre) {

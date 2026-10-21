@@ -64,10 +64,12 @@
  */
 
 const { ObjectId } = require('bson');
-const { hashSobreCanonico, SHA256_HEX } = require('../propuestas/canonicalizacion-propuestas');
+const { hashSobreCanonico, canonicalizarValor, SHA256_HEX } = require('../propuestas/canonicalizacion-propuestas');
 const { ESTADOS_PROPUESTA } = require('../propuestas/contrato-propuestas');
 const { clasificarIdentidadRequisito } = require('../propuestas/identidad-requisito');
 const { ErrorSinAdaptador, elegirAdaptador } = require('../propuestas/adaptadores');
+const { validarSobreRequisitoV2 } = require('../propuestas/payload-requisito-v2');
+const { ErrorContratoRequisitoV2, capturarIdentidadEInstantanea } = require('../propuestas/contrato-requisito-v2');
 const { sanearTexto } = require('../../utils/sanear-registro');
 
 const COLECCIONES = Object.freeze({ propuestas: 'propuestas_cambio', eventos: 'eventos_propuesta', destinos: 'destinos' });
@@ -84,7 +86,6 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const OBJECT_ID_HEX = /^[0-9a-f]{24}$/;
 const CURSOR = /^v1\.([0-9a-f]{24})\.([0-9a-f]{2})$/;
 const CODIGO_ISO = /^[A-Z]{2}$/;
-
 // Entrada inválida del cliente → 400 solicitud_invalida en la ruta.
 class ErrorConsultaInvalida extends Error {}
 // Sin conexión a Mongo → 503 no_disponible en la ruta (se registra como error).
@@ -186,6 +187,7 @@ function consultaListado({ estados, limite, despuesDe }) {
         campo: 1,
         destino_id: 1,
         requisito_id: 1,
+        run_id_origen: 1,
         payload: 1,
         payload_hash: 1,
         algoritmo_canonicalizacion: 1,
@@ -259,6 +261,20 @@ function problemasConsistencia(p) {
   if (!CAMPOS_PROPONIBLES.includes(pl.campo)) problemas.push('campo_no_soportado');
   if (!esValorConPresencia(pl.valor_anterior)) problemas.push('valor_anterior_invalido');
   if (!esObjeto(pl.valor_propuesto) || typeof pl.valor_propuesto.valor !== 'string') problemas.push('valor_propuesto_invalido');
+  return problemas;
+}
+
+// Pura. En 2.0 los identificadores externos siguen siendo parte de la
+// integridad del documento, aunque la forma del payload sea distinta de 1.0.
+function problemasConsistenciaV2(p) {
+  const problemas = [];
+  const pl = p.payload;
+  if (!esObjeto(pl)) return ['payload_invalido'];
+  if (pl.propuesta_id !== p.propuesta_id) problemas.push('propuesta_id_distinto');
+  if (hexDe(p.destino_id) === null || hexDe(p.destino_id) !== pl.destino_id) problemas.push('destino_id_distinto');
+  if (hexDe(p.requisito_id) === null || hexDe(p.requisito_id) !== pl.requisito_id) problemas.push('requisito_id_distinto');
+  if (p.run_id_origen !== pl.run_id_origen) problemas.push('run_id_origen_distinto');
+  if (p.campo !== 'requisito' || pl.campo !== 'requisito') problemas.push('campo_distinto');
   return problemas;
 }
 
@@ -361,7 +377,7 @@ function conDestino(resumen, destino) {
 
 function resumenListado(p) {
   const hash = verificarHash(p);
-  const problemas = problemasConsistencia(p);
+  const problemas = p.payload?.version_contrato === '2.0' ? problemasConsistenciaV2(p) : problemasConsistencia(p);
   const alertas = [];
   if (!hash.coincide) alertas.push('hash_no_coincide');
   if (problemas.length > 0) alertas.push('datos_inconsistentes');
@@ -453,6 +469,35 @@ function evaluarRequisitoActual(p, destino, adaptador) {
   return { estado, destino: destinoPublico, requisito, valor_actual: valorActualSeguro, valor };
 }
 
+// Pura. En 2.0 no existe un único campo/valor_anterior: la precondición es
+// la identidad y la instantánea completa del requisito.
+function evaluarRequisitoActualV2(p, destino) {
+  const pl = esObjeto(p.payload) ? p.payload : {};
+  const destinoPublico = destinoSeguro(destino);
+  const vacio = (estado) => ({ estado, destino: destinoPublico, requisito: null, valor_actual: null, valor: null });
+  if (!esObjeto(destino)) return vacio('destino_no_encontrado');
+  if (typeof pl.requisito_id !== 'string' || !OBJECT_ID_HEX.test(pl.requisito_id)) return vacio('no_evaluable');
+  const coincidencias = Array.isArray(destino.requisitos)
+    ? destino.requisitos.filter((r) => esObjeto(r) && r._id != null && String(r._id) === pl.requisito_id)
+    : [];
+  if (coincidencias.length === 0) return vacio('requisito_id_no_encontrado');
+  if (coincidencias.length > 1) return vacio('requisito_id_duplicado');
+  const req = coincidencias[0];
+  const requisito = { requisito_id: hexDe(req._id), tipo: texto(req.tipo, 50), nombre: texto(req.nombre, 100) };
+  try {
+    const capturado = capturarIdentidadEInstantanea(req);
+    const igual = (a, b) => JSON.stringify(canonicalizarValor(a)) === JSON.stringify(canonicalizarValor(b));
+    if (!igual(capturado.identidad_requisito, pl.identidad_requisito)) {
+      return { estado: 'identidad_semantica_no_coincide', destino: destinoPublico, requisito, valor_actual: null, valor: null };
+    }
+    const coincide = igual(capturado.instantanea_anterior, pl.instantanea_anterior);
+    return { estado: 'coincide', destino: destinoPublico, requisito, valor_actual: null, valor: coincide ? 'coincide' : 'cambio' };
+  } catch (err) {
+    if (err instanceof ErrorContratoRequisitoV2) return { estado: 'no_evaluable', destino: destinoPublico, requisito, valor_actual: null, valor: null };
+    throw err;
+  }
+}
+
 const ACCIONES = Object.freeze(['aprobar', 'rechazar', 'aplicar']);
 
 // Pura. Precondiciones de COORDINACIÓN: sin ellas no se puede armar un body
@@ -479,21 +524,39 @@ function motivosIntegridad({ hash, problemas, requisitoActual }) {
   return motivos;
 }
 
+// Pura y compartida por GET y POST. Solo los errores esperados del contrato
+// se traducen a un motivo público; un bug inesperado se propaga como 500.
+function motivosIntegridadV2(p) {
+  try {
+    validarSobreRequisitoV2({
+      algoritmo_canonicalizacion: p.algoritmo_canonicalizacion,
+      algoritmo_hash: p.algoritmo_hash,
+      payload: p.payload,
+      payload_hash: p.payload_hash
+    });
+    return [];
+  } catch (err) {
+    if (err instanceof ErrorContratoRequisitoV2) return ['payload_2_invalido'];
+    throw err;
+  }
+}
+
 // Pura. Motivos por los que cada acción no está disponible; permitidas son
 // las que quedan sin motivos. version/decisionAprobacionId: los del
 // documento (el detalle los pasa siempre).
-function calcularAcciones({ hash, problemas, requisitoActual, estado, operador, version = 0, decisionAprobacionId = null, decisionAprobacionValida = true }) {
+function calcularAcciones({ hash, problemas, requisitoActual, estado, operador, version = 0, decisionAprobacionId = null, decisionAprobacionValida = true, motivosAprobacion = null }) {
   const coordinacion = motivosCoordinacion({ hash, version, decisionAprobacionId, estado });
   const idAprobacionValido = typeof decisionAprobacionId === 'string' && UUID.test(decisionAprobacionId);
   const bloqueos = [];
   if (estado !== 'pendiente_aprobacion') bloqueos.push('estado_no_permite_decision');
   if (!operador.permisos.includes('decidir')) bloqueos.push('sin_permiso_decidir');
+  const integridad = motivosAprobacion ?? motivosIntegridad({ hash, problemas, requisitoActual });
   const acciones_bloqueadas = {
-    aprobar: [...coordinacion, ...motivosIntegridad({ hash, problemas, requisitoActual }), ...bloqueos],
+    aprobar: [...coordinacion, ...integridad, ...bloqueos],
     rechazar: [...coordinacion, ...bloqueos],
     aplicar: [
       ...coordinacion,
-      ...motivosIntegridad({ hash, problemas, requisitoActual }),
+      ...integridad,
       ...(estado === 'aprobada' ? [] : ['estado_no_permite_aplicar']),
       ...(operador.permisos.includes('aplicar') ? [] : ['sin_permiso_aplicar']),
       ...(decisionAprobacionValida && idAprobacionValido ? [] : ['decision_aprobacion_invalida'])
@@ -520,16 +583,23 @@ function elegirAdaptadorOpcional(p, adaptadores) {
 // si payload.destino_id es un ObjectId válido).
 async function evaluarIntegridad(d, p, adaptadores) {
   const hash = verificarHash(p);
-  const problemas = problemasConsistencia(p);
   const pl = esObjeto(p.payload) ? p.payload : {};
+  const contrato2 = pl.version_contrato === '2.0';
+  const problemas = contrato2 ? problemasConsistenciaV2(p) : problemasConsistencia(p);
+  const motivosContrato = contrato2 ? motivosIntegridadV2(p) : [];
   let requisitoActual = { estado: 'no_evaluable', destino: null, requisito: null, valor_actual: null, valor: null };
-  if (typeof pl.destino_id === 'string' && OBJECT_ID_HEX.test(pl.destino_id)) {
+  // Un payload 2.0 inválido se bloquea antes de consultar o comparar el
+  // requisito vivo. Así un documento incompleto produce un 422 controlado.
+  if (motivosContrato.length === 0 && typeof pl.destino_id === 'string' && OBJECT_ID_HEX.test(pl.destino_id)) {
     const destino = await d
       .collection(COLECCIONES.destinos)
       .findOne({ _id: ObjectId.createFromHexString(pl.destino_id) }, { projection: { pais: 1, codigo_iso: 1, requisitos: 1 } });
-    requisitoActual = evaluarRequisitoActual(p, destino, elegirAdaptadorOpcional(p, adaptadores));
+    requisitoActual = contrato2
+      ? evaluarRequisitoActualV2(p, destino)
+      : evaluarRequisitoActual(p, destino, elegirAdaptadorOpcional(p, adaptadores));
   }
-  return { hash, problemas, requisitoActual, motivos: motivosIntegridad({ hash, problemas, requisitoActual }) };
+  const motivosBase = motivosIntegridad({ hash, problemas, requisitoActual });
+  return { hash, problemas, requisitoActual, motivos: [...motivosContrato, ...motivosBase] };
 }
 
 // obtenerDb: () => Db nativo conectado, o null/undefined si no hay conexión.
@@ -574,7 +644,7 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
     const p = await d.collection(COLECCIONES.propuestas).findOne({ propuesta_id: propuestaId });
     if (!p) return null;
 
-    const { hash, problemas, requisitoActual } = await evaluarIntegridad(d, p, adaptadores);
+    const { hash, problemas, requisitoActual, motivos } = await evaluarIntegridad(d, p, adaptadores);
     const pl = esObjeto(p.payload) ? p.payload : {};
 
     const eventos = await d
@@ -617,7 +687,8 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
         operador,
         version: p.version_coordinacion ?? null,
         decisionAprobacionId: p.decision_aprobacion_id ?? null,
-        decisionAprobacionValida: aprobacionValida
+        decisionAprobacionValida: aprobacionValida,
+        motivosAprobacion: motivos
       })
     };
   }
@@ -643,14 +714,17 @@ module.exports = {
   destinoSeguro,
   verificarHash,
   problemasConsistencia,
+  problemasConsistenciaV2,
   resumenEvidencia,
   resumenListado,
   eventoSeguro,
   observarValor,
   evaluarRequisitoActual,
+  evaluarRequisitoActualV2,
   ACCIONES,
   motivosCoordinacion,
   motivosIntegridad,
+  motivosIntegridadV2,
   calcularAcciones,
   evaluarIntegridad,
   crearLectorPropuestas

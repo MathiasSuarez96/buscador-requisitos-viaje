@@ -225,6 +225,7 @@ const sinProhibidos = (obj, etiqueta) => {
     assert.deepStrictEqual(opciones.sort, { _id: -1 });
     assert.strictEqual(opciones.limit, 4);
     assert.ok(!('evidencia' in opciones.projection) && Object.values(opciones.projection).every((v) => v === 1), 'proyección de inclusión');
+    assert.equal(opciones.projection.run_id_origen, 1, 'el listado proyecta el identificador externo que valida 2.0');
     assert.deepStrictEqual(L.consultaListado({ estados: ['aprobada'], limite: 20, despuesDe: null }).filtro, { estado: { $in: ['aprobada'] } });
 
     const p = propuestaDe();

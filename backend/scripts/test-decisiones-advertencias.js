@@ -6,6 +6,7 @@ const {
   construirEntrada, coincideLoVisto, esReenvioIdentico, motivosIntegridadV2, ErrorCuerpoInvalido, ErrorPropuestaCambio, ErrorPropuestaNoDecidible, crearDecisionesPropuestas
 } = require('../services/panel/decisiones-propuestas');
 const { ADVERTENCIAS, ALGORITMO_HECHOS_HASH, hashHechos, crearSobreRequisitoV2 } = require('../services/propuestas/payload-requisito-v2');
+const lectorPropuestas = require('../services/panel/lectura-propuestas');
 
 const ID = '22222222-2222-4222-8222-222222222222';
 const HASH = 'a'.repeat(64);
@@ -88,6 +89,7 @@ assert.equal(esReenvioIdentico(ePanel, op, posterior, evento), true);
 assert.equal(esReenvioIdentico({ ...ePanel, advertencias_aceptadas: [] }, op, posterior, evento), false);
 assert.equal(esReenvioIdentico({ ...ePanel, advertencias_aceptadas: [...ordenadas].reverse() }, op, posterior, evento), false);
 assert.deepStrictEqual(motivosIntegridadV2(sobre2), []);
+assert.strictEqual(motivosIntegridadV2, lectorPropuestas.motivosIntegridadV2, 'GET y POST comparten la misma función 2.0');
 assert.deepStrictEqual(motivosIntegridadV2({ ...sobre2, payload_hash: '0'.repeat(64) }), ['payload_2_invalido']);
 const payloadIncompleto = structuredClone(sobre2.payload); delete payloadIncompleto.fuentes;
 const payloadConExtra = structuredClone(sobre2.payload); payloadConExtra.extra = true;
@@ -100,6 +102,11 @@ for (const invalido of [
 assert.throws(() => motivosIntegridadV2({ get algoritmo_canonicalizacion() { throw new Error('bug inesperado simulado'); } }), /bug inesperado simulado/);
 
 (async () => {
+  const invalidaCompartida = { ...sobre2, payload: { ...sobre2.payload, campo: 'costo' } };
+  const integridadGet = await lectorPropuestas.evaluarIntegridad({ collection: () => ({ findOne: async () => null }) }, invalidaCompartida);
+  assert.ok(integridadGet.motivos.includes('payload_2_invalido'), 'el lector GET informa el mismo motivo 2.0');
+  const accionesGet = lectorPropuestas.calcularAcciones({ ...integridadGet, estado: 'pendiente_aprobacion', operador: { permisos: ['decidir'] }, motivosAprobacion: integridadGet.motivos });
+  assert.ok(accionesGet.acciones_bloqueadas.aprobar.includes('payload_2_invalido'));
   let dependenciasTocadas = 0;
   const deps = { resolverIdentidad: async () => { dependenciasTocadas++; }, verificarIndices: async () => { dependenciasTocadas++; } };
   await assert.rejects(decidirPropuesta(base('aprobacion', { version_contrato_esperada: '2.0' }), deps), ErrorEntradaInvalida);
@@ -107,8 +114,70 @@ assert.throws(() => motivosIntegridadV2({ get algoritmo_canonicalizacion() { thr
   assert.equal(dependenciasTocadas, 0, 'entradas inválidas no alcanzan identidad, índices ni escrituras');
   let llamadas = 0;
   let proyeccion;
-  const completa2 = { propuesta_id: ID, estado: 'pendiente_aprobacion', payload_hash: sobre2.payload_hash, version_coordinacion: 0, decision_aprobacion_id: null, ultimo_evento_id: null, algoritmo_canonicalizacion: sobre2.algoritmo_canonicalizacion, algoritmo_hash: sobre2.algoritmo_hash, payload: sobre2.payload };
-  const db = { collection: () => ({ findOne: async (_f, options) => { if (options?.projection) { proyeccion = options.projection; return { propuesta_id: ID, estado: 'pendiente_aprobacion', payload_hash: sobre2.payload_hash, version_coordinacion: 0, decision_aprobacion_id: null, ultimo_evento_id: null, payload: { version_contrato: '2.0', advertencias: ['quita_obligatoriedad'] } }; } return completa2; } }) };
+  const completa2 = {
+    propuesta_id: ID,
+    destino_id: sobre2.payload.destino_id,
+    requisito_id: sobre2.payload.requisito_id,
+    run_id_origen: sobre2.payload.run_id_origen,
+    campo: 'requisito',
+    estado: 'pendiente_aprobacion',
+    payload_hash: sobre2.payload_hash,
+    version_coordinacion: 0,
+    decision_aprobacion_id: null,
+    ultimo_evento_id: null,
+    algoritmo_canonicalizacion: sobre2.algoritmo_canonicalizacion,
+    algoritmo_hash: sobre2.algoritmo_hash,
+    payload: sobre2.payload
+  };
+  const requisito2 = { _id: sobre2.payload.requisito_id, tipo: 'formulario_digital', nombre: 'Check-Mig', obligatorio: 'si', descripcion: 'Descripción', fuente: 'Migración Colombia', link: 'https://www.migracioncolombia.gov.co/checkmig', fecha_verificacion: '2026-10-16', estado: 'confirmado' };
+  const destino2 = { _id: sobre2.payload.destino_id, pais: 'Colombia', codigo_iso: 'CO', requisitos: [requisito2] };
+  const parcial2 = { propuesta_id: ID, estado: 'pendiente_aprobacion', payload_hash: sobre2.payload_hash, version_coordinacion: 0, decision_aprobacion_id: null, ultimo_evento_id: null, payload: { version_contrato: '2.0', advertencias: ['quita_obligatoriedad'] } };
+  const db = { collection: (nombre) => ({ findOne: async (_f, options) => { if (nombre === 'destinos') return destino2; if (options?.projection) { proyeccion = options.projection; return parcial2; } return completa2; } }) };
+  const integridadValida = await lectorPropuestas.evaluarIntegridad(db, completa2);
+  assert.deepStrictEqual(integridadValida.motivos, [], 'GET y POST consideran íntegra la misma propuesta 2.0');
+  const proyeccionListado = lectorPropuestas.consultaListado({ estados: ['pendiente_aprobacion'], limite: 20, despuesDe: null }).opciones.projection;
+  const proyectada2 = Object.fromEntries(Object.keys(proyeccionListado).filter((k) => Object.hasOwn(completa2, k)).map((k) => [k, completa2[k]]));
+  assert.deepStrictEqual(lectorPropuestas.problemasConsistenciaV2(proyectada2), [], 'el documento 2.0 proyectado por el listado conserva la consistencia');
+  assert.deepStrictEqual(lectorPropuestas.resumenListado(proyectada2).alertas, [], 'el listado no marca una 2.0 válida como inconsistente');
+  const accionesValidas = lectorPropuestas.calcularAcciones({ ...integridadValida, estado: 'pendiente_aprobacion', operador: { permisos: ['decidir'] }, motivosAprobacion: integridadValida.motivos });
+  assert.ok(accionesValidas.acciones_permitidas.includes('aprobar'));
+  for (const [campo, valor] of [
+    ['propuesta_id', '33333333-3333-4333-8333-333333333333'],
+    ['destino_id', '333333333333333333333333'],
+    ['requisito_id', '333333333333333333333333'],
+    ['run_id_origen', '33333333-3333-4333-8333-333333333333'],
+    ['campo', 'costo']
+  ]) {
+    const divergente = { ...completa2, [campo]: valor };
+    const evaluada = await lectorPropuestas.evaluarIntegridad(db, divergente);
+    assert.ok(evaluada.motivos.includes('datos_inconsistentes'), `${campo} externo distinto bloquea 2.0`);
+  }
+  for (const clave of ['identidad_requisito', 'instantanea_anterior']) {
+    const payload = structuredClone(completa2.payload);
+    delete payload[clave];
+    let lecturasDestino = 0;
+    const sinComparar = { collection: (nombre) => ({ findOne: async () => { if (nombre === 'destinos') lecturasDestino++; return destino2; } }) };
+    let evaluada;
+    await assert.doesNotReject(async () => { evaluada = await lectorPropuestas.evaluarIntegridad(sinComparar, { ...completa2, payload }); });
+    assert.ok(evaluada.motivos.includes('payload_2_invalido'), `${clave} ausente se bloquea como payload inválido`);
+    assert.equal(lecturasDestino, 0, `${clave} ausente no compara el requisito vivo`);
+  }
+  const escenariosVivos = [
+    ['identidad modificada', { ...requisito2, tipo: 'visa' }, 'requisito_no_coincide'],
+    ['campo de instantánea modificado', { ...requisito2, descripcion: 'Otra descripción' }, 'valor_actual_cambio'],
+    ['costo modificado', { ...requisito2, costo: 'COP 1' }, 'valor_actual_cambio'],
+    ['presencia y tipo BSON modificados', { ...requisito2, recomendado: null }, 'valor_actual_cambio'],
+    ['requisito no capturable', { ...requisito2, descripcion: new Date('2026-10-16T00:00:00Z') }, 'requisito_no_coincide']
+  ];
+  for (const [nombre, requisito, motivo] of escenariosVivos) {
+    const dbEscenario = { collection: () => ({ findOne: async () => ({ ...destino2, requisitos: [requisito] }) }) };
+    const evaluada = await lectorPropuestas.evaluarIntegridad(dbEscenario, completa2);
+    assert.ok(evaluada.motivos.includes(motivo), nombre);
+  }
+  const sinDestino = await lectorPropuestas.evaluarIntegridad({ collection: () => ({ findOne: async () => null }) }, completa2);
+  assert.ok(sinDestino.motivos.includes('requisito_no_coincide'), 'destino ausente no se considera coincidente');
+  const duplicado = await lectorPropuestas.evaluarIntegridad({ collection: () => ({ findOne: async () => ({ ...destino2, requisitos: [requisito2, { ...requisito2 }] }) }) }, completa2);
+  assert.ok(duplicado.motivos.includes('requisito_no_coincide'), 'requisito duplicado no se considera coincidente');
   const servicio = crearDecisionesPropuestas({ obtenerDb: () => db, dependencias: () => ({}), decidir: async (entrada) => { llamadas++; assert.deepStrictEqual(entrada.advertencias_aceptadas, ['quita_obligatoriedad']); return { resultado: 'decision_registrada', tipo_evento: 'aprobacion', propuesta_id: ID, evento_id: ID, estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'aprobada', version_coordinacion_nueva: 1, ocurrido_en: new Date(), actor: op.actor }; } });
   const cuerpo2 = { ...cuerpo, payload_hash_esperado: sobre2.payload_hash, version_contrato_esperada: '2.0', advertencias_aceptadas: ['quita_obligatoriedad'] };
   await assert.rejects(servicio.decidir('aprobacion', ID, { ...cuerpo2, advertencias_aceptadas: [] }, op), ErrorPropuestaCambio);
@@ -117,11 +186,11 @@ assert.throws(() => motivosIntegridadV2({ get algoritmo_canonicalizacion() { thr
   const resultado = await servicio.decidir('aprobacion', ID, cuerpo2, op);
   assert.equal(resultado.decision.ya_registrada, false);
   assert.equal(llamadas, 1);
-  const dbInvalida = { collection: () => ({ findOne: async (_f, options) => options?.projection ? { ...completa2, payload: { version_contrato: '2.0', advertencias: ['quita_obligatoriedad'] } } : { ...completa2, payload: { ...completa2.payload, campo: 'costo' } } }) };
+  const dbInvalida = { collection: (nombre) => ({ findOne: async (_f, options) => nombre === 'destinos' ? destino2 : options?.projection ? parcial2 : { ...completa2, payload: { ...completa2.payload, campo: 'costo' } } }) };
   const servicioInvalido = crearDecisionesPropuestas({ obtenerDb: () => dbInvalida, dependencias: () => ({}), decidir: async () => { throw new Error('no debe decidir'); } });
-  await assert.rejects(servicioInvalido.decidir('aprobacion', ID, cuerpo2, op), (err) => err instanceof ErrorPropuestaNoDecidible && assert.deepStrictEqual(err.motivos, ['payload_2_invalido']) === undefined);
+  await assert.rejects(servicioInvalido.decidir('aprobacion', ID, cuerpo2, op), (err) => err instanceof ErrorPropuestaNoDecidible && err.motivos.includes('payload_2_invalido'));
   let decisionesTrasCambio = 0;
-  const dbCambioSegundaLectura = { collection: () => ({ findOne: async (_f, options) => options?.projection ? { ...completa2, payload: { version_contrato: '2.0', advertencias: ['quita_obligatoriedad'] } } : { ...completa2, version_coordinacion: 1 } }) };
+  const dbCambioSegundaLectura = { collection: (nombre) => ({ findOne: async (_f, options) => nombre === 'destinos' ? destino2 : options?.projection ? parcial2 : { ...completa2, version_coordinacion: 1 } }) };
   const servicioCambio = crearDecisionesPropuestas({ obtenerDb: () => dbCambioSegundaLectura, dependencias: () => ({}), decidir: async () => { decisionesTrasCambio++; } });
   await assert.rejects(servicioCambio.decidir('aprobacion', ID, cuerpo2, op), ErrorPropuestaCambio);
   assert.equal(decisionesTrasCambio, 0, 'un cambio entre ambas lecturas no llega al servicio de escritura');
