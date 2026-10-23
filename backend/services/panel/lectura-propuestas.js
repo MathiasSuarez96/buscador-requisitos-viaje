@@ -86,6 +86,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const OBJECT_ID_HEX = /^[0-9a-f]{24}$/;
 const CURSOR = /^v1\.([0-9a-f]{24})\.([0-9a-f]{2})$/;
 const CODIGO_ISO = /^[A-Z]{2}$/;
+const CODIGO_V2 = /^[a-z0-9_]{1,80}$/;
+const CAMPOS_REQUISITO_V2 = Object.freeze(['obligatorio', 'recomendado', 'descripcion', 'fuente', 'link', 'plazo_antes_del_vuelo', 'estado']);
 // Entrada inválida del cliente → 400 solicitud_invalida en la ruta.
 class ErrorConsultaInvalida extends Error {}
 // Sin conexión a Mongo → 503 no_disponible en la ruta (se registra como error).
@@ -293,6 +295,35 @@ function valorPropuestoSeguro(pl) {
 function fuenteSegura(pl) {
   const f = esObjeto(pl?.fuente) ? pl.fuente : {};
   return { nombre: texto(f.nombre, 100), url: urlHttp(f.url), capturado_en: fechaIso(f.capturado_en) };
+}
+
+function valorCapturadoSeguro(valor) {
+  if (!esObjeto(valor) || typeof valor.presente !== 'boolean' || !['ausente', 'null', 'string'].includes(valor.bson_tipo)) return null;
+  if (valor.bson_tipo === 'ausente' && valor.presente === false && valor.valor === null) return { presente: false, bson_tipo: 'ausente', valor: null };
+  if (valor.bson_tipo === 'null' && valor.presente === true && valor.valor === null) return { presente: true, bson_tipo: 'null', valor: null };
+  if (valor.bson_tipo === 'string' && valor.presente === true && typeof valor.valor === 'string' && valor.valor.length <= 10_000) return { presente: true, bson_tipo: 'string', valor: valor.valor };
+  return null;
+}
+
+// Proyección pública mínima del contrato 2.0. No expone la instantánea
+// completa, identidad, hechos, hashes de fuentes ni run_id_origen.
+function resumenRequisitoV2(pl) {
+  if (!esObjeto(pl) || pl.version_contrato !== '2.0') return null;
+  const cambios = [];
+  let completo = Array.isArray(pl.cambios) && pl.cambios.length <= CAMPOS_REQUISITO_V2.length && esObjeto(pl.instantanea_anterior);
+  if (Array.isArray(pl.cambios) && esObjeto(pl.instantanea_anterior)) {
+    for (const cambio of pl.cambios.slice(0, CAMPOS_REQUISITO_V2.length)) {
+      if (!esObjeto(cambio) || !CAMPOS_REQUISITO_V2.includes(cambio.campo)) { completo = false; continue; }
+      const anterior = valorCapturadoSeguro(pl.instantanea_anterior[cambio.campo]);
+      const propuesto = valorCapturadoSeguro(cambio.propuesto);
+      if (anterior && propuesto) cambios.push({ campo: cambio.campo, anterior, propuesto });
+      else completo = false;
+    }
+  }
+  const advertencias = Array.isArray(pl.advertencias)
+    ? [...new Set(pl.advertencias.filter((a) => typeof a === 'string' && CODIGO_V2.test(a)))].sort().slice(0, 20)
+    : [];
+  return { completo, cambios, advertencias };
 }
 
 // Pura. Resumen SEGURO de la evidencia: solo fuente, URL, fechas, valor
@@ -544,7 +575,7 @@ function motivosIntegridadV2(p) {
 // Pura. Motivos por los que cada acción no está disponible; permitidas son
 // las que quedan sin motivos. version/decisionAprobacionId: los del
 // documento (el detalle los pasa siempre).
-function calcularAcciones({ hash, problemas, requisitoActual, estado, operador, version = 0, decisionAprobacionId = null, decisionAprobacionValida = true, motivosAprobacion = null }) {
+function calcularAcciones({ hash, problemas, requisitoActual, estado, operador, version = 0, versionContrato = '1.0', decisionAprobacionId = null, decisionAprobacionValida = true, motivosAprobacion = null }) {
   const coordinacion = motivosCoordinacion({ hash, version, decisionAprobacionId, estado });
   const idAprobacionValido = typeof decisionAprobacionId === 'string' && UUID.test(decisionAprobacionId);
   const bloqueos = [];
@@ -557,6 +588,7 @@ function calcularAcciones({ hash, problemas, requisitoActual, estado, operador, 
     aplicar: [
       ...coordinacion,
       ...integridad,
+      ...(versionContrato === '2.0' ? ['contrato_2_no_aplicable'] : []),
       ...(estado === 'aprobada' ? [] : ['estado_no_permite_aplicar']),
       ...(operador.permisos.includes('aplicar') ? [] : ['sin_permiso_aplicar']),
       ...(decisionAprobacionValida && idAprobacionValido ? [] : ['decision_aprobacion_invalida'])
@@ -661,10 +693,14 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
     }
 
     const base = resumenListado(p);
+    const resumen2 = resumenRequisitoV2(pl);
+    const motivosDetalle = pl.version_contrato === '2.0' && resumen2?.completo !== true ? [...motivos, 'resumen_2_incompleto'] : motivos;
     delete base.alertas;
     return {
       propuesta: {
         ...base,
+        version_contrato: pl.version_contrato === '2.0' ? '2.0' : '1.0',
+        requisito_v2: resumen2,
         payload_hash: hash.declarado,
         decision_aprobacion_id: typeof p.decision_aprobacion_id === 'string' && UUID.test(p.decision_aprobacion_id) ? p.decision_aprobacion_id : null,
         ultimo_evento_id: typeof p.ultimo_evento_id === 'string' && UUID.test(p.ultimo_evento_id) ? p.ultimo_evento_id : null,
@@ -686,9 +722,10 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
         estado: p.estado,
         operador,
         version: p.version_coordinacion ?? null,
+        versionContrato: pl.version_contrato,
         decisionAprobacionId: p.decision_aprobacion_id ?? null,
         decisionAprobacionValida: aprobacionValida,
-        motivosAprobacion: motivos
+        motivosAprobacion: motivosDetalle
       })
     };
   }
@@ -716,6 +753,7 @@ module.exports = {
   problemasConsistencia,
   problemasConsistenciaV2,
   resumenEvidencia,
+  resumenRequisitoV2,
   resumenListado,
   eventoSeguro,
   observarValor,

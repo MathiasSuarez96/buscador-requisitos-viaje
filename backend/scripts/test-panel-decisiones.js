@@ -371,7 +371,7 @@ const cuerpoDe = (p, extra = {}) => ({ estado_esperado: 'pendiente_aprobacion', 
     {
       comportamiento = registrarComoServicio;
       const pa = fakeDb.poner(propuesta());
-      const ra = await post(ruta(pa, 'aprobacion'), cuerpoDe(pa));
+      const ra = await post(ruta(pa, 'aprobacion'), cuerpoDe(pa, { version_contrato_esperada: '1.0' }));
       assert.strictEqual(ra.status, 200, ra.body);
       const { entrada, deps } = LLAMADAS.at(-1);
       assert.deepStrictEqual(entrada, {
@@ -420,7 +420,7 @@ const cuerpoDe = (p, extra = {}) => ({ estado_esperado: 'pendiente_aprobacion', 
 
       const pr = fakeDb.poner(propuesta({ extra: { version_coordinacion: 3 } }));
       fakeDb.lecturas.length = 0;
-      const rr = await post(ruta(pr, 'rechazo'), cuerpoDe(pr, { motivo: '  Fuente desactualizada \n' }));
+      const rr = await post(ruta(pr, 'rechazo'), cuerpoDe(pr, { version_contrato_esperada: '1.0', motivo: '  Fuente desactualizada \n' }));
       assert.strictEqual(rr.status, 200, rr.body);
       assert.deepStrictEqual(LLAMADAS.at(-1).entrada, {
         tipo_evento: 'rechazo',

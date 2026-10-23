@@ -34,11 +34,24 @@ function forma<S extends Record<string, Lector<unknown>>>(campos: S): Lector<{ [
 }
 const presencia = nullable(forma({ presente: booleano, valor: texto(512 * 1024) }))
 const acciones = ['aprobar', 'rechazar', 'aplicar'] as const
-const codigos = lista(patron(/^[a-z_]{1,80}$/), 30)
+const codigos = lista(patron(/^[a-z0-9_]{1,80}$/), 30)
+const valorCapturado: Lector<{ presente: boolean; bson_tipo: 'ausente' | 'null' | 'string'; valor: string | null }> = v => {
+  const dato = forma({ presente: booleano, bson_tipo: enumerado(['ausente', 'null', 'string'] as const), valor: texto(10_001) })(v)
+  if (dato.bson_tipo === 'ausente' && !dato.presente && dato.valor === null) return dato
+  if (dato.bson_tipo === 'null' && dato.presente && dato.valor === null) return dato
+  if (dato.bson_tipo === 'string' && dato.presente && typeof dato.valor === 'string') return dato
+  return invalido()
+}
+const requisitoV2 = nullable(forma({
+  completo: booleano,
+  cambios: lista(forma({ campo: enumerado(['obligatorio', 'recomendado', 'descripcion', 'fuente', 'link', 'plazo_antes_del_vuelo', 'estado'] as const), anterior: valorCapturado, propuesto: valorCapturado }), 7),
+  advertencias: lista(patron(/^[a-z0-9_]{1,80}$/), 20),
+}))
 const fuente = forma({ nombre: texto(101), url: texto(500), capturado_en: fecha })
 const leerDetalle = forma({
   propuesta: forma({
     propuesta_id: uuid, estado, campo: texto(51), destino_id: hex, requisito_id: hex,
+    version_contrato: enumerado(['1.0', '2.0'] as const), requisito_v2: requisitoV2,
     valor_anterior: presencia,
     valor_propuesto: forma({ valor: texto(101), importe: nullable(entero), moneda }),
     fuente, version_coordinacion: nullable(entero), creada_en: fecha, actualizada_en: fecha,
@@ -77,8 +90,21 @@ export type ResultadoDetalle = { tipo: 'ok'; detalle: Detalle; requestId: string
 
 export function validarDetalle(v: unknown, propuestaId: string): Detalle | null {
   try {
-    const d = leerDetalle(v)
+    let entrada = v
+    const raiz = objeto(v)
+    const propuesta = objeto(raiz.propuesta)
+    const tieneVersion = Object.hasOwn(propuesta, 'version_contrato')
+    const tieneV2 = Object.hasOwn(propuesta, 'requisito_v2')
+    if (!tieneVersion && !tieneV2) entrada = { ...raiz, propuesta: { ...propuesta, version_contrato: '1.0', requisito_v2: null } }
+    else if (tieneVersion !== tieneV2) return null
+    const d = leerDetalle(entrada)
     if (d.propuesta.propuesta_id !== propuestaId) return null
+    if ((d.propuesta.version_contrato === '1.0') !== (d.propuesta.requisito_v2 === null)) return null
+    if (d.propuesta.requisito_v2) {
+      if (new Set(d.propuesta.requisito_v2.cambios.map(c => c.campo)).size !== d.propuesta.requisito_v2.cambios.length) return null
+      const advertencias = d.propuesta.requisito_v2.advertencias
+      if (new Set(advertencias).size !== advertencias.length || advertencias.some((a, i) => i > 0 && advertencias[i - 1] >= a)) return null
+    }
     if (new Set(d.acciones_permitidas).size !== d.acciones_permitidas.length) return null
     for (const a of acciones) if (d.acciones_permitidas.includes(a) !== (d.acciones_bloqueadas[a].length === 0)) return null
     return d

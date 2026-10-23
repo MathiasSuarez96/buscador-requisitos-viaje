@@ -15,6 +15,7 @@ function ejemplo(id = ID) {
   return {
     propuesta: {
       propuesta_id: id, estado: 'pendiente_aprobacion', campo: 'costo', destino_id: HEX, requisito_id: HEX,
+      version_contrato: '1.0', requisito_v2: null,
       valor_anterior: { presente: true, valor: '£16' }, valor_propuesto: { valor: '£20', importe: 20, moneda: 'GBP' },
       fuente: { nombre: 'GOV.UK', url: 'https://www.gov.uk/eta', capturado_en: FECHA },
       version_coordinacion: 0, creada_en: FECHA, actualizada_en: FECHA, payload_hash: HASH,
@@ -116,6 +117,42 @@ export const pruebas: Prueba[] = [
       const cuerpo = ejemplo(); modificar(cuerpo, ruta as string, valor); assert.equal(validarDetalle(cuerpo, ID), null, String(ruta))
     }
     assert.equal(validarDetalle({}, ID), null)
+  } },
+  { nombre: 'despliegue gradual: acepta el detalle 1.0 anterior y rechaza una respuesta versionada a medias', fn() {
+    const anterior = ejemplo()
+    delete (anterior.propuesta as Partial<typeof anterior.propuesta>).version_contrato
+    delete (anterior.propuesta as Partial<typeof anterior.propuesta>).requisito_v2
+    const leido = validarDetalle(anterior, ID)
+    assert.equal(leido?.propuesta.version_contrato, '1.0')
+    assert.equal(leido?.propuesta.requisito_v2, null)
+
+    const soloVersion = ejemplo()
+    delete (soloVersion.propuesta as Partial<typeof soloVersion.propuesta>).requisito_v2
+    assert.equal(validarDetalle(soloVersion, ID), null)
+    const soloResumen = ejemplo()
+    delete (soloResumen.propuesta as Partial<typeof soloResumen.propuesta>).version_contrato
+    assert.equal(validarDetalle(soloResumen, ID), null)
+
+    const v2SinResumen = ejemplo()
+    v2SinResumen.propuesta.version_contrato = '2.0'
+    assert.equal(validarDetalle(v2SinResumen, ID), null)
+
+    const v2Duplicada = ejemplo()
+    v2Duplicada.propuesta = { ...v2Duplicada.propuesta, campo: 'requisito', version_contrato: '2.0', requisito_v2: {
+      completo: true, cambios: [], advertencias: ['quita_obligatoriedad', 'quita_obligatoriedad'],
+    } } as unknown as typeof v2Duplicada.propuesta
+    assert.equal(validarDetalle(v2Duplicada, ID), null)
+
+    const capturado = { presente: true, bson_tipo: 'string', valor: 'si' }
+    for (const requisito_v2 of [
+      { completo: true, cambios: [], advertencias: ['z_codigo', 'a_codigo'] },
+      { completo: true, cambios: [{ campo: 'obligatorio', anterior: capturado, propuesto: { ...capturado, valor: 'no' } }, { campo: 'obligatorio', anterior: capturado, propuesto: { ...capturado, valor: 'no' } }], advertencias: [] },
+      { completo: true, cambios: [{ campo: 'obligatorio', anterior: { presente: false, bson_tipo: 'ausente', valor: 'no-debe-existir' }, propuesto: { ...capturado, valor: 'no' } }], advertencias: [] },
+    ]) {
+      const hostil = ejemplo()
+      hostil.propuesta = { ...hostil.propuesta, campo: 'requisito', version_contrato: '2.0', requisito_v2 } as unknown as typeof hostil.propuesta
+      assert.equal(validarDetalle(hostil, ID), null)
+    }
   } },
   { nombre: 'detalle hostil: texto escapado, enlaces solo HTTPS sin credenciales y sin identidad privada', fn() {
     const cuerpo = ejemplo()

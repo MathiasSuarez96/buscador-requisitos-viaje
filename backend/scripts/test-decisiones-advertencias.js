@@ -71,6 +71,7 @@ assert.deepStrictEqual(Object.keys(ev1.detalle).sort(), ['comando', 'identidad_o
 
 const cuerpo = { estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: HASH, version_coordinacion_esperada: 0 };
 assert.equal(Object.keys(construirEntrada('aprobacion', ID, cuerpo)).includes('version_contrato_esperada'), false);
+assert.equal(Object.keys(construirEntrada('aprobacion', ID, { ...cuerpo, version_contrato_esperada: '1.0' })).includes('version_contrato_esperada'), false);
 const ePanel = construirEntrada('aprobacion', ID, { ...cuerpo, version_contrato_esperada: '2.0', advertencias_aceptadas: ordenadas });
 assert.equal(ePanel.version_contrato_esperada, '2.0');
 const rechazoPanel = construirEntrada('rechazo', ID, { ...cuerpo, version_contrato_esperada: '2.0', motivo: 'rechazo de prueba' });
@@ -135,12 +136,24 @@ assert.throws(() => motivosIntegridadV2({ get algoritmo_canonicalizacion() { thr
   const db = { collection: (nombre) => ({ findOne: async (_f, options) => { if (nombre === 'destinos') return destino2; if (options?.projection) { proyeccion = options.projection; return parcial2; } return completa2; } }) };
   const integridadValida = await lectorPropuestas.evaluarIntegridad(db, completa2);
   assert.deepStrictEqual(integridadValida.motivos, [], 'GET y POST consideran íntegra la misma propuesta 2.0');
+  assert.deepStrictEqual(lectorPropuestas.resumenRequisitoV2(completa2.payload), {
+    completo: true,
+    cambios: [{ campo: 'obligatorio', anterior: { presente: true, bson_tipo: 'string', valor: 'si' }, propuesto: { presente: true, bson_tipo: 'string', valor: 'no' } }],
+    advertencias: ['quita_obligatoriedad']
+  }, 'el detalle 2.0 expone solo cambios y advertencias por lista blanca');
+  assert.equal(JSON.stringify(lectorPropuestas.resumenRequisitoV2(completa2.payload)).includes('identidad_requisito'), false);
+  assert.equal(JSON.stringify(lectorPropuestas.resumenRequisitoV2(completa2.payload)).includes('run_id_origen'), false);
+  const resumenLargo = lectorPropuestas.resumenRequisitoV2({ ...completa2.payload, cambios: [{ campo: 'descripcion', propuesto: { presente: true, bson_tipo: 'string', valor: 'x'.repeat(10_001) } }] });
+  assert.deepStrictEqual(resumenLargo, { completo: false, cambios: [], advertencias: ['quita_obligatoriedad'] }, 'un cambio que no puede mostrarse queda marcado como incompleto');
   const proyeccionListado = lectorPropuestas.consultaListado({ estados: ['pendiente_aprobacion'], limite: 20, despuesDe: null }).opciones.projection;
   const proyectada2 = Object.fromEntries(Object.keys(proyeccionListado).filter((k) => Object.hasOwn(completa2, k)).map((k) => [k, completa2[k]]));
   assert.deepStrictEqual(lectorPropuestas.problemasConsistenciaV2(proyectada2), [], 'el documento 2.0 proyectado por el listado conserva la consistencia');
   assert.deepStrictEqual(lectorPropuestas.resumenListado(proyectada2).alertas, [], 'el listado no marca una 2.0 válida como inconsistente');
   const accionesValidas = lectorPropuestas.calcularAcciones({ ...integridadValida, estado: 'pendiente_aprobacion', operador: { permisos: ['decidir'] }, motivosAprobacion: integridadValida.motivos });
   assert.ok(accionesValidas.acciones_permitidas.includes('aprobar'));
+  const accionesAplicar2 = lectorPropuestas.calcularAcciones({ ...integridadValida, estado: 'aprobada', operador: { permisos: ['decidir', 'aplicar'] }, version: 1, versionContrato: '2.0', decisionAprobacionId: ID, decisionAprobacionValida: true, motivosAprobacion: [] });
+  assert.ok(!accionesAplicar2.acciones_permitidas.includes('aplicar'));
+  assert.ok(accionesAplicar2.acciones_bloqueadas.aplicar.includes('contrato_2_no_aplicable'));
   for (const [campo, valor] of [
     ['propuesta_id', '33333333-3333-4333-8333-333333333333'],
     ['destino_id', '333333333333333333333333'],

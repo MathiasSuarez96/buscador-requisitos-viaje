@@ -23,6 +23,14 @@ const MOTIVOS: Record<string, string> = {
   valor_actual_cambio: 'El valor actual cambió o no se pudo comparar.',
   estado_no_permite_decision: 'El estado no permite tomar una decisión.',
   sin_permiso_decidir: 'No tenés permiso para decidir.',
+  payload_2_invalido: 'El contenido de la propuesta 2.0 no es válido.',
+  resumen_2_incompleto: 'El panel no pudo mostrar todos los cambios de la propuesta 2.0.',
+  contrato_2_no_aplicable: 'La aplicación de propuestas 2.0 todavía no está habilitada.',
+}
+const ADVERTENCIAS: Record<string, string> = {
+  quita_obligatoriedad: 'Este cambio quita la condición de obligatorio.',
+  degrada_estado_verificacion: 'Este cambio reduce el nivel de confirmación del requisito.',
+  cambia_dominio_link: 'Este cambio modifica el dominio del enlace oficial.',
 }
 const REQUISITO: Record<Detalle['requisito_actual']['estado'], string> = {
   coincide: 'Coincide', destino_no_encontrado: 'Destino no encontrado', requisito_id_no_encontrado: 'Requisito no encontrado',
@@ -45,6 +53,7 @@ const MOTIVOS_DECISION: Record<string, string> = {
   estado_no_permite_decision: 'El estado no permite decidir.', sin_permiso_decidir: 'Falta el permiso para decidir.',
   estado_no_permite_aplicar: 'El estado no permite aplicar.', sin_permiso_aplicar: 'Falta el permiso para aplicar.', decision_aprobacion_invalida: 'La aprobación asociada no es válida.',
   propuesta_no_decidible: 'La propuesta no es decidible.', solicitud_invalida: 'La solicitud no es válida.',
+  payload_2_invalido: 'El contenido de la propuesta 2.0 no es válido.',
 }
 
 function Dato({ nombre, children }: { nombre: string; children: ReactNode }) {
@@ -65,6 +74,11 @@ function Fecha({ fecha }: { fecha: string | null }) {
 }
 function Textos({ valores, vacio }: { valores: (string | null)[]; vacio: string }) {
   return valores.length === 0 ? <p>{vacio}</p> : <ul className="list-disc space-y-2 pl-5 [overflow-wrap:anywhere]">{valores.map((v, i) => <li key={i}>{textoValor(v)}</li>)}</ul>
+}
+function textoCapturado(v: { presente: boolean; bson_tipo: 'ausente' | 'null' | 'string'; valor: string | null }) {
+  if (!v.presente || v.bson_tipo === 'ausente') return 'Ausente'
+  if (v.bson_tipo === 'null') return 'Null (sin dato)'
+  return v.valor === '' ? 'Cadena vacía' : v.valor ?? 'No evaluable'
 }
 
 export function DetallePropuesta({ controlador, habilitado, puedeDecidir, puedeAplicar }: { controlador: ControladorPanel; habilitado: boolean; puedeDecidir: boolean; puedeAplicar: boolean }) {
@@ -112,6 +126,13 @@ export function ContenidoDetalle({ detalle: d }: { detalle: Detalle }) {
       <Datos><Dato nombre="Importe propuesto">{textoValor(p.valor_propuesto.importe)}</Dato><Dato nombre="Moneda propuesta">{textoValor(p.valor_propuesto.moneda)}</Dato></Datos>
       <p className="text-sm text-slate-600">Ausente indica que el campo no existe; null es un valor explícito; cadena vacía es texto sin caracteres. No evaluable indica que no se pudo determinar el valor.</p>
     </Seccion>
+    {p.version_contrato === '2.0' && p.requisito_v2 && <Seccion titulo="Cambios del requisito (contrato 2.0)">
+      <p>Revisá cada campo y sus valores exactos antes de decidir.</p>
+      {!p.requisito_v2.completo && <p role="alert">El resumen está incompleto. El servidor bloqueó la aprobación.</p>}
+      {p.requisito_v2.cambios.length === 0 ? <p>No hay cambios legibles en esta respuesta.</p> : <ul className="space-y-3">{p.requisito_v2.cambios.map(c => <li key={c.campo} className="rounded-lg bg-slate-50 p-4"><h4 className="font-semibold">{c.campo}</h4><Datos><Dato nombre="Valor anterior">{textoCapturado(c.anterior)}</Dato><Dato nombre="Valor propuesto">{textoCapturado(c.propuesto)}</Dato></Datos></li>)}</ul>}
+      <h4 className="font-semibold">Advertencias requeridas</h4>
+      <Textos valores={p.requisito_v2.advertencias.map(a => `${ADVERTENCIAS[a] ?? 'Advertencia informada por el servidor'} (${a})`)} vacio="Esta propuesta no requiere advertencias adicionales." />
+    </Seccion>}
     <Seccion titulo="Fuente de la propuesta">
       <Datos><Dato nombre="Nombre">{textoValor(p.fuente.nombre)}</Dato><Dato nombre="URL"><Enlace url={p.fuente.url} /></Dato><Dato nombre="Capturada"><Fecha fecha={p.fuente.capturado_en} /></Dato></Datos>
     </Seccion>
@@ -169,9 +190,11 @@ function AccionesDecisiones({ controlador, detalle, puedeDecidir }: { controlado
   const instantanea = decision.instantanea
   const motivoValido = esMotivoValido(decision.motivo)
   const estadoVisto = instantanea ? NOMBRES[instantanea.estado_esperado] : 'Pendiente de aprobación'
+  const advertencias = detalle.propuesta.requisito_v2?.advertencias ?? []
+  const advertenciasCompletas = advertencias.every(a => decision.advertenciasAceptadas.includes(a))
   const mostrarAccion = (accion: AccionDecision) => {
     if (!detalle.acciones_permitidas.includes(accion) || !puedeDecidir || decision.accionesBloqueadas.includes(accion)) return null
-    return <button key={accion} type="button" disabled={bloqueada} onClick={() => controlador.prepararDecision(accion)} className="rounded-lg bg-slate-800 px-4 py-2 font-medium text-white hover:bg-slate-700">{accion === 'aprobar' ? 'Aprobar' : 'Rechazar'}</button>
+    return <button key={accion} type="button" disabled={bloqueada || (accion === 'aprobar' && detalle.propuesta.version_contrato === '2.0' && !advertenciasCompletas)} onClick={() => controlador.prepararDecision(accion)} className="rounded-lg bg-slate-800 px-4 py-2 font-medium text-white hover:bg-slate-700">{accion === 'aprobar' ? 'Aprobar' : 'Rechazar'}</button>
   }
   const error = decision.error
   return <section aria-labelledby="titulo-decision" className="space-y-4 rounded-xl border border-slate-300 bg-white p-5">
@@ -179,6 +202,11 @@ function AccionesDecisiones({ controlador, detalle, puedeDecidir }: { controlado
     {detalle.acciones_permitidas.length === 0 && <p role="status">El servidor no permite aprobar ni rechazar esta propuesta.</p>}
     {!puedeDecidir && <p role="status">Tu sesión tiene permiso de lectura, pero no permiso para decidir.</p>}
     {decision.requiereRecarga && <p role="alert">La instantánea está bloqueada. Recargá la propuesta y comprobá los datos nuevos antes de considerar otra decisión.</p>}
+    {detalle.propuesta.version_contrato === '2.0' && advertencias.length > 0 && <fieldset disabled={bloqueada || decision.accion !== null} className="space-y-3 rounded-lg border border-amber-300 bg-amber-50 p-4">
+      <legend className="px-1 font-semibold">Confirmación de advertencias</legend>
+      {advertencias.map(a => <label key={a} className="flex items-start gap-3"><input type="checkbox" checked={decision.advertenciasAceptadas.includes(a)} onChange={e => controlador.fijarAdvertenciaDecision(a, e.currentTarget.checked)} /><span>{ADVERTENCIAS[a] ?? 'Acepto la advertencia informada por el servidor'} <code>({a})</code></span></label>)}
+      <p className="text-sm">Tenés que aceptar todas las advertencias para habilitar la aprobación. El rechazo sigue disponible.</p>
+    </fieldset>}
     <div className="flex flex-wrap gap-3">{mostrarAccion('aprobar')}{mostrarAccion('rechazar')}</div>
     {decision.registrada?.propuesta_id === id && <div role="status" className="space-y-2 rounded-lg border border-green-300 bg-green-50 p-4">
       <h4 className="font-semibold">Decisión registrada{decision.registrada.ya_registrada ? ' (ya estaba registrada)' : ''}</h4>

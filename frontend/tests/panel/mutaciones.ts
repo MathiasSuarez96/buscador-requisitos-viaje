@@ -9,6 +9,7 @@ const raiz = resolve(import.meta.dirname, '../..')
 const copia = mkdtempSync(join(tmpdir(), 'mutaciones-listado-'))
 const badges = 'src/BadgesRequisito.tsx'
 const api = 'src/panel/propuestas.ts', controlador = 'src/panel/controlador.ts'
+const detalle = 'src/panel/detalle.ts', decisiones = 'src/panel/decisiones.ts'
 const aplicaciones = 'src/panel/aplicaciones.ts'
 const mutaciones: [string, string, string, string][] = [
   ['badge pierde obligatoriedad afirmativa', badges, "if (obligatorio === 'si') etiquetas.push('Obligatorio')", "if (obligatorio === 'si') etiquetas.push('')"],
@@ -63,6 +64,19 @@ const mutaciones: [string, string, string, string][] = [
   ['historial invierte orden del servidor', 'src/panel/detalle.ts', '    return d\n', '    d.eventos.reverse(); return d\n'],
   ['ausente se confunde con null', 'src/panel/presentacion.ts', '!v.presente', 'false'],
   ['rechazar usa motivos de aprobar', 'src/panel/DetallePropuesta.tsx', 'd.acciones_bloqueadas[a].map', 'd.acciones_bloqueadas.aprobar.map'],
+  ['detalle 2.0 acepta resumen ausente', detalle, "if ((d.propuesta.version_contrato === '1.0') !== (d.propuesta.requisito_v2 === null)) return null", 'if (false) return null'],
+  ['detalle 2.0 acepta advertencias duplicadas', detalle, "if (new Set(advertencias).size !== advertencias.length || advertencias.some((a, i) => i > 0 && advertencias[i - 1] >= a)) return null", 'if (false) return null'],
+  ['detalle 2.0 acepta advertencias desordenadas', detalle, 'advertencias.some((a, i) => i > 0 && advertencias[i - 1] >= a)', 'false'],
+  ['detalle 2.0 acepta campos repetidos', detalle, 'if (new Set(d.propuesta.requisito_v2.cambios.map(c => c.campo)).size !== d.propuesta.requisito_v2.cambios.length) return null', ''],
+  ['detalle 2.0 confunde ausente con string', detalle, "if (dato.bson_tipo === 'ausente' && !dato.presente && dato.valor === null) return dato", "if (dato.bson_tipo === 'ausente' && !dato.presente) return dato"],
+  ['aprobación 2.0 acepta advertencias distintas', decisiones, "if (!advertenciasAceptadas || advertenciasAceptadas.length !== p.requisito_v2.advertencias.length || advertenciasAceptadas.some((a, i) => a !== p.requisito_v2?.advertencias[i])) return null", 'if (!advertenciasAceptadas) return null'],
+  ['decisión vuelve al timeout de 20 segundos', decisiones, 'const TIEMPO_LIMITE = 30_000', 'const TIEMPO_LIMITE = 20_000'],
+  ['decisión acepta advertencias no string', decisiones, "typeof a === 'string' && /^[a-z0-9_]{1,80}$/.test(a)", '/^[a-z0-9_]{1,80}$/.test(a)'],
+  ['decisión omite versión del contrato', decisiones, 'version_contrato_esperada: snapshot.version_contrato_esperada,', ''],
+  ['aprobación 2.0 omite advertencias aceptadas', decisiones, "if (accion === 'aprobar' && snapshot.version_contrato_esperada === '2.0') body.advertencias_aceptadas = snapshot.advertencias_aceptadas", ''],
+  ['controlador ignora las advertencias aceptadas', controlador, 'instantaneaDe(d, decision.advertenciasAceptadas, accion)', 'instantaneaDe(d, [], accion)'],
+  ['controlador permite cambiar advertencias con confirmación abierta', controlador, 'if (envioActivo || decision.accion !== null) return', 'if (envioActivo) return'],
+  ['botón aprobar ignora advertencias', 'src/panel/DetallePropuesta.tsx', "bloqueada || (accion === 'aprobar' && detalle.propuesta.version_contrato === '2.0' && !advertenciasCompletas)", 'bloqueada'],
   ['decision incluye solo la instantánea exacta del detalle', 'src/panel/decisiones.ts', 'payload_hash_esperado: snapshot.payload_hash_esperado', 'payload_hash_esperado: "inventado"'],
   ['rechazo omite el motivo validado', 'src/panel/decisiones.ts', "if (accion === 'rechazar') body.motivo = motivo", ''],
   ['POST de decisión incluye cookies', 'src/panel/decisiones.ts', "credentials: 'omit'", "credentials: 'include'"],

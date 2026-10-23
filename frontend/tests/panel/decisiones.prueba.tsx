@@ -13,6 +13,7 @@ function detalle(id = ID, cambios: Record<string, unknown> = {}) {
   return {
     propuesta: {
       propuesta_id: id, estado: 'pendiente_aprobacion', campo: 'costo', destino_id: HEX, requisito_id: HEX,
+      version_contrato: '1.0', requisito_v2: null,
       valor_anterior: { presente: false, valor: null }, valor_propuesto: { valor: '£20', importe: 20, moneda: 'GBP' },
       fuente: { nombre: 'GOV.UK', url: 'https://www.gov.uk/eta', capturado_en: FECHA }, version_coordinacion: 7, creada_en: FECHA, actualizada_en: FECHA,
       payload_hash: HASH, decision_aprobacion_id: null, ultimo_evento_id: null,
@@ -38,6 +39,7 @@ async function contexto(responder: Responder, permisos: string[] = ['ver', 'deci
 const decisionBody = (accion: AccionDecision, id = ID) => ({ decision: { tipo_evento: accion === 'aprobar' ? 'aprobacion' : 'rechazo', propuesta_id: id, evento_id: 'd54d03c8-e9ba-4352-8370-e4f88534f612', estado_anterior: 'pendiente_aprobacion', estado_nuevo: accion === 'aprobar' ? 'aprobada' : 'rechazada', version_coordinacion_nueva: 8, ocurrido_en: FECHA, actor: { tipo: 'humano', identificador: 'operador.panel', email: 'privado@example.com' }, ya_registrada: false, identidad_operador: { email: 'privado@example.com' } } })
 const errorJson = (status: number, extra: Record<string, unknown> = {}, requestId: string | null = REQUEST_ID) => respuestaJson(status, { error: { codigo: 'codigo_interno', mensaje: 'NO_MOSTRAR', request_id: requestId, ...extra } }, null)
 const aprobada = (cambios: Record<string, unknown> = {}) => detalle(ID, { propuesta: { ...detalle().propuesta, estado: 'aprobada', decision_aprobacion_id: 'd54d03c8-e9ba-4352-8370-e4f88534f612' }, acciones_permitidas: ['aplicar'], acciones_bloqueadas: { aprobar: ['estado_no_permite_decision'], rechazar: ['estado_no_permite_decision'], aplicar: [] }, ...cambios })
+const detalleV2 = () => detalle(ID, { propuesta: { ...detalle().propuesta, campo: 'requisito', version_contrato: '2.0', requisito_v2: { completo: true, cambios: [{ campo: 'obligatorio', anterior: { presente: true, bson_tipo: 'string', valor: 'si' }, propuesto: { presente: true, bson_tipo: 'string', valor: 'no' } }], advertencias: ['quita_obligatoriedad'] } } })
 const aplicacionBody = (ya_aplicada = false) => ({ aplicacion: { propuesta_id: ID, resultado: 'exito', destino_modificado: true, estado_propuesta_nuevo: 'aplicada', version_coordinacion_nueva: 8, decision_aprobacion_id: 'd54d03c8-e9ba-4352-8370-e4f88534f612', evento_id: 'e54d03c8-e9ba-4352-8370-e4f88534f612', intento_id: 'f54d03c8-e9ba-4352-8370-e4f88534f612', aplicado_en: FECHA, ya_aplicada } })
 const terminar = (c: ReturnType<typeof crearControladorPanel>) => hastaQue(() => !c.obtenerDecision().enviando)
 const seleccionar = async (c: ReturnType<typeof crearControladorPanel>, accion: AccionDecision) => {
@@ -188,12 +190,70 @@ export const pruebas: Prueba[] = [
     assert.equal(grande.tipo, 'error'); if (grande.tipo === 'error') assert.equal(grande.error.fallo, 'incierto')
   } },
   { nombre: 'instantánea exacta y motivo: puntos de código, trim Unicode, LF/TAB y controles del backend', fn() {
-    assert.deepEqual(instantaneaDe(detalleTipado()), { estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: HASH, version_coordinacion_esperada: 7 })
+    assert.deepEqual(instantaneaDe(detalleTipado()), { estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: HASH, version_coordinacion_esperada: 7, version_contrato_esperada: '1.0' })
     for (const motivo of [' x ', '😀'.repeat(500), 'ñ'.repeat(500), 'a\nb', 'a\tb', '　x　']) assert.equal(esMotivoValido(motivo), true, JSON.stringify(motivo))
     for (const motivo of ['', ' \t\n ', '😀'.repeat(501), 'a\rb', 'a\u0000b', 'a\u0085b', '\ud800', '\udc00']) assert.equal(esMotivoValido(motivo), false, JSON.stringify(motivo))
     const c = detalleTipado()
     c.propuesta.estado = 'aplicada'; assert.equal(instantaneaDe(c), null)
     c.propuesta.estado = 'pendiente_aprobacion'; c.propuesta.payload_hash = null; assert.equal(instantaneaDe(c), null)
+  } },
+  { nombre: 'contrato 2.0: muestra cambios, exige advertencias exactas y envía el body versionado', async fn() {
+    const d = detalleV2() as ReturnType<typeof castDetalle>
+    assert.equal(instantaneaDe(d), null, 'sin aceptación no hay instantánea de aprobación')
+    const snap = instantaneaDe(d, ['quita_obligatoriedad'])!
+    assert.deepEqual(snap, { estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: HASH, version_coordinacion_esperada: 7, version_contrato_esperada: '2.0', advertencias_aceptadas: ['quita_obligatoriedad'] })
+    assert.deepEqual(instantaneaDe(d, undefined, 'rechazar'), { estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: HASH, version_coordinacion_esperada: 7, version_contrato_esperada: '2.0' })
+    let body: Record<string, unknown> | null = null
+    const r = await enviarDecision(CONFIG.apiOrigen, TOKEN, 'aprobar', ID, snap, '', async (_url, init) => {
+      body = JSON.parse(String(init.body))
+      return respuestaJson(200, decisionBody('aprobar'))
+    })
+    assert.equal(r.tipo, 'ok')
+    assert.deepEqual(body, { estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: HASH, version_coordinacion_esperada: 7, version_contrato_esperada: '2.0', advertencias_aceptadas: ['quita_obligatoriedad'] })
+
+    let posts = 0
+    const ctx = await contexto((_url, init) => { posts++; body = JSON.parse(String(init.body)); return respuestaJson(200, decisionBody('aprobar')) }, ['ver', 'decidir'], 20_000, () => respuestaJson(200, detalleV2()))
+    ctx.controlador.seleccionar(ID); await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null)
+    const vista = renderizar(ctx.controlador)
+    assert.match(vista, /Cambios del requisito/); assert.match(vista, /quita_obligatoriedad/); assert.match(vista, /Valor anterior/); assert.match(vista, /Valor propuesto/)
+    assert.match(vista, /<button[^>]*disabled=""[^>]*>Aprobar<\/button>/)
+    ctx.controlador.prepararDecision('aprobar'); assert.equal(ctx.controlador.obtenerDecision().accion, null); assert.equal(posts, 0)
+    ctx.controlador.fijarAdvertenciaDecision('quita_obligatoriedad', true)
+    ctx.controlador.prepararDecision('aprobar'); assert.equal(ctx.controlador.obtenerDecision().accion, 'aprobar')
+    ctx.controlador.fijarAdvertenciaDecision('quita_obligatoriedad', false)
+    assert.deepEqual(ctx.controlador.obtenerDecision().advertenciasAceptadas, ['quita_obligatoriedad'], 'una confirmación abierta congela las casillas')
+    ctx.controlador.confirmarDecision(); await terminar(ctx.controlador)
+    assert.equal(posts, 1); const enviado = body as unknown as Record<string, unknown>; assert.deepEqual(enviado.advertencias_aceptadas, ['quita_obligatoriedad']); assert.equal(enviado.version_contrato_esperada, '2.0')
+  } },
+  { nombre: 'la decisión usa 30 segundos por defecto', async fn() {
+    const original = globalThis.setTimeout
+    let demora: number | undefined
+    globalThis.setTimeout = ((fn: TimerHandler, ms?: number, ...args: unknown[]) => {
+      demora = ms
+      return original(fn, ms, ...args)
+    }) as typeof setTimeout
+    try {
+      const r = await enviarDecision(CONFIG.apiOrigen, TOKEN, 'aprobar', ID, instantaneaDe(detalleTipado())!, '', async () => respuestaJson(200, decisionBody('aprobar')))
+      assert.equal(r.tipo, 'ok'); assert.equal(demora, 30_000)
+    } finally { globalThis.setTimeout = original }
+  } },
+  { nombre: 'el emisor rechaza instantáneas fabricadas con advertencias fuera del contrato', async fn() {
+    const base = { estado_esperado: 'pendiente_aprobacion' as const, payload_hash_esperado: HASH, version_coordinacion_esperada: 7 }
+    const invalidas = [
+      { ...base, version_contrato_esperada: '1.0' as const, advertencias_aceptadas: ['extra'] },
+      { ...base, version_contrato_esperada: '2.0' as const },
+      { ...base, version_contrato_esperada: '2.0' as const, advertencias_aceptadas: ['b', 'a'] },
+      { ...base, version_contrato_esperada: '2.0' as const, advertencias_aceptadas: ['a', 'a'] },
+      { ...base, version_contrato_esperada: '2.0' as const, advertencias_aceptadas: [1, 2] as unknown as string[] },
+      { ...base, version_contrato_esperada: '2.0' as const, advertencias_aceptadas: [{ toString: () => 'a' }] as unknown as string[] },
+    ]
+    for (const snapshot of invalidas) {
+      const r = await enviarDecision(CONFIG.apiOrigen, TOKEN, 'aprobar', ID, snapshot, '', async () => { assert.fail('una instantánea inválida no hace POST') })
+      assert.equal(r.tipo, 'error'); if (r.tipo === 'error') assert.equal(r.error.fallo, 'solicitud')
+    }
+    const rechazoConAdvertencias = { ...base, version_contrato_esperada: '2.0' as const, advertencias_aceptadas: ['a'] }
+    const r = await enviarDecision(CONFIG.apiOrigen, TOKEN, 'rechazar', ID, rechazoConAdvertencias, 'Motivo', async () => { assert.fail('un rechazo no acepta advertencias') })
+    assert.equal(r.tipo, 'error'); if (r.tipo === 'error') assert.equal(r.error.fallo, 'solicitud')
   } },
   { nombre: 'aprobación POST: endpoint, JSON y campos exactos desde la instantánea, sin identidades', async fn() {
     const d = detalleTipado(), snap = instantaneaDe(d)!
@@ -201,7 +261,7 @@ export const pruebas: Prueba[] = [
       assert.equal(url, `${CONFIG.apiOrigen}/api/panel/propuestas/${ID}/aprobacion`)
       assert.equal(init.method, 'POST'); assert.equal(init.credentials, 'omit'); assert.equal(init.cache, 'no-store'); assert.equal(init.redirect, 'error')
       const headers = new Headers(init.headers); assert.equal(headers.get('Content-Type'), 'application/json'); assert.equal(headers.get('Authorization'), `Bearer ${TOKEN}`)
-      const body = JSON.parse(String(init.body)); assert.deepEqual(Object.keys(body).sort(), ['estado_esperado', 'payload_hash_esperado', 'version_coordinacion_esperada'])
+      const body = JSON.parse(String(init.body)); assert.deepEqual(Object.keys(body).sort(), ['estado_esperado', 'payload_hash_esperado', 'version_contrato_esperada', 'version_coordinacion_esperada'])
       assert.deepEqual(body, snap)
       d.propuesta.payload_hash = 'c'.repeat(64); d.propuesta.version_coordinacion = 12
       return respuestaJson(200, decisionBody('aprobar'))
@@ -212,8 +272,8 @@ export const pruebas: Prueba[] = [
     const motivo = `  ${'😀'.repeat(500)}  `, snap = instantaneaDe(detalleTipado())!
     const r = await enviarDecision(CONFIG.apiOrigen, TOKEN, 'rechazar', ID, snap, motivo, async (url, init) => {
       assert.ok(url.endsWith('/rechazo'))
-      const body = JSON.parse(String(init.body)); assert.deepEqual(Object.keys(body).sort(), ['estado_esperado', 'motivo', 'payload_hash_esperado', 'version_coordinacion_esperada'])
-      assert.equal(body.motivo, motivo); assert.deepEqual({ estado_esperado: body.estado_esperado, payload_hash_esperado: body.payload_hash_esperado, version_coordinacion_esperada: body.version_coordinacion_esperada }, snap)
+      const body = JSON.parse(String(init.body)); assert.deepEqual(Object.keys(body).sort(), ['estado_esperado', 'motivo', 'payload_hash_esperado', 'version_contrato_esperada', 'version_coordinacion_esperada'])
+      assert.equal(body.motivo, motivo); assert.deepEqual({ estado_esperado: body.estado_esperado, payload_hash_esperado: body.payload_hash_esperado, version_coordinacion_esperada: body.version_coordinacion_esperada, version_contrato_esperada: body.version_contrato_esperada }, snap)
       return respuestaJson(200, decisionBody('rechazar'))
     })
     assert.equal(r.tipo, 'ok'); if (r.tipo === 'ok') { assert.equal(r.decision.tipo_evento, 'rechazo'); assert.equal(r.decision.estado_nuevo, 'rechazada') }
@@ -327,7 +387,7 @@ export const pruebas: Prueba[] = [
     assert.equal(ctx.controlador.obtenerDecision().accion, null)
     assert.equal(ctx.controlador.obtenerDecision().instantanea, null)
     assert.equal(ctx.controlador.obtenerDecision().requestId, null)
-    assert.deepEqual(aprobacionVista, { estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: HASH, version_coordinacion_esperada: 7 })
+    assert.deepEqual(aprobacionVista, { estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: HASH, version_coordinacion_esperada: 7, version_contrato_esperada: '1.0' })
     assert.equal(req, REQUEST_ID)
     await seleccionar(ctx.controlador, 'rechazar'); ctx.controlador.fijarMotivoDecision('Inconsistencia')
     assert.match(renderizar(ctx.controlador), /Rechazar/); await enviar(ctx.controlador); assert.equal(posts, 2)

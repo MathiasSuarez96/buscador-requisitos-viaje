@@ -27,6 +27,7 @@ export interface EstadoDecision {
   instantanea: InstantaneaDecision | null
   identidad: string | null
   motivo: string
+  advertenciasAceptadas: string[]
   enviando: boolean
   requiereRecarga: boolean
   accionesBloqueadas: AccionDecision[]
@@ -34,7 +35,7 @@ export interface EstadoDecision {
   registrada: Extract<ResultadoDecision, { tipo: 'ok' }>['decision'] | null
   requestId: string | null
 }
-const decisionInicial = (propuestaId: string | null = null): EstadoDecision => ({ propuestaId, accion: null, instantanea: null, identidad: null, motivo: '', enviando: false, requiereRecarga: false, accionesBloqueadas: [], error: null, registrada: null, requestId: null })
+const decisionInicial = (propuestaId: string | null = null): EstadoDecision => ({ propuestaId, accion: null, instantanea: null, identidad: null, motivo: '', advertenciasAceptadas: [], enviando: false, requiereRecarga: false, accionesBloqueadas: [], error: null, registrada: null, requestId: null })
 export interface EstadoAplicacion {
   propuestaId: string | null; confirmar: boolean; instantanea: InstantaneaAplicacion | null; identidad: string | null
   enviando: boolean; requiereRecarga: boolean; error: ErrorAplicacion | null; registrada: AplicacionRegistrada | null
@@ -87,6 +88,7 @@ export interface ControladorPanel {
   reintentarDetalle(): void
   obtenerDecision(): EstadoDecision
   prepararDecision(accion: AccionDecision): void
+  fijarAdvertenciaDecision(codigo: string, aceptada: boolean): void
   fijarMotivoDecision(motivo: string): void
   cancelarDecision(): void
   confirmarDecision(): void
@@ -192,7 +194,7 @@ export function crearControladorPanel({
     if (resultado.tipo === 'ok') {
       fijarDetalle({ propuestaId: id, cargando: false, datos: resultado.detalle, error: null, requestId: resultado.requestId })
       if (explicita) {
-        const instantaneaActual = instantaneaDe(resultado.detalle)
+        const instantaneaActual = instantaneaDe(resultado.detalle, resultado.detalle.propuesta.requisito_v2?.advertencias ?? [], 'aprobar')
         const anterior = instantaneasRegistradas.get(id)
         exigirRecarga.delete(id)
         bloqueadas.delete(id)
@@ -444,13 +446,21 @@ export function crearControladorPanel({
     prepararDecision(accion) {
       const d = detalle.datos
       if (envioActivo || !d || estado.fase !== 'autorizado' || !estado.sesion.permisos.includes('decidir') || !d.acciones_permitidas.includes(accion) || exigirRecarga.has(d.propuesta.propuesta_id) || bloqueadas.get(d.propuesta.propuesta_id)?.has(accion)) return
-      const instantanea = instantaneaDe(d)
+      const instantanea = instantaneaDe(d, decision.advertenciasAceptadas, accion)
       if (!instantanea) return
       const usuario = estado.sesion.identidad.sub
       fijarDecision({ ...decision, propuestaId: d.propuesta.propuesta_id, accion, instantanea, identidad: usuario, error: null, requestId: null })
     },
     fijarMotivoDecision(motivo) {
       if (!envioActivo) fijarDecision({ ...decision, motivo })
+    },
+    fijarAdvertenciaDecision(codigo, aceptada) {
+      if (envioActivo || decision.accion !== null) return
+      const esperadas = detalle.datos?.propuesta.requisito_v2?.advertencias ?? []
+      if (!esperadas.includes(codigo)) return
+      const conjunto = new Set(decision.advertenciasAceptadas)
+      if (aceptada) conjunto.add(codigo); else conjunto.delete(codigo)
+      fijarDecision({ ...decision, advertenciasAceptadas: esperadas.filter((a) => conjunto.has(a)) })
     },
     cancelarDecision() {
       if (!envioActivo) fijarDecision({ ...decision, accion: null, instantanea: null, identidad: null, error: null, requestId: null })

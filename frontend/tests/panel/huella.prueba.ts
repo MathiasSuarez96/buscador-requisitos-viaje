@@ -15,13 +15,13 @@ const BASE: Record<string, string> = {
   'toctoc-logo-CiSSEARy.png': 'cea8421ed137cd045aa01980cf6534655f507a364493d9abb96101741ed3906d',
 }
 const SHA_INDEX_PUBLICO = '0944c215ba0e487590424f86e8df25bd5b860dfc9718278b60dc543fafc8709e'
-const SHA_PANEL_HTML = '122cc820a69412805fbaa71d54d9b1e2ededf99794ad4e4ebbd89fde6528a015'
-const SHA_PANEL_JS = '05b406ca4ba6b35eada491bae79dbceb3cb99f856ef9734aafd0cd098bd50e59'
-const SHA_PANEL_CSS = 'ea68f5e6ab12f242e6610de42744c3b7fcc2a4c4d872297a780683445b15c3db'
+const SHA_PANEL_HTML = '46362e25ce1d7e24aa18ed96021d6c43e0f7b20e43e640757c982ae772aec7f8'
+const SHA_PANEL_JS = '2012f0cafb363fcbfa6759fb8ec07fd21f173baaca449dfcba72082921f06a5b'
+const SHA_PANEL_CSS = '00ad8a2fd8fc89d51dea2a582751c9d9a96194515819b3f06b6da5008f908ca8'
 const sha = (v: Uint8Array) => createHash('sha256').update(v).digest('hex')
 const entorno = () => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(VITE_|VERCEL$|PANEL_BUILD_ESTRICTO$|NODE_OPTIONS$|NODE_ENV$)/.test(k))), NODE_ENV: 'production', VITE_API_URL: 'https://buscador-requisitos-viaje.onrender.com', VITE_GOOGLE_CLIENT_ID: '123456789012-abcdefghijklmnop.apps.googleusercontent.com' })
 
-export const pruebas: Prueba[] = [{ nombre: 'huella pública aa1558f: bytes idénticos y cambios de panel/scripts/tests aislados', fn() {
+export const pruebas: Prueba[] = [{ nombre: 'huella pública intacta y panel 2.0 reproducible; cambios de panel/scripts/tests aislados', fn() {
   const temporal = mkdtempSync(join(tmpdir(), 'huella-panel-'))
   try {
     const resultados: string[] = []

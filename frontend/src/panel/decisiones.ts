@@ -7,6 +7,8 @@ export interface InstantaneaDecision {
   estado_esperado: 'pendiente_aprobacion'
   payload_hash_esperado: string
   version_coordinacion_esperada: number
+  version_contrato_esperada: '1.0' | '2.0'
+  advertencias_aceptadas?: readonly string[]
 }
 export interface DecisionRegistrada {
   tipo_evento: 'aprobacion' | 'rechazo'
@@ -31,7 +33,7 @@ export type ResultadoDecision = { tipo: 'ok'; decision: DecisionRegistrada; requ
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
 const SHA256 = /^[0-9a-f]{64}$/
 const ESTADOS = ['pendiente_aprobacion', 'aprobada', 'rechazada', 'obsoleta', 'revision_requerida', 'conflicto', 'cancelada', 'aplicada']
-const TIEMPO_LIMITE = 20_000
+const TIEMPO_LIMITE = 30_000
 const esObjeto = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
 const uuid = (v: unknown): v is string => typeof v === 'string' && UUID.test(v)
 const safeInteger = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
@@ -53,10 +55,16 @@ export function esMotivoValido(motivo: string): boolean {
   return puntos >= 1 && puntos <= 500 && !/(?![\n\t])\p{Cc}/u.test(motivo)
 }
 
-export function instantaneaDe(d: Detalle): InstantaneaDecision | null {
+export function instantaneaDe(d: Detalle, advertenciasAceptadas?: readonly string[], accion: AccionDecision = 'aprobar'): InstantaneaDecision | null {
   const p = d.propuesta
   if (p.estado !== 'pendiente_aprobacion' || !p.payload_hash || !safeInteger(p.version_coordinacion)) return null
-  return Object.freeze({ estado_esperado: p.estado, payload_hash_esperado: p.payload_hash, version_coordinacion_esperada: p.version_coordinacion })
+  if (p.version_contrato === '2.0') {
+    if (!p.requisito_v2) return null
+    if (accion === 'rechazar') return Object.freeze({ estado_esperado: p.estado, payload_hash_esperado: p.payload_hash, version_coordinacion_esperada: p.version_coordinacion, version_contrato_esperada: '2.0' })
+    if (!advertenciasAceptadas || advertenciasAceptadas.length !== p.requisito_v2.advertencias.length || advertenciasAceptadas.some((a, i) => a !== p.requisito_v2?.advertencias[i])) return null
+    return Object.freeze({ estado_esperado: p.estado, payload_hash_esperado: p.payload_hash, version_coordinacion_esperada: p.version_coordinacion, version_contrato_esperada: '2.0', advertencias_aceptadas: Object.freeze([...advertenciasAceptadas]) })
+  }
+  return Object.freeze({ estado_esperado: p.estado, payload_hash_esperado: p.payload_hash, version_coordinacion_esperada: p.version_coordinacion, version_contrato_esperada: '1.0' })
 }
 
 function leerActual(v: unknown): ErrorDecision['actual'] | null {
@@ -84,14 +92,24 @@ function leerDecision(v: unknown, accion: AccionDecision, id: string, snapshot: 
 }
 
 export async function enviarDecision(origen: string, token: string, accion: AccionDecision, id: string, snapshot: InstantaneaDecision, motivo: string, hacerFetch: HacerFetch, signal?: AbortSignal, tiempoLimite = TIEMPO_LIMITE): Promise<ResultadoDecision> {
-  if (!uuid(id) || snapshot.estado_esperado !== 'pendiente_aprobacion' || !SHA256.test(snapshot.payload_hash_esperado) || !safeInteger(snapshot.version_coordinacion_esperada) || (accion === 'rechazar' && !esMotivoValido(motivo))) {
+  const advertencias = snapshot.advertencias_aceptadas
+  const advertenciasValidas = snapshot.version_contrato_esperada === '1.0'
+    ? advertencias === undefined
+    : accion === 'rechazar'
+      ? advertencias === undefined
+      : Array.isArray(advertencias)
+        && advertencias.length <= 20
+        && advertencias.every((a, i) => typeof a === 'string' && /^[a-z0-9_]{1,80}$/.test(a) && (i === 0 || advertencias[i - 1] < a))
+  if (!uuid(id) || snapshot.estado_esperado !== 'pendiente_aprobacion' || !SHA256.test(snapshot.payload_hash_esperado) || !safeInteger(snapshot.version_coordinacion_esperada) || !['1.0', '2.0'].includes(snapshot.version_contrato_esperada) || !advertenciasValidas || (accion === 'rechazar' && !esMotivoValido(motivo))) {
     return { tipo: 'error', error: { fallo: 'solicitud', requestId: null, actual: null, motivos: [], autenticacionVencida: false } }
   }
   const body: Record<string, unknown> = {
     estado_esperado: snapshot.estado_esperado,
     payload_hash_esperado: snapshot.payload_hash_esperado,
     version_coordinacion_esperada: snapshot.version_coordinacion_esperada,
+    version_contrato_esperada: snapshot.version_contrato_esperada,
   }
+  if (accion === 'aprobar' && snapshot.version_contrato_esperada === '2.0') body.advertencias_aceptadas = snapshot.advertencias_aceptadas
   if (accion === 'rechazar') body.motivo = motivo
   const controlador = new AbortController()
   if (signal?.aborted) controlador.abort()
@@ -139,7 +157,7 @@ export async function enviarDecision(origen: string, token: string, accion: Acci
   if (respuesta.status === 403) return { tipo: 'error', error: { fallo: 'permiso', requestId, actual: null, motivos: [], autenticacionVencida: false } }
   if (respuesta.status === 404) return { tipo: 'error', error: { fallo: 'no_encontrado', requestId, actual: null, motivos: [], autenticacionVencida: false } }
   if (respuesta.status === 409) return { tipo: 'error', error: { fallo: 'cambio', requestId, actual: leerActual(e.actual), motivos: [], autenticacionVencida: false } }
-  if (respuesta.status === 422) return { tipo: 'error', error: { fallo: 'no_decidible', requestId, actual: null, motivos: Array.isArray(e.motivos) ? e.motivos.filter((m): m is string => typeof m === 'string' && /^[a-z_]{1,80}$/.test(m)).slice(0, 30) : [], autenticacionVencida: false } }
+  if (respuesta.status === 422) return { tipo: 'error', error: { fallo: 'no_decidible', requestId, actual: null, motivos: Array.isArray(e.motivos) ? e.motivos.filter((m): m is string => typeof m === 'string' && /^[a-z0-9_]{1,80}$/.test(m)).slice(0, 30) : [], autenticacionVencida: false } }
   if ([400, 413, 415, 503].includes(respuesta.status)) return { tipo: 'error', error: { fallo: respuesta.status === 503 ? 'no_disponible' : 'solicitud', requestId, actual: null, motivos: [], autenticacionVencida: false } }
   return { tipo: 'error', error: { fallo: 'incierto', requestId, actual: null, motivos: [], autenticacionVencida: false } }
 }

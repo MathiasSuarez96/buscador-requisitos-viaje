@@ -140,11 +140,12 @@ function construirEntrada(tipoEvento, propuestaId, cuerpo) {
   };
   if (!TIPOS_PANEL.includes(tipoEvento)) throw new TypeError(`construirEntrada: tipo_evento no soportado por el panel: ${tipoEvento}`);
   if (!esObjeto(cuerpo) || Object.getPrototypeOf(cuerpo) !== Object.prototype) falla('cuerpo');
-  const versionContrato = Object.prototype.hasOwnProperty.call(cuerpo, 'version_contrato_esperada') ? cuerpo.version_contrato_esperada : '1.0';
+  const versionExplicita = Object.prototype.hasOwnProperty.call(cuerpo, 'version_contrato_esperada');
+  const versionContrato = versionExplicita ? cuerpo.version_contrato_esperada : '1.0';
   if (versionContrato !== '1.0' && versionContrato !== '2.0') falla('version_contrato_esperada');
   const permitidas = versionContrato === '2.0'
     ? [...CLAVES_BASE, 'version_contrato_esperada', ...(tipoEvento === 'aprobacion' ? ['advertencias_aceptadas'] : ['motivo'])]
-    : CLAVES_CUERPO[tipoEvento];
+    : [...CLAVES_CUERPO[tipoEvento], ...(versionExplicita ? ['version_contrato_esperada'] : [])];
   const claves = Object.keys(cuerpo);
   if (claves.length !== permitidas.length || claves.some((k) => !permitidas.includes(k))) falla('claves');
 
