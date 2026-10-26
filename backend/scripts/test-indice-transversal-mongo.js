@@ -79,8 +79,12 @@ const { ESTADOS_ACTIVOS, ESTADOS_PROPUESTA } = require('../services/propuestas/c
     assert.equal(carreras.filter(r => r.status === 'fulfilled').length, 1);
     assert.equal(carreras.filter(r => r.status === 'rejected' && r.reason.code === 11000).length, 1);
     assert.equal(await c.countDocuments({}), 1);
-    await c.dropIndex(SPEC.nombre);
-    assert.deepEqual((await c.indexes()).find(i => i.name === anterior), indiceAnterior, 'rollback conserva la definición completa del índice anterior');
+    const indicesAntesRollback = await c.indexes();
+    await c.dropIndex(SPEC.nombre); // rollback simulado: solo índice nuevo
+    const indicesDespuesRollback = await c.indexes();
+    assert.deepEqual(indicesDespuesRollback, indicesAntesRollback.filter(i => i.name !== SPEC.nombre),
+      'rollback elimina únicamente el índice nuevo y conserva exactamente todos los demás');
+    assert.deepEqual(indicesDespuesRollback.find(i => i.name === anterior), indiceAnterior, 'rollback conserva la definición completa del índice anterior');
     await c.insertOne(doc(carreras[0].status === 'fulfilled' ? 'requisito' : 'costo'));
     assert.equal(await c.countDocuments({}), 2, 'rollback recupera la política anterior sin borrar propuestas');
     console.log('Índice transversal: duplicados y BSON inválido bloqueados en prechequeo; creación, tres estados activos, carreras y rollback comprobados en Mongo efímero.');

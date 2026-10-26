@@ -10,11 +10,12 @@ const mutaciones = [
   ['M8: omite base esperada', "if (db.databaseName !== 'buscador_requisitos') throw new Error('Base inesperada');", ''],
   ['M9: hash omite contenido activo', 'JSON.stringify(plan)', 'JSON.stringify({ ...plan, propuestas_activas: [] })'],
   ['omite grupos duplicados', 'filter(([, ids]) => ids.length > 1)', 'filter(() => false)'],
-  ['ignora índices incompatibles', "indice.estado !== 'conflicto'", 'true']
+  ['ignora índices incompatibles', "indice.estado !== 'conflicto'", 'true'],
+  ['rollback elimina el índice anterior', 'await c.dropIndex(SPEC.nombre); // rollback simulado: solo índice nuevo', 'await c.dropIndex(anterior);', prueba]
 ];
 function correr(mutacion) {
   const codigo = `const fs=require('node:fs');const Module=require('node:module');const path=require('node:path');
-  const archivo=${JSON.stringify(archivo)};const m=${JSON.stringify(mutacion)};
+  const m=${JSON.stringify(mutacion)};const archivo=m?.[3]??${JSON.stringify(archivo)};
   if(m){let s=fs.readFileSync(archivo,'utf8');if(s.split(m[1]).length!==2)throw new Error('ANCLA NO UNICA');
   const mod=new Module(archivo,module);mod.filename=archivo;mod.paths=Module._nodeModulePaths(path.dirname(archivo));
   require.cache[archivo]=mod;mod._compile(s.replace(m[1],m[2]),archivo);}
