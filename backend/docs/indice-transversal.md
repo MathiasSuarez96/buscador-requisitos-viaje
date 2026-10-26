@@ -1,6 +1,7 @@
 # Preparación del índice transversal
 
 Estado: preparación local. No se accedió a Atlas ni se cambiaron los gates publicados.
+Esto no significa que crear el índice sea inocuo para el registrador: ver la política operativa más abajo.
 
 El índice actual incluye `campo`. El nuevo índice limita a una propuesta activa
 por `destino_id + requisito_id`, incluso si una modifica costo y otra el requisito
@@ -14,6 +15,8 @@ Desde backend:
 ```text
 node scripts/preparar-indice-transversal.js
 node --require ./scripts/preload-solo-loopback.js scripts/test-indice-transversal-mongo.js
+node --require ./scripts/preload-solo-loopback.js scripts/test-prechequeo-indice-lectura.js
+node --require ./scripts/preload-solo-loopback.js scripts/test-mutaciones-prechequeo-indice.js
 ```
 
 La prueba crea y elimina índices únicamente en Mongo efímero. Demuestra conflictos
@@ -23,9 +26,15 @@ El prechequeo rechaza también identificadores de destino/requisito que no sean 
 ## Operación pendiente en Atlas
 
 1. Revisar estos archivos antes de cualquier operación de producción.
-2. Autorizar por separado una lectura con la cuenta del operador. Guardar el inventario
-   de índices y ejecutar `prechequear(db)` en la base esperada. El módulo no abre
-   conexiones ni lee credenciales. Guardar el informe privado con su hash y fecha.
+2. Autorizar por separado una lectura con la cuenta dedicada `buscador-prechequeo-lectura`,
+   con **únicamente** el rol `read` sobre `buscador_requisitos`. No usar la cuenta del backend
+   ni una cuenta de operación con escritura. La cuenta debe existir y sus permisos deben
+   verificarse antes de ejecutar. Su creación, si hiciera falta, es otra operación autorizada.
+   El ejecutor nativo `prechequear-indice-transversal-lectura.js` exige esa identidad y rol,
+   monitoriza comandos y expone al prechequeo solo métodos de lectura. Guarda un informe
+   con inventario, propuestas activas mínimas, comandos, fecha y hash; no incluye URI ni contraseña.
+   Debe guardarse fuera del repositorio, en una carpeta privada existente. En Windows,
+   `mode: 0600` no configura ACL: la privacidad depende de los permisos de esa carpeta.
 3. Si hay duplicadas, tipos inválidos o conflicto de definición, detenerse. No resolver
    duplicadas eliminando propuestas ni cambiando estados automáticamente.
 4. Preparar el comando exacto de creación a partir de SPEC/opciones, el inventario
@@ -42,3 +51,36 @@ El prechequeo rechaza también identificadores de destino/requisito que no sean 
 
 No se ofrece aún un comando de creación real: se preparará contra el prechequeo
 aprobado. Tampoco se abre el registro 2.0 en este bloque.
+
+## Ejecutor de lectura (solo después de revisión y autorización)
+
+Por defecto muestra ayuda sin conectar. No carga `.env` ni usa `MONGODB_URI`.
+Recibe la URI dedicada mediante `MONGODB_PRECHEQUEO_URI`; debe seleccionar
+`buscador_requisitos` en la ruta de la URI. No pasar credenciales por argumentos.
+
+```text
+node scripts/prechequear-indice-transversal-lectura.js --solo-lectura --salida RUTA_ABSOLUTA_PRIVADA_FUERA_DEL_REPO
+```
+
+Rechaza salida relativa, dentro del repo o ya existente. La cuenta read es la barrera
+de autorización en Mongo. El monitor aborta ante comandos fuera de la lista de lectura;
+no se presenta el monitor como sustituto de los permisos del servidor. Si hay fallo de
+conexión/permisos/monitor no se guarda un informe exitoso ni se imprimen errores con URI.
+
+## Política del registrador actual: conservadora, sin cambiar producción
+
+Crear el índice transversal **sí cambia** lo que Mongo acepta. El registrador actual
+busca por destino + requisito + campo y solo reconoce E11000 del índice anterior.
+Ante una activa de otro campo, el índice nuevo rechaza el insert y el registrador
+termina en `fallo_registrado`, etapa `creacion_propuesta`, sin propuesta nueva y
+sin vincularse automáticamente a una de otro campo. El fallo queda auditado.
+Esta conducta está cubierta explícitamente en `test-servicio-ejecucion-lectura.js`.
+
+Este bloque conserva esa conducta segura; no modifica el registrador ni abre 2.0.
+No se promete disponibilidad normal del registro en esa colisión. Antes de **crear**
+el índice, la revisión y Mathias deben aceptar expresamente ese efecto operativo,
+o exigir un cambio separado y revisado de reconocimiento de colisiones. Esto no
+impide revisar ni autorizar únicamente el prechequeo de lectura.
+
+La prueba de concurrencia cubre inserts simultáneos con el índice ya creado.
+No demuestra ambos órdenes posibles de una carrera entre createIndex e insert.

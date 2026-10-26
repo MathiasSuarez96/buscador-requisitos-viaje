@@ -640,6 +640,28 @@ async function assertRechaza(promesaOFn, claseOMensaje, etiqueta) {
     console.log('8) reconocimiento de colisión E11000 por código + índice + keyPattern: OK');
   }
 
+  // Política conservadora vigente si Atlas agrega el índice transversal:
+  // no se confunde con la colisión por campo ni se vincula otra propuesta.
+  {
+    const err = errorE11000PropuestaActiva({
+      indice: 'uniq_propuesta_activa_por_destino_requisito',
+      keyPattern: { destino_id: 1, requisito_id: 1 }
+    });
+    assert.strictEqual(esColisionPropuestaActiva(err), false);
+    const { estado, deps } = crearRepoFalso({ fallas: { insertarPropuesta: () => err } });
+    const r = await registrarEjecucionLectura(entradaOk(), deps);
+    assert.strictEqual(r.accion, 'fallo_registrado');
+    assert.strictEqual(r.estado_ejecucion, 'fallo');
+    assert.strictEqual(r.etapa_fallo, 'creacion_propuesta');
+    assert.strictEqual(r.colisiones, 0);
+    assert.strictEqual(estado.intentosPropuesta.length, 1, 'no reintenta una colisión transversal como si fuera por campo');
+    assert.strictEqual(estado.propuestas.length, 0, 'no queda propuesta nueva');
+    assert.strictEqual(estado.ejecuciones.length, 1, 'queda solo el registro del fallo');
+    assert.strictEqual(estado.ejecuciones[0].estado_ejecucion, 'fallo');
+    assert.strictEqual(estado.ejecuciones[0].propuesta_referencia, undefined);
+    console.log('8b) índice transversal: E11000 → fallo_registrado, sin propuesta nueva ni vinculación: OK');
+  }
+
   // ============================================================
   // 9) Colisión E11000: pierde la carrera, la transacción revierte y
   //    el reintento se vincula a la ganadora.

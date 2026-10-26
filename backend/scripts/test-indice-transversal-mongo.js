@@ -3,7 +3,7 @@ if (!globalThis.__SOLO_LOOPBACK__) throw new Error('Se requiere preload-solo-loo
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const { MongoClient, ObjectId } = require('mongodb');
 const { SPEC, opciones, prechequear } = require('./preparar-indice-transversal');
-const { ESTADOS_ACTIVOS } = require('../services/propuestas/contrato-propuestas');
+const { ESTADOS_ACTIVOS, ESTADOS_PROPUESTA } = require('../services/propuestas/contrato-propuestas');
 
 (async () => {
   let rs, cliente;
@@ -20,6 +20,14 @@ const { ESTADOS_ACTIVOS } = require('../services/propuestas/contrato-propuestas'
     await c.createIndex({ destino_id: 1, requisito_id: 1, campo: 1 }, {
       name: anterior, unique: true, partialFilterExpression: { estado: { $in: ESTADOS_ACTIVOS } }
     });
+    const indiceAnterior = (await c.indexes()).find(i => i.name === anterior);
+    let coleccionConsultada = false;
+    const cursorVacio = () => ({ toArray: async () => [] });
+    await assert.rejects(prechequear({ databaseName: 'otra_base', collection() {
+      coleccionConsultada = true;
+      return { listIndexes: cursorVacio, find: cursorVacio };
+    } }), /Base inesperada/);
+    assert.equal(coleccionConsultada, false, 'base incorrecta: aborta antes de pedir una colección');
     const destino_id = new ObjectId(), requisito_id = new ObjectId();
     const doc = (campo, estado = 'pendiente_aprobacion', extra = {}) => ({ destino_id, requisito_id, campo, estado, ...extra });
     await c.insertMany([doc('costo'), doc('requisito')]);
@@ -29,12 +37,29 @@ const { ESTADOS_ACTIVOS } = require('../services/propuestas/contrato-propuestas'
     assert.equal(duplicado.habilitado, false);
     assert.equal(duplicado.duplicadas.length, 1);
     await assert.rejects(c.createIndex(SPEC.clave, opciones()), e => e.code === 11000);
-    assert.ok((await c.indexes()).some(i => i.name === anterior), 'el fracaso conserva el índice anterior');
+    assert.deepEqual((await c.indexes()).find(i => i.name === anterior), indiceAnterior, 'el fracaso conserva la definición completa del índice anterior');
     await c.deleteMany({});
-    await c.insertOne(doc('costo', 'aprobada', { requisito_id: null }));
-    const invalido = await prechequear(db);
-    assert.equal(invalido.habilitado, false);
-    assert.equal(invalido.invalidas.length, 1);
+    for (const valor of [null, '012345678901234567890123', 42, undefined]) {
+      await c.deleteMany({});
+      const p = doc('costo', 'aprobada', { requisito_id: valor });
+      if (valor === undefined) delete p.requisito_id;
+      await c.insertOne(p);
+      let invalido = null;
+      try { invalido = await prechequear(db); } catch { /* La aserción exige una clasificación, no una excepción. */ }
+      assert.ok(invalido, 'BSON inválido debe clasificarse sin lanzar');
+      assert.equal(invalido.habilitado, false);
+      assert.equal(invalido.invalidas.length, 1);
+    }
+    await c.deleteMany({});
+    for (const estado of ESTADOS_PROPUESTA.filter(e => !ESTADOS_ACTIVOS.includes(e))) await c.insertOne(doc('requisito', estado));
+    await c.insertOne(doc('costo'));
+    const historial = await prechequear(db);
+    assert.equal(historial.activas, 1, 'el prechequeo ignora los cinco estados inactivos');
+    assert.equal(historial.habilitado, true);
+    assert.equal(historial.duplicadas.length, 0);
+    assert.equal((await prechequear(db)).hash, historial.hash, 'mismos datos generan el mismo hash');
+    await c.updateOne({ estado: 'pendiente_aprobacion' }, { $set: { campo: 'descripcion' } });
+    assert.notEqual((await prechequear(db)).hash, historial.hash, 'el hash incluye el contenido activo, no solo su cantidad');
     await c.deleteMany({});
     assert.equal((await prechequear(db)).habilitado, true);
     await c.createIndex(SPEC.clave, { name: SPEC.nombre });
@@ -46,8 +71,7 @@ const { ESTADOS_ACTIVOS } = require('../services/propuestas/contrato-propuestas'
       await c.deleteMany({});
       await c.insertOne(doc('costo', estado));
       await assert.rejects(c.insertOne(doc('requisito')), e => e.code === 11000);
-      await c.insertOne(doc('requisito', 'rechazada'));
-      await c.insertOne(doc('requisito', 'aplicada'));
+      for (const inactivo of ESTADOS_PROPUESTA.filter(e => !ESTADOS_ACTIVOS.includes(e))) await c.insertOne(doc('requisito', inactivo));
       await c.insertOne(doc('requisito', 'pendiente_aprobacion', { requisito_id: new ObjectId() }));
     }
     await c.deleteMany({});
@@ -56,7 +80,7 @@ const { ESTADOS_ACTIVOS } = require('../services/propuestas/contrato-propuestas'
     assert.equal(carreras.filter(r => r.status === 'rejected' && r.reason.code === 11000).length, 1);
     assert.equal(await c.countDocuments({}), 1);
     await c.dropIndex(SPEC.nombre);
-    assert.ok((await c.indexes()).some(i => i.name === anterior));
+    assert.deepEqual((await c.indexes()).find(i => i.name === anterior), indiceAnterior, 'rollback conserva la definición completa del índice anterior');
     await c.insertOne(doc(carreras[0].status === 'fulfilled' ? 'requisito' : 'costo'));
     assert.equal(await c.countDocuments({}), 2, 'rollback recupera la política anterior sin borrar propuestas');
     console.log('Índice transversal: duplicados y BSON inválido bloqueados en prechequeo; creación, tres estados activos, carreras y rollback comprobados en Mongo efímero.');

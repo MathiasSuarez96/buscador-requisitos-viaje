@@ -1,6 +1,7 @@
 // Preparación local o prechequeo con un Db inyectado. No carga .env,
 // no abre conexiones y no ofrece operaciones de escritura sobre Atlas.
 const { createHash } = require('node:crypto');
+const { ObjectId } = require('bson');
 const { ESTADOS_ACTIVOS } = require('../services/propuestas/contrato-propuestas');
 const { evaluarIndice } = require('../services/propuestas/indices-propuestas');
 
@@ -23,7 +24,7 @@ async function prechequear(db) {
   const grupos = new Map();
   const invalidas = [];
   for (const p of activas) {
-    if (p.destino_id?._bsontype !== 'ObjectId' || p.requisito_id?._bsontype !== 'ObjectId') {
+    if (!(p.destino_id instanceof ObjectId) || !(p.requisito_id instanceof ObjectId)) {
       invalidas.push(String(p._id));
       continue;
     }
