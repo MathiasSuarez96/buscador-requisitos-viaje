@@ -68,10 +68,10 @@ function construirPlan(sobre, revalidaciones, t) {
     ...Object.fromEntries(CAMPOS_INSTANTANEA.map(campo => [campo, condicion(payload.instantanea_anterior[campo])]))
   };
   const fecha = fechaMontevideo(revalidadaEn);
-  const set = { 'requisitos.$.fecha_verificacion': fecha, updatedAt: new Date(t) };
+  const set = { 'requisitos.$[r].fecha_verificacion': fecha, updatedAt: new Date(t) };
   const unset = {};
   for (const cambio of payload.cambios) {
-    const ruta = `requisitos.$.${cambio.campo}`;
+    const ruta = `requisitos.$[r].${cambio.campo}`;
     if (cambio.propuesto.presente) set[ruta] = cambio.propuesto.valor;
     else unset[ruta] = '';
   }
@@ -84,7 +84,12 @@ function construirPlan(sobre, revalidaciones, t) {
       as: 'r', cond: { $eq: ['$$r._id', requisitoId] }
     } } }, 1] }
   };
-  return { filtro, update: { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) }, fecha_verificacion: fecha };
+  return {
+    filtro,
+    update: { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) },
+    opciones: { arrayFilters: [Object.fromEntries(Object.entries(elemento).map(([campo, valor]) => [`r.${campo}`, valor]))] },
+    fecha_verificacion: fecha
+  };
 }
 
 module.exports = { fechaMontevideo, condicion, verificarRevalidaciones, coincideRequisito, construirPlan };
