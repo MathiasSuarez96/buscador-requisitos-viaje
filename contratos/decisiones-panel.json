@@ -1,0 +1,43 @@
+[
+  {
+    "accion": "aprobar",
+    "cuerpo": {
+      "estado_esperado": "pendiente_aprobacion",
+      "payload_hash_esperado": "$payload_hash",
+      "version_coordinacion_esperada": 0,
+      "version_contrato_esperada": "1.0"
+    }
+  },
+  {
+    "accion": "rechazar",
+    "cuerpo": {
+      "estado_esperado": "pendiente_aprobacion",
+      "payload_hash_esperado": "$payload_hash",
+      "version_coordinacion_esperada": 0,
+      "version_contrato_esperada": "1.0",
+      "motivo": "Rechazo de prueba compartida"
+    }
+  },
+  {
+    "accion": "aprobar",
+    "cuerpo": {
+      "estado_esperado": "pendiente_aprobacion",
+      "payload_hash_esperado": "$payload_hash",
+      "version_coordinacion_esperada": 0,
+      "version_contrato_esperada": "2.0",
+      "advertencias_aceptadas": [
+        "quita_obligatoriedad"
+      ]
+    }
+  },
+  {
+    "accion": "rechazar",
+    "cuerpo": {
+      "estado_esperado": "pendiente_aprobacion",
+      "payload_hash_esperado": "$payload_hash",
+      "version_coordinacion_esperada": 0,
+      "version_contrato_esperada": "2.0",
+      "motivo": "Rechazo de prueba compartida"
+    }
+  }
+]

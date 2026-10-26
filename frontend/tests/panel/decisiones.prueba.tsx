@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import { crearControladorPanel } from '../../src/panel/controlador.ts'
 import { enviarDecision, esMotivoValido, instantaneaDe, type AccionDecision } from '../../src/panel/decisiones.ts'
@@ -49,6 +50,33 @@ const seleccionar = async (c: ReturnType<typeof crearControladorPanel>, accion: 
 const enviar = async (c: ReturnType<typeof crearControladorPanel>) => { c.confirmarDecision(); await terminar(c) }
 
 export const pruebas: Prueba[] = [
+  { nombre: 'contrato compartido: el controlador real genera los cuatro cuerpos de decisión', async fn() {
+    const casos = JSON.parse(readFileSync(new URL('../../../contratos/decisiones-panel.json', import.meta.url), 'utf8')) as { accion: AccionDecision; cuerpo: Record<string, unknown> }[]
+    assert.equal(casos.length, 4)
+    for (const caso of casos) {
+      let posts = 0
+      const ctx = await contexto((url, init) => {
+        posts++
+        assert.equal(url, `${CONFIG.apiOrigen}/api/panel/propuestas/${ID}/${caso.accion === 'aprobar' ? 'aprobacion' : 'rechazo'}`)
+        assert.equal(init.method, 'POST')
+        assert.deepEqual(JSON.parse(String(init.body)), { ...caso.cuerpo, payload_hash_esperado: HASH })
+        const respuesta = decisionBody(caso.accion)
+        return respuestaJson(200, { decision: { ...respuesta.decision, version_coordinacion_nueva: 1 } })
+      }, ['ver', 'decidir'], 20_000, () => {
+        const d = caso.cuerpo.version_contrato_esperada === '2.0' ? detalleV2() : detalle()
+        return respuestaJson(200, { ...d, propuesta: { ...d.propuesta, version_coordinacion: 0 } })
+      })
+      ctx.controlador.seleccionar(ID)
+      await hastaQue(() => ctx.controlador.obtenerDetalle().datos !== null)
+      if (caso.accion === 'aprobar' && caso.cuerpo.version_contrato_esperada === '2.0') ctx.controlador.fijarAdvertenciaDecision('quita_obligatoriedad', true)
+      ctx.controlador.prepararDecision(caso.accion)
+      if (caso.accion === 'rechazar') ctx.controlador.fijarMotivoDecision(String(caso.cuerpo.motivo))
+      await enviar(ctx.controlador)
+      assert.equal(posts, 1)
+      assert.equal(ctx.controlador.obtenerDecision().registrada?.version_coordinacion_nueva, 1)
+    }
+  } },
+
   ...(['409', '422', '500', 'red', 'timeout', 'respuesta inválida'] as const).map(caso => ({
     nombre: `aplicación ${caso}: bloquea sin reintentos; recarga fallida conserva bloqueo y exitosa lo libera`,
     async fn() {

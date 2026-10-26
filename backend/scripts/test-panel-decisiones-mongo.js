@@ -20,6 +20,8 @@
  */
 
 const assert = require('assert');
+const casosContrato = require('../../contratos/decisiones-panel.json');
+const { crearSobreRequisitoV2, hashHechos, ALGORITMO_HECHOS_HASH } = require('../services/propuestas/payload-requisito-v2');
 
 if (!globalThis.__SOLO_LOOPBACK__) {
   console.error('Falta --require ./scripts/preload-solo-loopback.js. Abortando sin levantar nada.');
@@ -180,6 +182,53 @@ const cuerpoDe = (p, extra = {}) => ({ estado_esperado: 'pendiente_aprobacion', 
       assert.strictEqual(r2.status, 200, r2.body);
       console.log('0) sin índices de decisión: 503 no_disponible (listIndexes real), 0 escrituras; tras crear INDICES_DECISION la misma aprobación → 200: OK');
     }
+
+    // Mismos cuerpos que debe producir el controlador real del frontend.
+    for (const caso of casosContrato) {
+      const p = await sembrar();
+      if (caso.cuerpo.version_contrato_esperada === '2.0') {
+        const valor = valor => ({ presente: true, bson_tipo: 'string', valor });
+        const ausente = { presente: false, bson_tipo: 'ausente', valor: null };
+        const foto = Object.fromEntries(['obligatorio', 'recomendado', 'descripcion', 'fuente', 'link', 'plazo_antes_del_vuelo', 'costo', 'fecha_verificacion', 'estado'].map(c => [c, c === 'obligatorio' ? valor('si') : c === 'estado' ? valor('confirmado') : c === 'descripcion' ? valor('Descripción ETA') : c === 'fuente' ? valor('GOV.UK') : ausente]));
+        await semilla.db(DB).collection('destinos').updateOne({ _id: p.destino_id }, { $set: { 'requisitos.0.descripcion': 'Descripción ETA', 'requisitos.0.fuente': 'GOV.UK' } });
+        const hechos = { obligatorio: 'opcional' };
+        const sobre = crearSobreRequisitoV2({
+          fecha_propuesta: p.payload.fecha_propuesta, destino_id: p.destino_id.toHexString(), requisito_id: REQUISITO_ID_ETA,
+          identidad_requisito: { tipo: 'formulario_digital', nombre: valor('UK ETA') },
+          run_id_origen: p.run_id_origen, propuesta_id: p.propuesta_id, instantanea_anterior: foto,
+          cambios: [{ campo: 'obligatorio', propuesto: valor('no') }],
+          fuentes: [{ nombre: 'GOV.UK', url: 'https://www.gov.uk/eta', capturado_en: p.payload.fuente.capturado_en, hechos, algoritmo_hechos_hash: ALGORITMO_HECHOS_HASH, hechos_hash: hashHechos(hechos) }],
+          advertencias: ['quita_obligatoriedad']
+        });
+        Object.assign(p, sobre, { campo: 'requisito' });
+        await semilla.db(DB).collection('propuestas_cambio').replaceOne({ propuesta_id: p.propuesta_id }, p);
+      }
+      if (caso.accion === 'aprobar' && caso.cuerpo.version_contrato_esperada === '2.0') {
+        const entrada = Object.fromEntries(['fecha_propuesta', 'destino_id', 'requisito_id', 'identidad_requisito', 'run_id_origen', 'propuesta_id', 'instantanea_anterior', 'cambios', 'fuentes', 'advertencias'].map(c => [c, p.payload[c]]));
+        const largo = crearSobreRequisitoV2({ ...entrada, cambios: [...entrada.cambios, { campo: 'descripcion', propuesto: { presente: true, bson_tipo: 'string', valor: 'x'.repeat(10_001) } }] });
+        await semilla.db(DB).collection('propuestas_cambio').replaceOne({ propuesta_id: p.propuesta_id }, { ...p, ...largo });
+        const get = await detalle(p);
+        assert.strictEqual(get.json.propuesta.requisito_v2.completo, false);
+        assert.ok(get.json.acciones_bloqueadas.aprobar.includes('resumen_2_incompleto'));
+        COMANDOS.length = 0;
+        const post = await decidir(p, 'aprobacion', { ...caso.cuerpo, payload_hash_esperado: largo.payload_hash });
+        assert.strictEqual(post.status, 422, post.body);
+        assert.ok(post.json.error.motivos.includes('resumen_2_incompleto'));
+        assert.deepStrictEqual(escrituras(), [], 'resumen incompleto: POST 422 sin escrituras reales');
+        assert.strictEqual((await eventosDe(p.propuesta_id)).length, 0);
+        await semilla.db(DB).collection('propuestas_cambio').replaceOne({ propuesta_id: p.propuesta_id }, p);
+      }
+      const cuerpo = { ...caso.cuerpo, payload_hash_esperado: p.payload_hash };
+      COMANDOS.length = 0;
+      const r = await decidir(p, caso.accion === 'aprobar' ? 'aprobacion' : 'rechazo', cuerpo);
+      assert.strictEqual(r.status, 200, `${caso.accion} ${cuerpo.version_contrato_esperada}: ${r.body}`);
+      assert.deepStrictEqual(escrituras().sort(), ['insert:eventos_propuesta', 'update:propuestas_cambio']);
+      assert.strictEqual((await eventosDe(p.propuesta_id)).length, 1);
+      const guardada = await leerPropuesta(p.propuesta_id);
+      assert.strictEqual(guardada.estado, caso.accion === 'aprobar' ? 'aprobada' : 'rechazada');
+      assert.strictEqual(guardada.version_coordinacion, 1);
+    }
+    console.log('Contrato compartido: cuatro cuerpos aceptados por la ruta real, CAS y evento en Mongo efímero: OK');
 
     // ============================================================
     // 1) Aprobación y rechazo exitosos: transacción real

@@ -619,6 +619,8 @@ async function evaluarIntegridad(d, p, adaptadores) {
   const contrato2 = pl.version_contrato === '2.0';
   const problemas = contrato2 ? problemasConsistenciaV2(p) : problemasConsistencia(p);
   const motivosContrato = contrato2 ? motivosIntegridadV2(p) : [];
+  const resumen2 = contrato2 ? resumenRequisitoV2(pl) : null;
+  const motivosResumen = contrato2 && resumen2?.completo !== true ? ['resumen_2_incompleto'] : [];
   let requisitoActual = { estado: 'no_evaluable', destino: null, requisito: null, valor_actual: null, valor: null };
   // Un payload 2.0 inválido se bloquea antes de consultar o comparar el
   // requisito vivo. Así un documento incompleto produce un 422 controlado.
@@ -631,7 +633,13 @@ async function evaluarIntegridad(d, p, adaptadores) {
       : evaluarRequisitoActual(p, destino, elegirAdaptadorOpcional(p, adaptadores));
   }
   const motivosBase = motivosIntegridad({ hash, problemas, requisitoActual });
-  return { hash, problemas, requisitoActual, motivos: [...motivosContrato, ...motivosBase] };
+  return {
+    hash,
+    problemas,
+    requisitoActual,
+    resumenRequisitoV2: resumen2,
+    motivos: [...motivosContrato, ...motivosResumen, ...motivosBase]
+  };
 }
 
 // obtenerDb: () => Db nativo conectado, o null/undefined si no hay conexión.
@@ -676,7 +684,7 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
     const p = await d.collection(COLECCIONES.propuestas).findOne({ propuesta_id: propuestaId });
     if (!p) return null;
 
-    const { hash, problemas, requisitoActual, motivos } = await evaluarIntegridad(d, p, adaptadores);
+    const { hash, problemas, requisitoActual, resumenRequisitoV2: resumen2, motivos } = await evaluarIntegridad(d, p, adaptadores);
     const pl = esObjeto(p.payload) ? p.payload : {};
 
     const eventos = await d
@@ -693,8 +701,6 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
     }
 
     const base = resumenListado(p);
-    const resumen2 = resumenRequisitoV2(pl);
-    const motivosDetalle = pl.version_contrato === '2.0' && resumen2?.completo !== true ? [...motivos, 'resumen_2_incompleto'] : motivos;
     delete base.alertas;
     return {
       propuesta: {
@@ -725,7 +731,7 @@ function crearLectorPropuestas({ obtenerDb, adaptadores } = {}) {
         versionContrato: pl.version_contrato,
         decisionAprobacionId: p.decision_aprobacion_id ?? null,
         decisionAprobacionValida: aprobacionValida,
-        motivosAprobacion: motivosDetalle
+        motivosAprobacion: motivos
       })
     };
   }

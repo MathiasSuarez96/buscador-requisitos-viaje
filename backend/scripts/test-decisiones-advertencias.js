@@ -145,6 +145,66 @@ assert.throws(() => motivosIntegridadV2({ get algoritmo_canonicalizacion() { thr
   assert.equal(JSON.stringify(lectorPropuestas.resumenRequisitoV2(completa2.payload)).includes('run_id_origen'), false);
   const resumenLargo = lectorPropuestas.resumenRequisitoV2({ ...completa2.payload, cambios: [{ campo: 'descripcion', propuesto: { presente: true, bson_tipo: 'string', valor: 'x'.repeat(10_001) } }] });
   assert.deepStrictEqual(resumenLargo, { completo: false, cambios: [], advertencias: ['quita_obligatoriedad'] }, 'un cambio que no puede mostrarse queda marcado como incompleto');
+  const sobreLargo = crearSobreRequisitoV2({
+    fecha_propuesta: sobre2.payload.fecha_propuesta,
+    destino_id: sobre2.payload.destino_id,
+    requisito_id: sobre2.payload.requisito_id,
+    identidad_requisito: sobre2.payload.identidad_requisito,
+    run_id_origen: sobre2.payload.run_id_origen,
+    propuesta_id: sobre2.payload.propuesta_id,
+    instantanea_anterior: foto,
+    cambios: [{ campo: 'descripcion', propuesto: valor('x'.repeat(10_001)) }],
+    fuentes: sobre2.payload.fuentes,
+    advertencias: []
+  });
+  const completaLarga = {
+    ...completa2,
+    payload_hash: sobreLargo.payload_hash,
+    payload: sobreLargo.payload
+  };
+  const parcialLarga = {
+    ...parcial2,
+    payload_hash: sobreLargo.payload_hash,
+    payload: { version_contrato: '2.0', advertencias: [] }
+  };
+  const dbLarga = {
+    collection: (nombre) => ({
+      findOne: async (_f, options) => nombre === 'destinos' ? destino2 : options?.projection ? parcialLarga : completaLarga
+    })
+  };
+  const integridadLarga = await lectorPropuestas.evaluarIntegridad(dbLarga, completaLarga);
+  assert.ok(integridadLarga.motivos.includes('resumen_2_incompleto'), 'GET y POST comparten el bloqueo si el cambio no puede mostrarse completo');
+  assert.equal(integridadLarga.resumenRequisitoV2.completo, false);
+  let decisionesLargas = 0;
+  const servicioLargo = crearDecisionesPropuestas({
+    obtenerDb: () => dbLarga,
+    dependencias: () => ({}),
+    decidir: async () => { decisionesLargas++; throw new Error('no debe decidir una aprobación incompleta'); }
+  });
+  const cuerpoLargo = {
+    ...cuerpo,
+    payload_hash_esperado: sobreLargo.payload_hash,
+    version_contrato_esperada: '2.0',
+    advertencias_aceptadas: []
+  };
+  await assert.rejects(
+    servicioLargo.decidir('aprobacion', ID, cuerpoLargo, op),
+    (err) => err instanceof ErrorPropuestaNoDecidible && err.motivos.includes('resumen_2_incompleto')
+  );
+  assert.equal(decisionesLargas, 0, 'la aprobación incompleta no alcanza el servicio de escritura');
+  let rechazoLargo;
+  await assert.doesNotReject(async () => { rechazoLargo = await crearDecisionesPropuestas({
+    obtenerDb: () => dbLarga,
+    dependencias: () => ({}),
+    decidir: async () => ({ resultado: 'decision_registrada', tipo_evento: 'rechazo', propuesta_id: ID, evento_id: ID, estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'rechazada', version_coordinacion_nueva: 1, ocurrido_en: new Date(), actor: op.actor })
+  }).decidir('rechazo', ID, {
+    estado_esperado: cuerpoLargo.estado_esperado,
+    payload_hash_esperado: cuerpoLargo.payload_hash_esperado,
+    version_coordinacion_esperada: cuerpoLargo.version_coordinacion_esperada,
+    version_contrato_esperada: '2.0',
+    motivo: 'Resumen demasiado extenso'
+  }, op); });
+  assert.equal(rechazoLargo.decision.estado_nuevo, 'rechazada', 'el rechazo sigue disponible aunque el resumen 2.0 sea incompleto');
   const proyeccionListado = lectorPropuestas.consultaListado({ estados: ['pendiente_aprobacion'], limite: 20, despuesDe: null }).opciones.projection;
   const proyectada2 = Object.fromEntries(Object.keys(proyeccionListado).filter((k) => Object.hasOwn(completa2, k)).map((k) => [k, completa2[k]]));
   assert.deepStrictEqual(lectorPropuestas.problemasConsistenciaV2(proyectada2), [], 'el documento 2.0 proyectado por el listado conserva la consistencia');
