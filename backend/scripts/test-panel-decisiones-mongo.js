@@ -43,6 +43,7 @@ const VERSION_MONGOD = '8.0.32';
 const DB = 'buscador_requisitos';
 const ITERACIONES = 20;
 const OPERADORES = [
+  { proveedor: 'google', sub: '5000', email: 'aplicador@example.com', identificador: 'aplicador.panel', permisos: ['ver', 'decidir', 'aplicar'] },
   { proveedor: 'google', sub: '1000', email: 'operador@example.com', identificador: 'operador.panel', permisos: ['ver', 'decidir'] },
   { proveedor: 'google', sub: '4000', email: 'segundo@example.com', identificador: 'segundo.operador', permisos: ['ver', 'decidir'] },
   { proveedor: 'google', sub: '3000', email: 'solo-ver@example.com', identificador: 'solo.ver', permisos: ['ver'] }
@@ -227,6 +228,14 @@ const cuerpoDe = (p, extra = {}) => ({ estado_esperado: 'pendiente_aprobacion', 
       const guardada = await leerPropuesta(p.propuesta_id);
       assert.strictEqual(guardada.estado, caso.accion === 'aprobar' ? 'aprobada' : 'rechazada');
       assert.strictEqual(guardada.version_coordinacion, 1);
+      if (caso.accion === 'aprobar' && caso.cuerpo.version_contrato_esperada === '2.0') {
+        const d = await detalle(p, '5000');
+        assert.strictEqual(d.status, 200, d.body);
+        assert.ok(!d.json.acciones_permitidas.includes('aplicar'), 'B4: el detalle 2.0 aprobado no ofrece aplicar incluso con permiso');
+        assert.ok(d.json.acciones_bloqueadas.aplicar.includes('contrato_2_no_aplicable'), 'B4: el detalle transmite versionContrato a calcularAcciones');
+        assert.ok(!d.json.acciones_bloqueadas.aplicar.includes('sin_permiso_aplicar'), 'B4: la prueba usa un operador con permiso aplicar');
+      }
+
     }
     console.log('Contrato compartido: cuatro cuerpos aceptados por la ruta real, CAS y evento en Mongo efímero: OK');
 

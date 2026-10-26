@@ -507,7 +507,7 @@ const sinProhibidos = (obj, etiqueta) => {
     const { db, llamadas } = dbFalso({ propuestas: [p], destinos: [destinoDe([requisitoEta({ costo: '£16' })])] });
     const r = await L.evaluarIntegridad(db, p);
     assert.deepStrictEqual(r.motivos, ['valor_actual_cambio']);
-    assert.deepStrictEqual(Object.keys(r), ['hash', 'problemas', 'requisitoActual', 'motivos']);
+    assert.deepStrictEqual(Object.keys(r), ['hash', 'problemas', 'requisitoActual', 'resumenRequisitoV2', 'motivos']);
     assert.deepStrictEqual(llamadas.map((l) => [l.coleccion, l.op]), [['destinos', 'findOne']], 'solo lee el destino');
     assert.deepStrictEqual(llamadas[0].opciones, { projection: { pais: 1, codigo_iso: 1, requisitos: 1 } });
     const base = propuestaDe();

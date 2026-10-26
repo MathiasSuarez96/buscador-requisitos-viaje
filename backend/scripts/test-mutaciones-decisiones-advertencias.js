@@ -9,6 +9,7 @@ const lector = 'services/panel/lectura-propuestas.js';
 const registro = 'services/propuestas/registrar-ejecucion-lectura.js';
 const suite = 'scripts/test-decisiones-advertencias.js';
 const mutaciones = [
+  ['B4: detalle omite versionContrato al calcular acciones', lector, [["versionContrato: pl.version_contrato,", ""]], 'scripts/test-panel-decisiones-mongo.js'],
   ['omite versión del CAS', decide, [["'payload.version_contrato': e.version_contrato_esperada ?? '1.0'", "'payload.version_contrato': null"]], suite],
   ['omite advertencias del CAS', decide, [["filtro['payload.advertencias'] = { $eq: [...e.advertencias_aceptadas] };", 'if (false) {}']], suite],
   ['vuelve al array directo casteado como in', decide, [["filtro['payload.advertencias'] = { $eq: [...e.advertencias_aceptadas] };", "filtro['payload.advertencias'] = [...e.advertencias_aceptadas];"]], 'scripts/test-cas-advertencias-mongo.js'],
