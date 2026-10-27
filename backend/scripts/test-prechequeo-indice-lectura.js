@@ -24,7 +24,7 @@ const { BASE, USUARIO, verificarCuenta, instalarMonitor, ejecutar } = require('.
   monitor.retirar();
   assert.equal(falso.listenerCount('commandStarted'), 0);
   let conecto = false;
-  await assert.rejects(ejecutar({ uri: 'mongodb://127.0.0.1:1/', salida: join(__dirname, 'informe.json'), crearCliente() { conecto = true; } }), /fuera_del_repo/);
+  await assert.rejects(ejecutar({ uri: 'mongodb://127.0.0.1:1/', salida: join(__dirname, 'informe.json'), crearCliente() { conecto = true; } }), /ruta_de_salida_invalida/);
   assert.equal(conecto, false);
 
   let rs, admin, lectura;
@@ -52,7 +52,9 @@ const { BASE, USUARIO, verificarCuenta, instalarMonitor, ejecutar } = require('.
     assert.ok(informe.comandos.includes('find'));
     assert.ok(informe.comandos.includes('listIndexes'));
     assert.doesNotMatch(readFileSync(salida, 'utf8'), /prueba-local|mongodb:\/\//, 'informe sin contraseñas ni URI');
-    await assert.rejects(ejecutar({ uri, salida, crearCliente, ahora }), e => e.code === 'EEXIST');
+    let clienteExtra = false;
+    await assert.rejects(ejecutar({ uri, salida, crearCliente: (...args) => { clienteExtra = true; return crearCliente(...args); }, ahora }), /ruta_de_salida_invalida/);
+    assert.equal(clienteExtra, false, 'archivo existente: aborta antes de crear el cliente');
     lectura = await crearCliente(uri, {}).connect();
     await assert.rejects(lectura.db().collection('propuestas_cambio').insertOne({ no_debe_existir: true }), e => e.code === 13);
     assert.equal(await admin.db().collection('propuestas_cambio').countDocuments({}), 0, 'Mongo impide escrituras con la cuenta read');

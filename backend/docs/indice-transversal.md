@@ -62,10 +62,29 @@ Recibe la URI dedicada mediante `MONGODB_PRECHEQUEO_URI`; debe seleccionar
 node scripts/prechequear-indice-transversal-lectura.js --solo-lectura --salida RUTA_ABSOLUTA_PRIVADA_FUERA_DEL_REPO
 ```
 
-Rechaza salida relativa, dentro del repo o ya existente. La cuenta read es la barrera
+Antes de construir el cliente o conectar, rechaza salida relativa, dentro del repo,
+carpeta inexistente/no escribible o archivo ya existente (incluidos enlaces).
+Resuelve la carpeta real para impedir que un enlace apunte dentro del repo.
+El `wx` final se conserva contra carreras: si la salida cambia después de la validación,
+el guardado aún puede abortar; el prechequeo no garantiza que la carpeta permanezca estable.
+La cuenta read es la barrera
 de autorización en Mongo. El monitor aborta ante comandos fuera de la lista de lectura;
 no se presenta el monitor como sustituto de los permisos del servidor. Si hay fallo de
 conexión/permisos/monitor no se guarda un informe exitoso ni se imprimen errores con URI.
+La CLI publica solo códigos fijos: `cuenta_de_lectura_incorrecta`,
+`se_exige_rol_read_exclusivo`, `base_incorrecta`, `variable_faltante` o
+`ruta_de_salida_invalida`. Errores externos quedan como `error_no_clasificado`:
+nunca se imprime su mensaje crudo ni se toma un código desde un error del driver.
+
+Cobertura de este ajuste: `test-diagnostico-prechequeo.js` y
+`test-mutaciones-diagnostico-prechequeo.js`. Las mutaciones se aplican solo en
+memoria de procesos hijos, no al ejecutor del repositorio.
+
+| Archivo y línea del ejecutor | Antes → después | Aserción que detecta |
+| --- | --- | --- |
+| prechequear-indice-transversal-lectura.js:18-19 | código conocido → código genérico | test-diagnostico-prechequeo.js:15, texto exacto de los cinco códigos |
+| prechequear-indice-transversal-lectura.js:19 | fallback fijo → error.message | test-diagnostico-prechequeo.js:18, el error externo se mantiene genérico |
+| prechequear-indice-transversal-lectura.js:66 | validarSalida(salida) → salida | test-diagnostico-prechequeo.js:34-36, rechazo de ruta antes del cliente y conexión |
 
 ## Política del registrador actual: conservadora, sin cambiar producción
 
