@@ -27,6 +27,7 @@ const repo = path.resolve(__dirname, '../..');
     const uri = 'mongodb+srv://' + host + '/buscador_requisitos'; // Nunca se conecta: la fábrica usa uriLocal.
     admin = await new MongoClient(uriLocal, { authSource: 'admin', auth: { username: 'rootlocal', password: 'solo-prueba-root' } }).connect();
     const db = admin.db(), c = await db.createCollection('propuestas_cambio');
+    const versionSimulada = (await db.command({ buildInfo: 1 })).version;
     await c.createIndex({ propuesta_id: 1 }, { name: 'propuesta_id_1', unique: true });
     await c.createIndex({ destino_id: 1, requisito_id: 1, campo: 1 }, { name: 'uniq_propuesta_activa_por_destino_requisito_campo', unique: true,
       partialFilterExpression: SPEC.partialFilterExpression });
@@ -37,7 +38,7 @@ const repo = path.resolve(__dirname, '../..');
     const archivoInforme = path.join(temporal, 'informe.json'); fs.writeFileSync(archivoInforme, bytesInforme);
     const archivoSimulacion = path.join(temporal, 'simulacion-fixture.json');
     fs.writeFileSync(archivoSimulacion, JSON.stringify({ tipo: 'simulacion_local', resultado: 'OK',
-      script: 'backend/scripts/test-operacion-indice-transversal.js', codigo, version_servidor: '8.0.32' }));
+      script: 'backend/scripts/test-operacion-indice-transversal.js', codigo, version_servidor: versionSimulada }));
     const carpeta = path.join(temporal, 'bundle');
     const generado = O.guardarPlan({ informe: archivoInforme, simulacion: archivoSimulacion, carpeta, host, ahora: t, obtenerCodigo });
     const archivoPlan = path.join(carpeta, 'plan.json');
@@ -134,7 +135,7 @@ const repo = path.resolve(__dirname, '../..');
     const recibo = JSON.parse(fs.readFileSync(correcto.comprobante, 'utf8'));
     const { comprobante_hash, ...contenido } = recibo;
     assert.equal(comprobante_hash, O.sha(JSON.stringify(contenido)));
-    assert.equal(recibo.version_servidor, '8.0.32');
+    assert.equal(recibo.version_servidor, versionSimulada);
     assert.equal(recibo.comandos.filter(n => n === 'createIndexes').length, 1);
     assert.ok(!recibo.comandos.some(n => ['update', 'insert', 'delete', 'dropIndexes'].includes(n)));
     assert.deepEqual(await c.find({}).toArray(), inicial);
@@ -205,6 +206,34 @@ const repo = path.resolve(__dirname, '../..');
     assert.equal(duplicado.codigo, 'duplicados_impiden_indice');
     assert.ok(O.mismosIndices(await c.indexes(), indicesIniciales));
     await c.deleteMany({ propuesta_id: { $in: ['carrera-1', 'carrera-2'] } });
+    const clienteConFalloDeCierre = (u, opts) => {
+      const cliente = crearCliente(u, opts), cerrar = cliente.close.bind(cliente);
+      cliente.close = async () => { await cerrar(); throw new Error('fallo de cierre simulado'); };
+      return cliente;
+    };
+    const cierre = await O.ejecutar({ ...args(), crearCliente: clienteConFalloDeCierre });
+    assert.equal(cierre.estado, 'incierto_requiere_lectura_independiente');
+    assert.equal(cierre.codigo, 'cierre_o_monitor_no_concluyente');
+    await c.dropIndex(SPEC.nombre);
+    const clienteConCorteYCierre = (u, opts) => {
+      const cliente = clienteConCorte(u, opts), cerrar = cliente.close.bind(cliente);
+      cliente.close = async () => { await cerrar(); throw new Error('segundo fallo de cierre simulado'); };
+      return cliente;
+    };
+    const corteYCierre = await O.ejecutar({ ...args(), crearCliente: clienteConCorteYCierre });
+    assert.equal(corteYCierre.estado, 'incierto_requiere_lectura_independiente');
+    assert.equal(corteYCierre.codigo, 'cierre_o_monitor_no_concluyente');
+    await c.dropIndex(SPEC.nombre);
+    // El error nunca reemplaza la identidad del código, especialmente en inciertos.
+    for (const r of [app, baseMala, indicesCambiados, cambiado, vencido, versionMala, correcto, rollback, incierto, sinVerificar, duplicado, cierre, corteYCierre]) {
+      const texto = fs.readFileSync(r.comprobante, 'utf8');
+      const completo = JSON.parse(texto);
+      assert.deepEqual(completo.codigo, codigo, `trazabilidad preservada en ${r.estado}`);
+      assert.equal(completo.codigo_resultado ?? null, r.codigo);
+      const { comprobante_hash, ...datos } = completo;
+      assert.equal(comprobante_hash, O.sha(JSON.stringify(datos)));
+      assert.doesNotMatch(texto, /solo-prueba-|SECRETO_DE_PRUEBA|mongodb:\/\//);
+    }
     const emisor = new EventEmitter();
     const m = O.instalarMonitor(emisor, plan, 'crear');
     const evento = { commandName: 'createIndexes', databaseName: plan.base, command: { createIndexes: plan.coleccion,
@@ -231,7 +260,7 @@ const repo = path.resolve(__dirname, '../..');
     if (process.argv[2] === '--evidencia' && process.argv.length === 4) {
       const salida = require('./prechequear-indice-transversal-lectura').validarSalida(process.argv[3]);
       const evidencia = { tipo: 'simulacion_local', resultado: 'OK', script: 'backend/scripts/test-operacion-indice-transversal.js',
-        codigo: O.capturarCodigo(), version_servidor: '8.0.32', finalizado_en: new Date().toISOString() };
+        codigo: O.capturarCodigo(), version_servidor: versionSimulada, finalizado_en: new Date().toISOString() };
       fs.writeFileSync(salida, JSON.stringify(evidencia, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
       console.log('Evidencia local versionada guardada.');
     }

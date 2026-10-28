@@ -20,6 +20,9 @@ const mutaciones = [
   ['reserva sin exclusividad', "fs.openSync(destino, 'wx', 0o600)", "fs.openSync(destino, 'w', 0o600)"],
   ['omite verificación del índice después de crear', "evaluarIndice(recibo.indices_despues, SPEC).estado !== 'ya_existe'", 'false'],
   ['declara aborto conocido tras corte posterior', "error = e;\n    recibo.estado = monitor?.enviados ? 'incierto_requiere_lectura_independiente' : 'abortado_sin_envio';", "error = e;\n    recibo.estado = 'abortado_sin_envio';"],
+  ['error externo pisa la huella del código', "recibo.codigo_resultado = e instanceof ErrorOperacionIndice ? e.codigo : 'error_externo_no_publicado';", "recibo.codigo = e instanceof ErrorOperacionIndice ? e.codigo : 'error_externo_no_publicado';"],
+  ['fallo confirmado pisa la huella del código', 'recibo.codigo_resultado = confirmados.get(e.code);', 'recibo.codigo = confirmados.get(e.code);'],
+  ['fallo de cierre pisa la huella del código', "recibo.codigo_resultado = 'cierre_o_monitor_no_concluyente';", "recibo.codigo = 'cierre_o_monitor_no_concluyente';"],
   ['omite autorización separada de reversión', "if (confirmadoReversion !== sha(Buffer.concat([bytes, Buffer.from('\\0reversion')])) || confirmarSinDependientes !== true) falla('reversion_no_confirmada');", '']
 ];
 function correr(m) {

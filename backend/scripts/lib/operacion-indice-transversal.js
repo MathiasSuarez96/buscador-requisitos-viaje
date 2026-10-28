@@ -241,7 +241,7 @@ async function ejecutar({ tipo, archivoPlan, confirmado, salida, uri, crearClien
     error = e;
     recibo.estado = monitor?.enviados ? 'incierto_requiere_lectura_independiente' : 'abortado_sin_envio';
     // Después del envío no se presume que el índice no exista, ni siquiera por E11000.
-    recibo.codigo = e instanceof ErrorOperacionIndice ? e.codigo : 'error_externo_no_publicado';
+    recibo.codigo_resultado = e instanceof ErrorOperacionIndice ? e.codigo : 'error_externo_no_publicado';
     // Solo una respuesta semántica del servidor MÁS una relectura intacta
     // permite afirmar fallo confirmado. Un timeout/corte nunca entra aquí.
     const confirmados = new Map([[11000, 'duplicados_impiden_indice'], [85, 'opciones_indice_en_conflicto'],
@@ -253,14 +253,14 @@ async function ejecutar({ tipo, archivoPlan, confirmado, salida, uri, crearClien
         if (mismosIndices(actuales, recibo.indices_antes)) {
           recibo.indices_despues = actuales;
           recibo.estado = 'fallo_confirmado_sin_cambio_de_indices';
-          recibo.codigo = confirmados.get(e.code);
-          error = new ErrorOperacionIndice(recibo.codigo);
+          recibo.codigo_resultado = confirmados.get(e.code);
+          error = new ErrorOperacionIndice(recibo.codigo_resultado);
         }
       } catch { /* Conserva incierto si no se puede comprobar el inventario. */ }
     }
   } finally {
     try { await cliente?.close(); monitor?.comprobar(); }
-    catch { recibo.estado = monitor?.enviados ? 'incierto_requiere_lectura_independiente' : 'abortado_sin_envio'; recibo.codigo = 'cierre_o_monitor_no_concluyente'; error ??= new ErrorOperacionIndice(recibo.codigo); }
+    catch { recibo.estado = monitor?.enviados ? 'incierto_requiere_lectura_independiente' : 'abortado_sin_envio'; recibo.codigo_resultado = 'cierre_o_monitor_no_concluyente'; error = new ErrorOperacionIndice(recibo.codigo_resultado); }
     finally {
       recibo.comandos = [...(monitor?.registro ?? [])]; monitor?.retirar();
       recibo.finalizado_en = ahora().toISOString();

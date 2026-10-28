@@ -11,6 +11,12 @@ No implica push, apertura del registro 2.0 ni cambios de permisos.
 - `scripts/lib/operacion-indice-transversal.js`: controles compartidos.
 - `scripts/test-operacion-indice-transversal.js`: prueba autenticada en Mongo efímero 8.0.32.
 - `scripts/test-mutaciones-operacion-indice.js`: mutaciones de los controles, solo en procesos hijos.
+- `scripts/test-cli-indice-transversal.js`: cuerpos fuente de los tres CLI en procesos
+  hijos, sustituyendo la biblioteca delegada para forzar éxito, aborto, fallo e incierto.
+  Comprueba argumentos y exit codes; no se presenta como prueba de bootstrap nativo
+  del CLI con la biblioteca real y un checkout Git independiente.
+- `scripts/test-mutaciones-cli-indice.js`: modifica copias **en disco** de los CLI para
+  comprobar que las pruebas detectan la eliminación de exit 1 en sus resultados/errores.
 
 `capturarCodigo()` exige árbol limpio y registra HEAD más SHA-256 de los blobs Git
 de los archivos operativos, sus dependencias locales relevantes, el test y el lockfile.
@@ -81,6 +87,9 @@ Los CLI sin argumentos solo muestran ayuda. No cargan `.env` ni usan la URI de l
 El comprobante registra plan/hash, commit/huellas, versión, identidad comprobada,
 comandos, inventarios y huellas de documentos. Tiene hash propio sobre JSON compacto
 sin `comprobante_hash`, y permanece fuera del repo. No se guardan mensajes crudos del driver.
+`codigo` conserva siempre commit y huellas, también en aborto, fallo e incierto.
+`codigo_resultado` es otro campo y guarda únicamente el motivo seguro del resultado.
+El SHA es un control de integridad, no una firma: no autentica a quien redactó el archivo.
 
 Un corte después de enviar createIndexes/dropIndexes queda como incierto. No se
 reintenta ni se elimina nada automáticamente. Una respuesta semántica del servidor
@@ -100,6 +109,13 @@ desplegados dependientes. Esa dependencia de despliegues NO puede verificarla es
 La reversión también exige código/plan vigentes, identidad, privilegio dropIndex,
 índice de forma exacta y resto del inventario sin cambios. Borra por nombre uno solo,
 relee el inventario completo y conserva documentos. Nunca se llama desde el catch de creación.
+
+**Límite explícito: reversión de puesta en servicio, no reversión permanente.**
+No funciona después de vencer el plan de 24 horas, si cambiaron las activas o si no
+hay comprobante de creación confirmado. Antes de autorizar la creación el operador
+debe aceptar este alcance. Fuera de él se necesita diseñar y revisar un plan de
+reversión independiente; no se recomienda improvisar comandos manuales ni falsear
+el estado de un comprobante. Una creación incierta requiere primero lectura independiente.
 
 ## Fuentes de compatibilidad y límites de esta evidencia
 
