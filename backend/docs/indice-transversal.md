@@ -95,11 +95,21 @@ termina en `fallo_registrado`, etapa `creacion_propuesta`, sin propuesta nueva y
 sin vincularse automáticamente a una de otro campo. El fallo queda auditado.
 Esta conducta está cubierta explícitamente en `test-servicio-ejecucion-lectura.js`.
 
-Este bloque conserva esa conducta segura; no modifica el registrador ni abre 2.0.
-No se promete disponibilidad normal del registro en esa colisión. Antes de **crear**
-el índice, la revisión y Mathias deben aceptar expresamente ese efecto operativo,
-o exigir un cambio separado y revisado de reconocimiento de colisiones. Esto no
-impide revisar ni autorizar únicamente el prechequeo de lectura.
+Decisión C elegida para esta etapa: conservar esa conducta segura ahora y corregir
+el reconocimiento de la colisión transversal **antes de abrir el registro 2.0**.
+No se promete disponibilidad normal del registro en esa colisión. No se modifica
+el registrador ni se abre 2.0. Esta decisión NO autoriza crear el índice:
+la creación requiere revisar el ejecutor y confirmar el hash del plan correspondiente.
+
+Pendiente obligatorio de apertura 2.0: implementar, probar y revisar el tratamiento
+de la colisión transversal en el registrador. La única versión de registro
+admitida por el código publicado sigue siendo 1.0; este bloque no cambia esa constante.
 
 La prueba de concurrencia cubre inserts simultáneos con el índice ya creado.
 No demuestra ambos órdenes posibles de una carrera entre createIndex e insert.
+
+## Plan v2 y ejecutores administrativos (pendientes de revisión)
+
+Ver `operacion-indice-v2.md`. El plan privado anterior 39f87f96… es solo un borrador;
+NO debe usarse con el ejecutor nuevo. El generador y los ejecutores ahora están
+versionados y separados de los servicios publicados.
