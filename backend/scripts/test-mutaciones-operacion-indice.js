@@ -22,7 +22,11 @@ const mutaciones = [
   ['declara aborto conocido tras corte posterior', "error = e;\n    recibo.estado = monitor?.enviados ? 'incierto_requiere_lectura_independiente' : 'abortado_sin_envio';", "error = e;\n    recibo.estado = 'abortado_sin_envio';"],
   ['error externo pisa la huella del código', "recibo.codigo_resultado = e instanceof ErrorOperacionIndice ? e.codigo : 'error_externo_no_publicado';", "recibo.codigo = e instanceof ErrorOperacionIndice ? e.codigo : 'error_externo_no_publicado';"],
   ['fallo confirmado pisa la huella del código', 'recibo.codigo_resultado = confirmados.get(e.code);', 'recibo.codigo = confirmados.get(e.code);'],
-  ['fallo de cierre pisa la huella del código', "recibo.codigo_resultado = 'cierre_o_monitor_no_concluyente';", "recibo.codigo = 'cierre_o_monitor_no_concluyente';"],
+  ['fallo de cierre pisa la huella del código', "recibo.codigo_cierre = 'cierre_o_monitor_no_concluyente';", "recibo.codigo = 'cierre_o_monitor_no_concluyente';"],
+  ['cierre fallido tapa la causa principal', 'if (!error) error = new ErrorOperacionIndice(recibo.codigo_cierre);', 'error = new ErrorOperacionIndice(recibo.codigo_cierre); recibo.codigo_resultado = recibo.codigo_cierre;'],
+  ['violación ya reportada se informa como cierre', "else if (!['comando_fuera_de_alcance', 'monitor_violo_alcance'].includes(error.codigo)) cierreFallido = true;", 'else cierreFallido = true;'],
+  ['quita persistencia del comprobante intermedio', "    try { escribirDescriptor(fd, { ...intermedio, comprobante_hash: sha(JSON.stringify(intermedio)) }); }\n    catch { falla('comprobante_intermedio_no_escribible'); }\n", ''],
+  ['envía aunque falle el comprobante intermedio', "catch { falla('comprobante_intermedio_no_escribible'); }", 'catch { /* sigue */ }'],
   ['omite autorización separada de reversión', "if (confirmadoReversion !== sha(Buffer.concat([bytes, Buffer.from('\\0reversion')])) || confirmarSinDependientes !== true) falla('reversion_no_confirmada');", '']
 ];
 function correr(m) {
@@ -30,8 +34,11 @@ function correr(m) {
   if(m){let s=fs.readFileSync(f,'utf8').split(String.fromCharCode(13)).join('');if(s.split(m[1]).length!==2)throw new Error('ANCLA NO UNICA');
   const mod=new Module(f,module);mod.filename=f;mod.paths=Module._nodeModulePaths(path.dirname(f));require.cache[f]=mod;mod._compile(s.replace(m[1],m[2]),f);}
   require(${JSON.stringify(prueba)});`;
+  // El proceso hijo del test (corte abrupto) recibe la misma mutación por entorno.
+  const env = { ...process.env };
+  if (m) env.MUTACION_OPERACION_INDICE = JSON.stringify([m[1], m[2]]); else delete env.MUTACION_OPERACION_INDICE;
   return spawnSync(process.execPath, ['--require', path.join(__dirname, 'preload-solo-loopback.js'), '-e', codigo], {
-    cwd: path.resolve(__dirname, '..'), encoding: 'utf8', timeout: 45000, maxBuffer: 4 * 1024 * 1024
+    cwd: path.resolve(__dirname, '..'), encoding: 'utf8', timeout: 90000, maxBuffer: 4 * 1024 * 1024, env
   });
 }
 const base = correr(null);

@@ -222,6 +222,12 @@ async function ejecutar({ tipo, archivoPlan, confirmado, salida, uri, crearClien
     if (evaluarIndice(foto.indices, SPEC).estado !== (tipo === 'crear' ? 'crear' : 'ya_existe')) falla('indice_no_coincide');
     recibo.documentos_antes_hash = await hashDocumentos(c, plan.controles.maximo_documentos_control);
     monitor.comprobar();
+    // Comprobante intermedio durable por el descriptor reservado: si el proceso muere
+    // tras el envío, queda la foto previa sin afirmar éxito. Sin esta escritura no se envía.
+    const intermedio = { ...recibo, estado: 'envio_autorizado_resultado_no_confirmado',
+      siguiente_paso: 'Si no hay comprobante final: no reintentar ni revertir; realizar nueva lectura independiente con cuenta read.' };
+    try { escribirDescriptor(fd, { ...intermedio, comprobante_hash: sha(JSON.stringify(intermedio)) }); }
+    catch { falla('comprobante_intermedio_no_escribible'); }
     const t = ahora();
     if (t.getTime() - tomada.getTime() < 0 || t.getTime() - tomada.getTime() > VIGENCIA_PRECHEQUEO_MS || t.getTime() > Date.parse(plan.vence_en)) falla('prechequeo_o_plan_vencido');
     monitor.permitir();
@@ -259,19 +265,30 @@ async function ejecutar({ tipo, archivoPlan, confirmado, salida, uri, crearClien
       } catch { /* Conserva incierto si no se puede comprobar el inventario. */ }
     }
   } finally {
-    try { await cliente?.close(); monitor?.comprobar(); }
-    catch { recibo.estado = monitor?.enviados ? 'incierto_requiere_lectura_independiente' : 'abortado_sin_envio'; recibo.codigo_resultado = 'cierre_o_monitor_no_concluyente'; error = new ErrorOperacionIndice(recibo.codigo_resultado); }
-    finally {
-      recibo.comandos = [...(monitor?.registro ?? [])]; monitor?.retirar();
+    // La causa principal queda en codigo_resultado; un fallo adicional del cierre va
+    // aparte en codigo_cierre. Una violación del monitor ya reportada no es fallo de cierre.
+    let cierreFallido = false;
+    try { await cliente?.close(); } catch { cierreFallido = true; }
+    try { monitor?.comprobar(); }
+    catch (e) { if (!error) error = e; else if (!['comando_fuera_de_alcance', 'monitor_violo_alcance'].includes(error.codigo)) cierreFallido = true; }
+    if (cierreFallido) {
+      recibo.codigo_cierre = 'cierre_o_monitor_no_concluyente';
+      if (!error) error = new ErrorOperacionIndice(recibo.codigo_cierre);
+    }
+    if (error && (cierreFallido || recibo.estado === 'confirmado')) {
+      recibo.estado = monitor?.enviados ? 'incierto_requiere_lectura_independiente' : 'abortado_sin_envio';
+      recibo.codigo_resultado ??= error.codigo ?? 'error_externo_no_publicado';
+    }
+    recibo.comandos = [...(monitor?.registro ?? [])]; monitor?.retirar();
+    try {
       recibo.finalizado_en = ahora().toISOString();
       if (recibo.estado !== 'confirmado') recibo.siguiente_paso = 'No reintentar ni revertir; revisar comprobante y realizar nueva lectura independiente con cuenta read.';
-      try { escribirDescriptor(fd, { ...recibo, comprobante_hash: sha(JSON.stringify(recibo)) }); }
-      catch { recibo.estado = 'incierto_requiere_lectura_independiente'; error = new ErrorOperacionIndice('resultado_no_concluyente_sin_comprobante'); }
-      finally { fs.closeSync(fd); }
-    }
+      escribirDescriptor(fd, { ...recibo, comprobante_hash: sha(JSON.stringify(recibo)) });
+    } catch { recibo.estado = 'incierto_requiere_lectura_independiente'; error = new ErrorOperacionIndice('resultado_no_concluyente_sin_comprobante'); }
+    finally { fs.closeSync(fd); }
   }
   return { estado: recibo.estado, codigo: error ? (error instanceof ErrorOperacionIndice ? error.codigo : 'error_externo_no_publicado') : null,
-    plan_hash: confirmado, comprobante: destino };
+    codigo_cierre: recibo.codigo_cierre ?? null, plan_hash: confirmado, comprobante: destino };
 }
 
 module.exports = { ARCHIVOS_CODIGO, ErrorOperacionIndice, sha, igual, mismosIndices, capturarCodigo, construirPlan,

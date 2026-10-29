@@ -54,6 +54,10 @@ son informativos; no hacen falta para ejecutar ni pueden ampliar el alcance.
 3. Generar bundle con `--informe RUTA --simulacion EVIDENCIA --carpeta CARPETA_NUEVA --host HOST_SRV`.
 4. Revisar código/bundle. No usar la cuenta read para crear índices.
 
+El generador actual exige un informe con el índice en estado `crear`: **no permite
+generar un plan nuevo cuando el índice ya existe**. Tampoco hay, por lo tanto, un
+plan nuevo de reversión para un índice ya creado; ver «Reversión separada».
+
 Los CLI sin argumentos solo muestran ayuda. No cargan `.env` ni usan la URI de la app.
 
 ## Creación, solo tras confirmación explícita
@@ -73,6 +77,10 @@ Los CLI sin argumentos solo muestran ayuda. No cargan `.env` ni usan la URI de l
   Se comparan índices por nombre, preservando el orden de sus claves.
 - Control adicional de documentos: huella EJSON estricta antes/después, sin guardar sus contenidos.
   Límite de 10 000 documentos; si se supera, se detiene antes de escribir.
+- Antes del envío se actualiza el comprobante por el descriptor ya reservado, con fsync:
+  identidad del código, `version_servidor`, `indices_antes`, `prechequeo_hash` y estado
+  `envio_autorizado_resultado_no_confirmado`. Si esa escritura falla, se aborta sin enviar
+  (`comprobante_intermedio_no_escribible`). Aplica igual al dropIndexes de la reversión.
 - A lo sumo 60 segundos entre la nueva foto y el envío; el plan tampoco puede vencer.
 - Una sola llamada createIndex, sin retry de escritura. No hay transacción ni bucle de reintento.
 - Monitor limitado a lecturas/metadata y una creación de la colección/definición exactas.
@@ -88,7 +96,11 @@ El comprobante registra plan/hash, commit/huellas, versión, identidad comprobad
 comandos, inventarios y huellas de documentos. Tiene hash propio sobre JSON compacto
 sin `comprobante_hash`, y permanece fuera del repo. No se guardan mensajes crudos del driver.
 `codigo` conserva siempre commit y huellas, también en aborto, fallo e incierto.
-`codigo_resultado` es otro campo y guarda únicamente el motivo seguro del resultado.
+`codigo_resultado` es otro campo y guarda la causa principal segura del resultado.
+Un fallo adicional al cerrar el cliente o en la comprobación final del monitor va en
+`codigo_cierre` y no reemplaza la causa principal; si no había causa previa, el cierre
+fallido pasa a ser también la causa principal. Un cierre fallido nunca deja un resultado
+como `confirmado` ni como `fallo_confirmado_sin_cambio_de_indices`.
 El SHA es un control de integridad, no una firma: no autentica a quien redactó el archivo.
 
 Un corte después de enviar createIndexes/dropIndexes queda como incierto. No se
@@ -96,9 +108,13 @@ reintenta ni se elimina nada automáticamente. Una respuesta semántica del serv
 (por ejemplo E11000) solo se llama fallo confirmado si una relectura muestra el
 inventario anterior intacto. Si esa lectura falla, permanece incierto.
 Una marca `iniciado_no_concluyente` que queda por caída del proceso tampoco significa aborto.
+Si el proceso muere después del envío, el comprobante queda con el estado intermedio
+`envio_autorizado_resultado_no_confirmado`: no afirma éxito ni fallo, y el índice puede existir.
 
-En cualquier resultado incierto: detenerse y hacer una nueva lectura con cuenta read
-independiente antes de decidir. Si falla la escritura final del comprobante, el CLI
+En cualquier resultado incierto (incluido el estado intermedio sin comprobante final):
+detenerse y **hacer una lectura independiente con cuenta read antes de decidir** cualquier
+paso. Ni el comprobante ni este ejecutor sustituyen esa lectura.
+Si falla la escritura final del comprobante, el CLI
 devuelve error y no afirma éxito, aunque el índice pueda existir.
 
 ## Reversión separada
@@ -112,7 +128,11 @@ relee el inventario completo y conserva documentos. Nunca se llama desde el catc
 
 **Límite explícito: reversión de puesta en servicio, no reversión permanente.**
 No funciona después de vencer el plan de 24 horas, si cambiaron las activas o si no
-hay comprobante de creación confirmado. Antes de autorizar la creación el operador
+hay comprobante de creación confirmado. En particular, **este ejecutor sigue sin
+soportar** la reversión después de 24 horas, con propuestas activas modificadas o tras
+un resultado incierto (que nunca produce comprobante `confirmado`); y como el generador
+no admite un índice ya existente, tampoco se puede obtener un plan nuevo para hacerlo.
+Antes de autorizar la creación el operador
 debe aceptar este alcance. Fuera de él se necesita diseñar y revisar un plan de
 reversión independiente; no se recomienda improvisar comandos manuales ni falsear
 el estado de un comprobante. Una creación incierta requiere primero lectura independiente.

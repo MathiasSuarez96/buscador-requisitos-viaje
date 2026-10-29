@@ -50,6 +50,10 @@ for (const [nombre, args] of [['crear-indice-transversal.js', argsOperacion], ['
     comprobar(correr(nombre, caso, args), caso === 'confirmado' ? 0 : 1, 1);
   }
 }
+// Y7: la confirmación de servicios dependientes exige el argumento exacto, aun con 11 argumentos.
+for (const casi of ['--confirmo-sin-servicios', '--confirmo-sin-servicios-dependientes=si', '--CONFIRMO-SIN-SERVICIOS-DEPENDIENTES', '--confirmo-sin-servicios-dependientes ']) {
+  comprobar(correr('revertir-indice-transversal.js', 'confirmado', [...argsReversion.slice(0, 10), casi]), 1, 0);
+}
 comprobar(correr('generar-plan-indice-transversal.js', 'confirmado', []), 0, 0);
 comprobar(correr('generar-plan-indice-transversal.js', 'confirmado', ['--argumento-desconocido']), 1, 0);
 for (const caso of ['confirmado', 'error_conocido', 'error_externo']) comprobar(correr('generar-plan-indice-transversal.js', caso, argsGenerador), caso === 'confirmado' ? 0 : 1, 1);

@@ -9,6 +9,7 @@ const ancla = "if (r.estado !== 'confirmado' || r.codigo) process.exitCode = 1;"
 const mutaciones = [
   ['creación ignora resultado no confirmado', 'crear-indice-transversal.js', ancla, 'void 0;'],
   ['reversión ignora resultado no confirmado', 'revertir-indice-transversal.js', ancla, 'void 0;'],
+  ['reversión acepta confirmación de dependientes inexacta', 'revertir-indice-transversal.js', " || args[10] !== '--confirmo-sin-servicios-dependientes'", ''],
   ['generador no falla ante excepción', 'generar-plan-indice-transversal.js',
     "console.error(e instanceof ErrorOperacionIndice ? e.codigo : 'generacion_abortada_sin_detalles_externos'); process.exitCode = 1;",
     "console.error(e instanceof ErrorOperacionIndice ? e.codigo : 'generacion_abortada_sin_detalles_externos');"]

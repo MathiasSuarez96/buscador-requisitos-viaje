@@ -4,11 +4,24 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { tmpdir } = require('node:os');
 const { EventEmitter } = require('node:events');
+const { spawnSync } = require('node:child_process');
 const { MongoClient, ObjectId } = require('mongodb');
 const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const O = require('./lib/operacion-indice-transversal');
 const { SPEC, prechequear } = require('./preparar-indice-transversal');
 const repo = path.resolve(__dirname, '../..');
+// Proceso hijo que ejecuta la creación real y se mata con SIGKILL apenas el servidor
+// responde a createIndexes, antes de que el ejecutor vea la respuesta. Si el runner de
+// mutaciones exporta MUTACION_OPERACION_INDICE, el hijo compila la misma mutación.
+const CODIGO_HIJO_CORTE = `const fs=require('node:fs'),Module=require('node:module'),path=require('node:path');
+const d=JSON.parse(process.env.HIJO_CORTE),m=process.env.MUTACION_OPERACION_INDICE&&JSON.parse(process.env.MUTACION_OPERACION_INDICE);
+if(m){const s=fs.readFileSync(d.lib,'utf8').split(String.fromCharCode(13)).join('');if(s.split(m[0]).length!==2)throw new Error('ANCLA NO UNICA');
+  const mod=new Module(d.lib,module);mod.filename=d.lib;mod.paths=Module._nodeModulePaths(path.dirname(d.lib));require.cache[d.lib]=mod;mod._compile(s.replace(m[0],m[1]),d.lib);}
+const O=require(d.lib),{MongoClient}=require('mongodb');
+O.ejecutar({tipo:'crear',archivoPlan:d.archivoPlan,confirmado:d.hash,uri:d.uri,salida:d.salida,obtenerCodigo:()=>d.codigo,ahora:()=>new Date(d.t),
+  crearCliente:(_u,o)=>{const c=new MongoClient(d.uriLocal,{...o,authSource:'admin',auth:{username:'mathias-operador',password:d.pwd}});
+    c.on('commandSucceeded',e=>{if(e.commandName==='createIndexes'){fs.writeSync(1,'__CORTE_TRAS_ENVIO__\\n');process.kill(process.pid,'SIGKILL');}});return c;}})
+  .then(()=>fs.writeSync(1,'__TERMINO_NORMAL__\\n'),()=>fs.writeSync(1,'__TERMINO_NORMAL__\\n'));`;
 
 (async () => {
   const t = new Date();
@@ -206,30 +219,109 @@ const repo = path.resolve(__dirname, '../..');
     assert.equal(duplicado.codigo, 'duplicados_impiden_indice');
     assert.ok(O.mismosIndices(await c.indexes(), indicesIniciales));
     await c.deleteMany({ propuesta_id: { $in: ['carrera-1', 'carrera-2'] } });
-    const clienteConFalloDeCierre = (u, opts) => {
-      const cliente = crearCliente(u, opts), cerrar = cliente.close.bind(cliente);
+    const conCierreFallido = fabrica => (u, opts) => {
+      const cliente = fabrica(u, opts), cerrar = cliente.close.bind(cliente);
       cliente.close = async () => { await cerrar(); throw new Error('fallo de cierre simulado'); };
       return cliente;
     };
-    const cierre = await O.ejecutar({ ...args(), crearCliente: clienteConFalloDeCierre });
-    assert.equal(cierre.estado, 'incierto_requiere_lectura_independiente');
-    assert.equal(cierre.codigo, 'cierre_o_monitor_no_concluyente');
-    await c.dropIndex(SPEC.nombre);
-    const clienteConCorteYCierre = (u, opts) => {
-      const cliente = clienteConCorte(u, opts), cerrar = cliente.close.bind(cliente);
-      cliente.close = async () => { await cerrar(); throw new Error('segundo fallo de cierre simulado'); };
-      return cliente;
+    const conColeccion = (fabrica, alterar) => (u, opts) => {
+      const cliente = fabrica(u, opts), dbOriginal = cliente.db.bind(cliente);
+      cliente.db = (...dargs) => {
+        const d = dbOriginal(...dargs), colOriginal = d.collection.bind(d);
+        d.collection = (...cargs) => { const col = colOriginal(...cargs); alterar(col); return col; };
+        return d;
+      }; return cliente;
     };
-    const corteYCierre = await O.ejecutar({ ...args(), crearCliente: clienteConCorteYCierre });
-    assert.equal(corteYCierre.estado, 'incierto_requiere_lectura_independiente');
-    assert.equal(corteYCierre.codigo, 'cierre_o_monitor_no_concluyente');
+    const cierre = await O.ejecutar({ ...args(), crearCliente: conCierreFallido(crearCliente) });
+    assert.equal(cierre.estado, 'incierto_requiere_lectura_independiente');
+    assert.equal(cierre.codigo, 'cierre_o_monitor_no_concluyente', 'sin causa previa, el cierre es la causa principal');
+    assert.equal(cierre.codigo_cierre, 'cierre_o_monitor_no_concluyente');
+    assert.equal((await c.indexes()).length, 4, 'el índice se creó aunque el cierre falló');
     await c.dropIndex(SPEC.nombre);
+    // Cambio deliberado: el cierre fallido ya NO tapa la causa original del corte.
+    const corteYCierre = await O.ejecutar({ ...args(), crearCliente: conCierreFallido(clienteConCorte) });
+    assert.equal(corteYCierre.estado, 'incierto_requiere_lectura_independiente');
+    assert.equal(corteYCierre.codigo, 'error_externo_no_publicado');
+    assert.equal(corteYCierre.codigo_cierre, 'cierre_o_monitor_no_concluyente');
+    assert.equal((await c.indexes()).length, 4, 'el índice sigue presente tras corte y cierre fallido');
+    await c.dropIndex(SPEC.nombre);
+    // Un insert con el mismo cliente se bloquea en commandStarted, antes de salir al servidor.
+    const marca = { propuesta_id: 'insert-fuera-de-alcance', destino_id: new ObjectId(), requisito_id: new ObjectId(), campo: 'costo', estado: 'aplicada' };
+    const fueraDeAlcance = await O.ejecutar({ ...args(), crearCliente: conColeccion(crearCliente, col => {
+      col.createIndex = async () => { await col.insertOne({ ...marca }); };
+    }) });
+    assert.equal(fueraDeAlcance.estado, 'abortado_sin_envio');
+    assert.equal(fueraDeAlcance.codigo, 'comando_fuera_de_alcance');
+    assert.equal(fueraDeAlcance.codigo_cierre, null, 'la violación ya reportada no es un fallo de cierre');
+    assert.equal(await c.countDocuments({ propuesta_id: marca.propuesta_id }), 0, 'el insert no llegó al servidor');
+    assert.ok(O.mismosIndices(await c.indexes(), indicesIniciales));
+    // La violación se traga en el código llamador: la detecta monitor.comprobar(), no el cierre.
+    const violacionYCierre = await O.ejecutar({ ...args(), crearCliente: conCierreFallido(conColeccion(crearCliente, col => {
+      col.createIndex = async () => { try { await col.insertOne({ ...marca }); } catch { /* tragado a propósito */ } };
+    })) });
+    assert.equal(violacionYCierre.estado, 'abortado_sin_envio');
+    assert.equal(violacionYCierre.codigo, 'monitor_violo_alcance');
+    assert.equal(violacionYCierre.codigo_cierre, 'cierre_o_monitor_no_concluyente');
+    assert.equal(await c.countDocuments({ propuesta_id: marca.propuesta_id }), 0, 'el insert tragado tampoco llegó');
+    assert.ok(O.mismosIndices(await c.indexes(), indicesIniciales));
+    const duplicadoYCierre = await O.ejecutar({ ...args(), crearCliente: conCierreFallido(clienteConCarrera) });
+    assert.equal(duplicadoYCierre.estado, 'incierto_requiere_lectura_independiente', 'cierre fallido: no se afirma fallo confirmado');
+    assert.equal(duplicadoYCierre.codigo, 'duplicados_impiden_indice');
+    assert.equal(duplicadoYCierre.codigo_cierre, 'cierre_o_monitor_no_concluyente');
+    assert.ok(O.mismosIndices(await c.indexes(), indicesIniciales), 'E11000: el índice no se creó');
+    await c.deleteMany({ propuesta_id: { $in: ['carrera-1', 'carrera-2'] } });
+    const operadorYCierre = await O.ejecutar({ ...args(), crearCliente: conCierreFallido((u, opts) => crearCliente(u, opts, 'buscador-backend-app')) });
+    assert.equal(operadorYCierre.estado, 'abortado_sin_envio');
+    assert.equal(operadorYCierre.codigo, 'operador_incorrecto');
+    assert.equal(operadorYCierre.codigo_cierre, 'cierre_o_monitor_no_concluyente');
+    assert.ok(!JSON.parse(fs.readFileSync(operadorYCierre.comprobante, 'utf8')).comandos.includes('createIndexes'));
+    assert.ok(O.mismosIndices(await c.indexes(), indicesIniciales));
+    for (const r of [fueraDeAlcance, violacionYCierre, operadorYCierre]) {
+      const comandos = JSON.parse(fs.readFileSync(r.comprobante, 'utf8')).comandos;
+      assert.ok(!comandos.some(n => ['insert', 'createIndexes'].includes(n)), `sin escrituras registradas en ${r.codigo}`);
+    }
+    assert.deepEqual(await c.find({}).toArray(), inicial, 'documentos intactos tras los escenarios de cierre');
+    // Muerte abrupta del proceso justo después del envío: queda el comprobante intermedio.
+    const fotoAntesHijo = await prechequear(db);
+    const salidaHijo = path.join(temporal, `comprobante-${++serial}.json`);
+    const hijo = spawnSync(process.execPath, ['--require', path.join(__dirname, 'preload-solo-loopback.js'), '-e', CODIGO_HIJO_CORTE], {
+      cwd: path.resolve(__dirname, '..'), encoding: 'utf8', timeout: 60000,
+      env: { ...process.env, HIJO_CORTE: JSON.stringify({ lib: require.resolve('./lib/operacion-indice-transversal'), archivoPlan,
+        hash: generado.hash, uri, salida: salidaHijo, uriLocal, codigo, t: t.toISOString(), pwd: 'solo-prueba-operador' }) }
+    });
+    assert.ok(!hijo.error && hijo.status !== 0, `hijo terminado abruptamente\n${hijo.stdout}\n${hijo.stderr}`);
+    assert.match(hijo.stdout, /__CORTE_TRAS_ENVIO__/);
+    assert.doesNotMatch(hijo.stdout, /__TERMINO_NORMAL__/);
+    const textoHijo = fs.readFileSync(salidaHijo, 'utf8'), reciboHijo = JSON.parse(textoHijo);
+    assert.equal(reciboHijo.estado, 'envio_autorizado_resultado_no_confirmado');
+    assert.deepEqual(reciboHijo.codigo, codigo);
+    assert.equal(reciboHijo.version_servidor, versionSimulada);
+    assert.ok(O.mismosIndices(reciboHijo.indices_antes, indicesIniciales));
+    assert.equal(reciboHijo.prechequeo_hash, fotoAntesHijo.hash);
+    { const { comprobante_hash: h, ...datos } = reciboHijo; assert.equal(h, O.sha(JSON.stringify(datos))); }
+    for (const campo of ['indices_despues', 'finalizado_en', 'codigo_resultado', 'documentos_despues_hash']) assert.ok(!(campo in reciboHijo), `sin ${campo}`);
+    assert.doesNotMatch(textoHijo, /"confirmado"|solo-prueba-|mongodb:\/\//);
+    assert.equal((await c.indexes()).length, 4, 'el índice existe: el comprobante no lo niega ni afirma éxito');
+    await c.dropIndex(SPEC.nombre);
+    // Si la escritura intermedia falla, se aborta antes del envío.
+    const fsyncOriginal = fs.fsyncSync; let fsyncs = 0;
+    let sinIntermedio;
+    try {
+      fs.fsyncSync = (...fargs) => { if (++fsyncs === 2) throw Object.assign(new Error('fsync de prueba'), { code: 'EIO' }); return fsyncOriginal(...fargs); };
+      sinIntermedio = await O.ejecutar(args());
+    } finally { fs.fsyncSync = fsyncOriginal; }
+    assert.equal(sinIntermedio.estado, 'abortado_sin_envio', JSON.stringify(sinIntermedio));
+    assert.equal(sinIntermedio.codigo, 'comprobante_intermedio_no_escribible');
+    assert.ok(!JSON.parse(fs.readFileSync(sinIntermedio.comprobante, 'utf8')).comandos.includes('createIndexes'));
+    assert.ok(O.mismosIndices(await c.indexes(), indicesIniciales), 'sin escritura intermedia no hay índice');
     // El error nunca reemplaza la identidad del código, especialmente en inciertos.
-    for (const r of [app, baseMala, indicesCambiados, cambiado, vencido, versionMala, correcto, rollback, incierto, sinVerificar, duplicado, cierre, corteYCierre]) {
+    for (const r of [app, baseMala, indicesCambiados, cambiado, vencido, versionMala, correcto, rollback, incierto, sinVerificar, duplicado, cierre, corteYCierre,
+      fueraDeAlcance, violacionYCierre, duplicadoYCierre, operadorYCierre, sinIntermedio]) {
       const texto = fs.readFileSync(r.comprobante, 'utf8');
       const completo = JSON.parse(texto);
       assert.deepEqual(completo.codigo, codigo, `trazabilidad preservada en ${r.estado}`);
       assert.equal(completo.codigo_resultado ?? null, r.codigo);
+      assert.equal(completo.codigo_cierre ?? null, r.codigo_cierre);
       const { comprobante_hash, ...datos } = completo;
       assert.equal(comprobante_hash, O.sha(JSON.stringify(datos)));
       assert.doesNotMatch(texto, /solo-prueba-|SECRETO_DE_PRUEBA|mongodb:\/\//);
