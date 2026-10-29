@@ -19,10 +19,13 @@ const mutaciones = [
   ['confirma ante relectura fallida', 'throw new ErrorResultadoIncierto(ctx, `falló "${plan.nombre}"', 'return plan.confirmado("x"); throw new ErrorResultadoIncierto(ctx, `falló "${plan.nombre}"'],
   ['acepta el modelo como colección', "  if (!coleccion || typeof coleccion !== 'object' || coleccion.schema !== undefined || typeof coleccion.updateOne !== 'function' || typeof coleccion.collectionName !== 'string') {", '  if (!coleccion) {'],
   ['conflicto con otra transición', 'const tipoEvento = TRANSICION_POR_RESULTADO[clasificacion.resultado];', "const tipoEvento = 'obsolescencia';"],
-  ['lee el destino fuera de la sesión', 'await deps.leerDestino({ _id: ctx.ids.destino_id }, session);', 'await deps.leerDestino({ _id: ctx.ids.destino_id }, null);'],
+  ['ESTRUCTURAL: lee el destino fuera de la sesión', 'await deps.leerDestino({ _id: ctx.ids.destino_id }, session);', 'await deps.leerDestino({ _id: ctx.ids.destino_id }, null);'],
   ['aprobador reemplazado por el aplicador', "aprobacion: evento ? { evento_id: evento.evento_id ?? null, actor: { ...(evento.actor ?? {}) },", "aprobacion: evento ? { evento_id: evento.evento_id ?? null, actor: { tipo: 'humano', identificador: auditoria.operador },"],
   ['identificadores nuevos en cada intento de la transacción', 'await deps.insertarIntento(structuredClone(intento), session);\n      await deps.insertarEvento(structuredClone(evento), session);\n    },\n    confirmado: causa => resultado(ctx, \'exito\'',
     'await deps.insertarIntento({ ...structuredClone(intento), intento_id: deps.uuid() }, session);\n      await deps.insertarEvento(structuredClone(evento), session);\n    },\n    confirmado: causa => resultado(ctx, \'exito\''],
+  ['persiste revalidaciones sin validar (restaura el defecto)', '    revalidaciones_resumen: null\n  };',
+    "    revalidaciones_resumen: Array.isArray(revalidaciones) ? revalidaciones.map(r => ({ url: r?.url ?? null, fuente_nombre: r?.fuente_nombre ?? null, revalidada_en: r?.revalidada_en ?? null })) : []\n  };"],
+  ['omite el resumen validado', '  ctx.revalidaciones_resumen = resumirRevalidaciones(construido.payload, revalidaciones);\n', ''],
   ['omite precondiciones en la etapa 0', '  const fallas = verificarPrecondicionesV2(entrada, propuesta, evento);\n  let construido;', '  const fallas = [];\n  let construido;'],
   ['omite precondiciones dentro de la transacción', '      if (fallas.length) throw new ErrorNoAplicableV2(fallas);\n      const vigente', '      const vigente']
 ];

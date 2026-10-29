@@ -127,6 +127,15 @@ function clasificarRequisitoV2(destino, ids, payload) {
   return { ok: true, requisito };
 }
 
+// Pura. Resumen de revalidaciones YA validadas por construirPlan: los textos salen de las
+// fuentes del payload aprobado; del llamador solo se toma la fecha, ya verificada como Date.
+function resumirRevalidaciones(payload, revalidaciones) {
+  return payload.fuentes.map(f => {
+    const r = revalidaciones.find(x => x.url === f.url);
+    return { url: f.url, fuente_nombre: f.nombre, hechos_hash: f.hechos_hash, revalidada_en: new Date(r.revalidada_en.getTime()) };
+  });
+}
+
 // Pura. Estado completo que debe quedar en el requisito tras aplicar.
 function resultadoEsperado(payload, fecha) {
   const r = aplicarCambiosAInstantanea(payload.instantanea_anterior, payload.cambios);
@@ -151,7 +160,8 @@ function construirIntentoV2(ctx, r) {
     hash_contenido_referenciado: ctx.hash_esperado, version_coordinacion_esperada: ctx.version_esperada,
     decision_aprobacion_id: ctx.decision_aprobacion_id_esperado,
     iniciado_en: ctx.iniciado_en, finalizado_en: r.finalizado_en, resultado: r.resultado,
-    revalidaciones: ctx.revalidaciones_resumen
+    // Solo existe tras validar las revalidaciones; un rechazo temprano no persiste datos del llamador.
+    ...(ctx.revalidaciones_resumen ? { revalidaciones: ctx.revalidaciones_resumen } : {})
   };
   for (const campo of ['etapa_fallo', 'historial_id', 'conflicto', 'precondiciones', 'fecha_verificacion']) if (r[campo] !== undefined) doc[campo] = r[campo];
   if (r.error_mensaje !== undefined) doc.error_mensaje = sanearMensaje(r.error_mensaje);
@@ -397,8 +407,7 @@ async function aplicarPropuestaV2(entrada, contexto, deps) {
     aprobacion: evento ? { evento_id: evento.evento_id ?? null, actor: { ...(evento.actor ?? {}) },
       identidad_operador: esObjeto(evento.detalle?.identidad_operador) ? { ...evento.detalle.identidad_operador } : null,
       ocurrido_en: evento.ocurrido_en ?? null } : null,
-    revalidaciones_resumen: Array.isArray(revalidaciones) ? revalidaciones.map(r => ({ url: r?.url ?? null, fuente_nombre: r?.fuente_nombre ?? null,
-      revalidada_en: r?.revalidada_en ?? null, algoritmo_hechos_hash: r?.algoritmo_hechos_hash ?? null })) : []
+    revalidaciones_resumen: null
   };
   const fallas = verificarPrecondicionesV2(entrada, propuesta, evento);
   let construido;
@@ -407,6 +416,7 @@ async function aplicarPropuestaV2(entrada, contexto, deps) {
     catch (err) { if (err instanceof ErrorNoAplicableV2) fallas.push(...err.fallas); else throw err; }
   }
   if (fallas.length) return registrarNoAplicable(ctx, fallas, 'precondiciones_propuesta', deps);
+  ctx.revalidaciones_resumen = resumirRevalidaciones(construido.payload, revalidaciones);
 
   try {
     return await escribirConConfirmacionV2(ctx, planExitoV2(ctx, entrada, revalidaciones, construido.payload, construido.plan, deps), deps);

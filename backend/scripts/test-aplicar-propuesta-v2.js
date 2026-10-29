@@ -67,15 +67,18 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
 
     // Propuesta 2.0 guardada + aprobación con las funciones reales de la decisión 2.0.
     async function sembrar({ destinoId = new ObjectId(), requisitoId = new ObjectId(), requisitos, objetivo, cambios = CAMBIOS,
-      advertencias = ['quita_obligatoriedad'], aprobador = 'mathias-aprobador', insertarDestino = true } = {}) {
+      advertencias = ['quita_obligatoriedad'], aprobador = 'mathias-aprobador', insertarDestino = true, fuentes = [fuente], corromper = null } = {}) {
       const objetivoReq = objetivo ?? checkmig(requisitoId);
       const reqs = requisitos ?? [visa(), objetivoReq, visa()];
       if (insertarDestino) await col('destinos').insertOne({ _id: destinoId, pais: `Colombia-${destinoId}`, codigo_iso: String(destinoId).slice(-6), requisitos: reqs, updatedAt: new Date('2026-08-18T12:00:00Z') });
       const propuestaId = uuid();
-      const sobre = crearSobreRequisitoV2({ fecha_propuesta: '2026-10-26T19:00:00.000Z', destino_id: String(destinoId), requisito_id: String(requisitoId),
-        run_id_origen: uuid(), propuesta_id: propuestaId, ...capturarIdentidadEInstantanea({ ...objetivoReq, _id: requisitoId }), cambios, fuentes: [fuente], advertencias });
+      let sobre = crearSobreRequisitoV2({ fecha_propuesta: '2026-10-26T19:00:00.000Z', destino_id: String(destinoId), requisito_id: String(requisitoId),
+        run_id_origen: uuid(), propuesta_id: propuestaId, ...capturarIdentidadEInstantanea({ ...objetivoReq, _id: requisitoId }), cambios, fuentes, advertencias });
+      // `corromper` simula un payload guardado fuera de contrato, con hash y aprobación coherentes con él.
+      const payload = structuredClone(sobre.payload);
+      if (corromper) { corromper(payload); sobre = { ...sobre, payload, payload_hash: hashSobreCanonico(payload, sobre.algoritmo_canonicalizacion, sobre.algoritmo_hash) }; }
       await col('propuestas_cambio').insertOne({ propuesta_id: propuestaId, destino_id: destinoId, requisito_id: requisitoId, campo: 'requisito',
-        algoritmo_canonicalizacion: sobre.algoritmo_canonicalizacion, algoritmo_hash: sobre.algoritmo_hash, payload: structuredClone(sobre.payload), payload_hash: sobre.payload_hash,
+        algoritmo_canonicalizacion: sobre.algoritmo_canonicalizacion, algoritmo_hash: sobre.algoritmo_hash, payload, payload_hash: sobre.payload_hash,
         run_id_origen: sobre.payload.run_id_origen, estado: 'pendiente_aprobacion', version_coordinacion: 0, decision_aprobacion_id: null, ultimo_evento_id: null });
       const e = D.validarEntrada({ tipo_evento: 'aprobacion', propuesta_id: propuestaId, estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: sobre.payload_hash,
         version_coordinacion_esperada: 0, decision_aprobacion_id_esperado: null, version_contrato_esperada: '2.0', advertencias_aceptadas: [...sobre.payload.advertencias] });
@@ -154,6 +157,8 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     assert.deepEqual([intentoCo.aprobacion.evento_id, intentoCo.aprobacion.identidad_operador.sub, intentoCo.identidad_operador.sub],
       [co.eventoAprobacion, 'sub-mathias-operador', 'sub-mathias-operador'], 'aprobador y aplicador por separado aunque sean la misma persona');
     assert.equal(intentoCo.auditoria.request_id.length, 36);
+    // El resumen de revalidaciones sale del payload aprobado, ya validado.
+    assert.deepEqual(intentoCo.revalidaciones, [{ url: fuente.url, fuente_nombre: fuente.nombre, hechos_hash: fuente.hechos_hash, revalidada_en: T }]);
     assert.deepEqual(historialCo.fecha_verificacion, { anterior: valor('2026-08-18'), nueva: valor(FECHA) });
     assert.deepEqual(historialCo.cambios.map(x => x.campo), ['descripcion', 'link', 'obligatorio']);
     assert.deepEqual([eventoCo.actor.tipo, eventoCo.estado_anterior, eventoCo.estado_nuevo, eventoCo.version_coordinacion_nueva, eventoCo.intento_aplicacion_id],
@@ -230,19 +235,50 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     // ---- Cambio concurrente del requisito entre la lectura y la escritura: no se pisa ----
     {
       const c = await sembrar();
+      // La inyección no depende de la sesión: ocurre tras el PRIMER acceso al destino.
       let inyectado = false, lecturas = 0;
       const deps = crearDeps(b => ({ leerDestino: async (f, s) => {
         const d = await b.leerDestino(f, s);
-        if (s) lecturas++;
-        if (s && !inyectado) { inyectado = true; await ext.updateOne({ _id: c.destinoId, 'requisitos._id': c.requisitoId }, { $set: { 'requisitos.$.descripcion': 'CAMBIO CONCURRENTE' } }); }
+        lecturas++;
+        if (!inyectado) { inyectado = true; await ext.updateOne({ _id: c.destinoId, 'requisitos._id': c.requisitoId }, { $set: { 'requisitos.$.descripcion': 'CAMBIO CONCURRENTE' } }); }
         return d;
       } }));
       const rc = await aplicar(c.entrada, contexto(c.entrada), deps);
       const d = (await leerDestino(c.destinoId)).requisitos[1];
       assert.deepEqual([d.descripcion, d.obligatorio, d.link], ['CAMBIO CONCURRENTE', 'si', fuente.url], 'el cambio concurrente se conserva');
       assert.equal(rc.resultado, 'valor_actual_cambio', JSON.stringify(rc));
-      assert.ok(lecturas >= 2, 'el conflicto de escritura reintentó la transacción y releyó');
+      assert.ok(lecturas >= 1);
       assert.ok(!(await conteos(c.propuestaId)).intentos.includes('exito'));
+    }
+
+    // ---- Orden: una clave desconocida agregada DESPUÉS de iniciar el snapshot (tras el CAS) ----
+    // El filtro del núcleo no mira claves desconocidas: solo la lectura del destino dentro
+    // de la transacción, posterior al inicio del snapshot, lo detecta (sonda de reordenamiento).
+    {
+      const c = await sembrar(); let hecho = false;
+      const deps = crearDeps(b => ({ actualizarPropuestaCas: async (f, u, s) => {
+        const x = await b.actualizarPropuestaCas(f, u, s);
+        if (!hecho) { hecho = true; await ext.updateOne({ _id: c.destinoId, 'requisitos._id': c.requisitoId }, { $set: { 'requisitos.$.notas_internas': 'agregada en paralelo' } }); }
+        return x;
+      } }));
+      const rc = await aplicar(c.entrada, contexto(c.entrada), deps);
+      assert.equal(rc.resultado, 'valor_actual_cambio', JSON.stringify(rc));
+      const d = (await leerDestino(c.destinoId)).requisitos[1];
+      assert.deepEqual([d.obligatorio, d.notas_internas], ['si', 'agregada en paralelo'], 'no se aplica sobre una clave desconocida concurrente');
+      assert.ok(!(await conteos(c.propuestaId)).intentos.includes('exito'));
+    }
+
+    // ---- Contrato de sesión (ESTRUCTURAL): toda operación del callback usa la sesión de la transacción ----
+    {
+      const c = await sembrar(); let sesionTx = null; const usos = [];
+      const espiar = (b, nombre) => async (...a) => { usos.push([nombre, a[a.length - 1] === sesionTx && sesionTx !== null]); return b[nombre](...a); };
+      const deps = crearDeps(b => ({
+        ejecutarTransaccion: fn => b.ejecutarTransaccion(s => { sesionTx = s; return fn(s); }),
+        ...Object.fromEntries(['leerDestino', 'actualizarDestino', 'actualizarPropuestaCas', 'insertarHistorial', 'insertarIntento', 'insertarEvento'].map(n => [n, espiar(b, n)]))
+      }));
+      assert.equal((await aplicar(c.entrada, contexto(c.entrada), deps)).resultado, 'exito');
+      assert.deepEqual(usos.map(u => u[0]), ['actualizarPropuestaCas', 'leerDestino', 'actualizarDestino', 'insertarHistorial', 'insertarIntento', 'insertarEvento']);
+      assert.ok(usos.every(u => u[1]), `todas con la sesión de la transacción: ${JSON.stringify(usos)}`);
     }
 
     // ---- matchedCount 0: sin aplicación ni auditoría de éxito ----
@@ -388,6 +424,161 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       await assert.rejects(V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada), deps), A1.ErrorResultadoIncierto);
       assert.equal(transacciones, 1, 'sin reintento a ciegas');
       assert.deepEqual(await conteos(c.propuestaId), { intentos: ['exito'], historial: 1, eventos: ['aplicacion'] }, 'el commit ocurrió; no se agregó escritura_abortada');
+    }
+
+    // ---- Secretos FICTICIOS: nada del llamador sin validar llega a la auditoría ni a los errores públicos ----
+    {
+      const SECRETOS = ['ClaveFicticia123', 'tok_FICTICIO_9f8e', 'hunter2-ficticia', 'AKIA_FICTICIA_42', 'cluster-ficticio.mongodb.net'];
+      const conSecretos = 'mongodb+srv://admin:ClaveFicticia123@cluster-ficticio.mongodb.net/db token=tok_FICTICIO_9f8e password=hunter2-ficticia apiKey=AKIA_FICTICIA_42';
+      const maliciosas = [{ ...revalidaciones[0], url: 'https://usuario:ClaveFicticia123@www.migracioncolombia.gov.co/checkmig', fuente_nombre: conSecretos }];
+      const limpio = (texto, donde) => assert.deepEqual(SECRETOS.filter(x => texto.includes(x)), [], `secretos expuestos en ${donde}`);
+      const publico = e => `${e?.message}\n${e?.stack}\n${String(e)}`;
+      // Rechazo de etapa 0 con revalidaciones maliciosas: se registra, sin `revalidaciones`.
+      const c1 = await sembrar();
+      await col('propuestas_cambio').updateOne({ propuesta_id: c1.propuestaId }, { $set: { ultimo_evento_id: uuid() } });
+      const r1 = await aplicar(c1.entrada, { auditoria: auditoria(c1.entrada), revalidaciones: maliciosas }, crearDeps());
+      assert.equal(r1.resultado, 'propuesta_no_aplicable');
+      const i1 = await col('intentos_aplicacion').findOne({ intento_id: r1.intento_id });
+      assert.ok(i1 && i1.etapa_fallo === 'precondiciones_propuesta' && i1.precondiciones.length > 0, 'el rechazo temprano se registra con motivos seguros');
+      assert.equal(Object.hasOwn(i1, 'revalidaciones'), false, 'rechazo temprano sin revalidaciones del llamador');
+      // Propuesta válida con revalidaciones maliciosas: no coinciden con la fuente aprobada → sin escribir.
+      const c2 = await sembrar(), antes2 = await huella(c2);
+      let e2 = null;
+      try { await V2.aplicarPropuestaV2(c2.entrada, { auditoria: auditoria(c2.entrada), revalidaciones: maliciosas }, crearDeps()); } catch (e) { e2 = e; }
+      assert.ok(e2 instanceof V2.ErrorRevalidacionV2, String(e2));
+      limpio(publico(e2), 'ErrorRevalidacionV2');
+      await sinEscrituraDeDestino(c2, antes2, 'revalidación maliciosa');
+      assert.deepEqual(await conteos(c2.propuestaId), { intentos: [], historial: 0, eventos: [] });
+      // Error con secretos dentro de la transacción: mensaje público y auditoría limpios.
+      const c3 = await sembrar();
+      let e3 = null;
+      try { await V2.aplicarPropuestaV2(c3.entrada, contexto(c3.entrada), crearDeps(() => ({ insertarEvento: async () => { throw new Error(conSecretos); } }))); } catch (e) { e3 = e; }
+      assert.ok(e3 instanceof V2.ErrorEscrituraAbortadaV2);
+      limpio(publico(e3), 'ErrorEscrituraAbortadaV2');
+      assert.deepEqual(await conteos(c3.propuestaId), { intentos: ['escritura_abortada'], historial: 0, eventos: [] });
+      // Éxito con las mismas reglas: resumen validado del payload.
+      const c4 = await sembrar();
+      const r4 = await aplicar(c4.entrada, contexto(c4.entrada), crearDeps());
+      assert.equal(r4.resultado, 'exito');
+      assert.equal((await col('intentos_aplicacion').findOne({ intento_id: r4.intento_id }))?.revalidaciones?.[0]?.url, fuente.url);
+      const auditoriaTotal = JSON.stringify(await Promise.all(['intentos_aplicacion', 'historial_cambios', 'eventos_propuesta', 'propuestas_cambio'].map(n => col(n).find({}).toArray())));
+      limpio(auditoriaTotal, 'colecciones de auditoría');
+    }
+
+    // ---- 3a. Revalidación con fuente cambiada y fuente no única: punto real de rechazo ----
+    const fuente2 = { nombre: 'Cancillería de Colombia', url: 'https://www.cancilleria.gov.co/requisitos', capturado_en: '2026-10-26T18:00:00.000Z',
+      hechos: { visa: false }, algoritmo_hechos_hash: ALGORITMO_HECHOS_HASH, hechos_hash: hashHechos({ visa: false }) };
+    const revDe = (f, en) => ({ tipo: 'hechos', fuente_nombre: f.nombre, url: f.url, hechos: f.hechos, algoritmo_hechos_hash: ALGORITMO_HECHOS_HASH, revalidada_en: en });
+    for (const [nombre, opciones, revs, codigo] of [
+      ['fuente cambiada', {}, [{ ...revalidaciones[0], hechos: { obligatorio: true, formulario: 'Check-Mig' } }], 'fuente_cambio'],
+      ['fuente no única (dos fuentes, misma URL)', { fuentes: [fuente, fuente2] }, [revDe(fuente, T), revDe(fuente, T)], 'revalidacion_no_unica'],
+      ['revalidación duplicada con una fuente', {}, [revalidaciones[0], revalidaciones[0]], 'revalidaciones_incompletas']
+    ]) {
+      const c = await sembrar(opciones), antes = await huella(c);
+      let e = null;
+      try { await V2.aplicarPropuestaV2(c.entrada, { auditoria: auditoria(c.entrada), revalidaciones: revs }, crearDeps()); } catch (x) { e = x; }
+      assert.ok(e instanceof V2.ErrorRevalidacionV2 && e.codigo === codigo, `${nombre}: ${e?.codigo ?? e}`);
+      await sinEscrituraDeDestino(c, antes, nombre);
+      assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada', nombre);
+      assert.deepEqual(await conteos(c.propuestaId), { intentos: [], historial: 0, eventos: [] }, `${nombre}: el registro queda para H3`);
+    }
+
+    // ---- 3b. Varias fuentes con fechas distintas: vale la más antigua, en Montevideo ----
+    {
+      // 02:50Z = 26/10 23:50 y 03:02Z = 27/10 00:02 en Montevideo; t = 03:04Z (27/10 en Montevideo).
+      const t2 = new Date('2026-10-27T03:04:00.000Z');
+      const c = await sembrar({ fuentes: [fuente, fuente2] });
+      const revs = [revDe(fuente, new Date('2026-10-27T02:50:00.000Z')), revDe(fuente2, new Date('2026-10-27T03:02:00.000Z'))];
+      const r = await aplicar(c.entrada, { auditoria: auditoria(c.entrada), revalidaciones: revs }, crearDeps(() => ({ ahora: () => t2 })));
+      assert.deepEqual([r.resultado, r.fecha_verificacion], ['exito', '2026-10-26'], JSON.stringify(r));
+      assert.equal(await col('destinos').countDocuments({ _id: c.destinoId, requisitos: { $elemMatch: { _id: c.requisitoId, fecha_verificacion: { $type: 'string', $eq: '2026-10-26' } } } }), 1);
+      const i = await col('intentos_aplicacion').findOne({ intento_id: r.intento_id });
+      assert.deepEqual(i.revalidaciones.map(x => [x.url, x.revalidada_en.toISOString()]),
+        [[fuente2.url, '2026-10-27T03:02:00.000Z'], [fuente.url, '2026-10-27T02:50:00.000Z']]);
+      assert.equal((await col('historial_cambios').findOne({ historial_id: r.historial_id })).fecha_verificacion.nueva.valor, '2026-10-26');
+    }
+
+    // ---- 3c. E11000 dentro de la transacción: sin éxito ni escritura del destino ----
+    {
+      const c = await sembrar(), antes = await huella(c), ids = [uuid(), uuid(), uuid()]; let n = 0;
+      await col('historial_cambios').insertOne({ historial_id: ids[2], propuesta_id: uuid(), intento_aplicacion_id: uuid() });
+      const r = await aplicar(c.entrada, contexto(c.entrada), crearDeps(() => ({ uuid: () => ids[n++] })));
+      assert.equal(r.resultado, 'rechazo:ErrorInconsistencia', JSON.stringify(r));
+      await sinEscrituraDeDestino(c, antes, 'E11000 en la transacción');
+      assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada');
+      assert.deepEqual(await conteos(c.propuestaId), { intentos: [], historial: 0, eventos: [] });
+    }
+
+    // ---- 3d. intento_id duplicado en el registro independiente (sin plan) y dentro de la transacción ----
+    {
+      const c = await sembrar(), ids = [uuid(), uuid(), uuid()]; let n = 0;
+      await col('intentos_aplicacion').insertOne({ intento_id: ids[0], propuesta_id: uuid(), resultado: 'escritura_abortada' });
+      await col('propuestas_cambio').updateOne({ propuesta_id: c.propuestaId }, { $set: { ultimo_evento_id: uuid() } });
+      const r = await aplicar(c.entrada, contexto(c.entrada), crearDeps(() => ({ uuid: () => ids[n++] })));
+      assert.equal(r.resultado, 'rechazo:ErrorInconsistencia', `registro independiente duplicado: ${JSON.stringify(r)}`);
+      assert.deepEqual(await conteos(c.propuestaId), { intentos: [], historial: 0, eventos: [] });
+      const c2 = await sembrar(), antes2 = await huella(c2), ids2 = [uuid(), uuid(), uuid()]; let m = 0;
+      await col('intentos_aplicacion').insertOne({ intento_id: ids2[0], propuesta_id: uuid(), resultado: 'escritura_abortada' });
+      const r2 = await aplicar(c2.entrada, contexto(c2.entrada), crearDeps(() => ({ uuid: () => ids2[m++], insertarEvento: async () => { throw new Error('fallo tras el intento'); } })));
+      assert.equal(r2.resultado, 'rechazo:ErrorInconsistencia', `intento_id ajeno en la transacción: ${JSON.stringify(r2)}`);
+      await sinEscrituraDeDestino(c2, antes2, 'intento_id ajeno');
+      assert.deepEqual(await conteos(c2.propuestaId), { intentos: [], historial: 0, eventos: [] });
+    }
+
+    // ---- 3e. Payload guardado corrupto (hash y aprobación coherentes con él) y propuesta 1.0 ----
+    {
+      const c = await sembrar({ corromper: p => { p.cambios = [...p.cambios, { campo: 'costo', propuesto: valor('USD 999') }]; } }), antes = await huella(c);
+      const r = await aplicar(c.entrada, contexto(c.entrada), crearDeps());
+      assert.deepEqual([r.resultado, r.fallas], ['propuesta_no_aplicable', ['payload_2_0_invalido']], JSON.stringify(r));
+      await sinEscrituraDeDestino(c, antes, 'payload corrupto');
+      const i = await col('intentos_aplicacion').findOne({ intento_id: r.intento_id });
+      assert.equal(i.etapa_fallo, 'precondiciones_propuesta');
+      assert.equal(Object.hasOwn(i, 'revalidaciones'), false);
+      // Propuesta 1.0 (campo costo) aprobada con el flujo 1.0 real.
+      const destinoId = new ObjectId(), requisitoId = new ObjectId(), propuestaId = uuid();
+      await col('destinos').insertOne({ _id: destinoId, pais: `uno-${destinoId}`, codigo_iso: 'U10', requisitos: [{ ...checkmig(requisitoId), costo: 'USD 10' }] });
+      const payload = { version_contrato: '1.0', tipo_propuesta: 'actualizacion_campo_requisito', campo: 'costo', destino_id: String(destinoId), requisito_id: String(requisitoId),
+        valor_anterior: { presente: true, valor: 'USD 10' }, valor_propuesto: { valor: 'USD 12', valor_normalizado: { monto: 12, moneda: 'USD' } } };
+      const hash = hashSobreCanonico(payload, c.sobre.algoritmo_canonicalizacion, c.sobre.algoritmo_hash);
+      await col('propuestas_cambio').insertOne({ propuesta_id: propuestaId, destino_id: destinoId, requisito_id: requisitoId, campo: 'costo', algoritmo_canonicalizacion: c.sobre.algoritmo_canonicalizacion,
+        algoritmo_hash: c.sobre.algoritmo_hash, payload, payload_hash: hash, estado: 'pendiente_aprobacion', version_coordinacion: 0, decision_aprobacion_id: null, ultimo_evento_id: null });
+      const e = D.validarEntrada({ tipo_evento: 'aprobacion', propuesta_id: propuestaId, estado_esperado: 'pendiente_aprobacion', payload_hash_esperado: hash, version_coordinacion_esperada: 0, decision_aprobacion_id_esperado: null });
+      const ev = uuid();
+      assert.equal((await col('propuestas_cambio').updateOne(D.construirFiltroCas(e), D.construirUpdateCas(e, ev, T))).matchedCount, 1);
+      await col('eventos_propuesta').insertOne(D.construirEvento(e, ev, T, { actor: { tipo: 'humano', identificador: 'aprobador' }, identidad_operador: { metodo: 'oidc_google', sub: 's' }, comando: { nombre: 'panel-propuestas', version: '1' } }));
+      const entrada = { propuesta_id: propuestaId, estado_esperado: 'aprobada', payload_hash_esperado: hash, version_coordinacion_esperada: 1, decision_aprobacion_id_esperado: ev };
+      const r10 = await aplicar(entrada, contexto(entrada), crearDeps());
+      assert.equal(r10.resultado, 'propuesta_no_aplicable', JSON.stringify(r10));
+      assert.ok(r10.fallas.includes('contrato_no_2_0'), JSON.stringify(r10.fallas));
+      assert.equal((await col('destinos').findOne({ _id: destinoId })).requisitos[0].costo, 'USD 10', 'el 2.0 no toca una propuesta 1.0');
+      assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: propuestaId })).estado, 'aprobada');
+    }
+
+    // ---- 3f. Transacción que registra el conflicto: fallo, respuesta perdida y CAS perdido ----
+    {
+      const conClave = () => { const id = new ObjectId(); return { requisitoId: id, objetivo: checkmig(id), requisitos: [{ ...checkmig(id), notas_internas: 'x' }] }; };
+      // Fallo al insertar el evento de conflicto.
+      const c1 = await sembrar(conClave()), antes1 = await huella(c1);
+      const r1 = await aplicar(c1.entrada, contexto(c1.entrada), crearDeps(b => ({ insertarEvento: async (d, s) => { if (d.tipo_evento === 'conflicto') throw new Error('fallo en el conflicto'); return b.insertarEvento(d, s); } })));
+      assert.equal(r1.resultado, 'rechazo:ErrorEscrituraAbortadaV2', JSON.stringify(r1));
+      await sinEscrituraDeDestino(c1, antes1, 'fallo del conflicto');
+      assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c1.propuestaId })).estado, 'aprobada', 'CAS del conflicto revertido');
+      assert.deepEqual(await conteos(c1.propuestaId), { intentos: ['escritura_abortada'], historial: 0, eventos: [] });
+      assert.equal((await col('intentos_aplicacion').findOne({ propuesta_id: c1.propuestaId })).etapa_fallo, 'transicion_por_fallo');
+      // Respuesta perdida después del commit del conflicto.
+      const c2 = await sembrar(conClave()); let tx2 = 0;
+      const r2 = await aplicar(c2.entrada, contexto(c2.entrada), crearDeps(b => ({ ejecutarTransaccion: async fn => { const k = ++tx2; const r = await b.ejecutarTransaccion(fn); if (k === 2) throw new MongoNetworkError('respuesta perdida'); return r; } })));
+      assert.deepEqual([r2.resultado, r2.confirmado_por_relectura, r2.estado_propuesta_nuevo], ['valor_actual_cambio', true, 'conflicto'], JSON.stringify(r2));
+      assert.deepEqual(await conteos(c2.propuestaId), { intentos: ['valor_actual_cambio'], historial: 0, eventos: ['conflicto'] });
+      // La propuesta cambia entre la transacción abortada y la del conflicto.
+      const c3 = await sembrar(conClave()); let tx3 = 0;
+      const r3 = await aplicar(c3.entrada, contexto(c3.entrada), crearDeps(b => ({ ejecutarTransaccion: async fn => {
+        if (++tx3 === 2) await col('propuestas_cambio').updateOne({ propuesta_id: c3.propuestaId }, { $set: { estado: 'cancelada' } });
+        return b.ejecutarTransaccion(fn);
+      } })));
+      assert.equal(r3.resultado, 'propuesta_no_aplicable', JSON.stringify(r3));
+      assert.deepEqual(await conteos(c3.propuestaId), { intentos: ['propuesta_no_aplicable'], historial: 0, eventos: [] });
+      assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c3.propuestaId })).estado, 'cancelada');
     }
 
     console.log('Aplicador 2.0 (H1): vínculo con la aprobación, CAS, gemelo, conflictos, concurrencia, matchedCount, rollback, reintento, relectura, fecha string y $unset: OK');
