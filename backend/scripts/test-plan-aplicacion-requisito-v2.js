@@ -89,6 +89,13 @@ const { construirPlan, coincideRequisito, fechaMontevideo } = require('../servic
     assert.equal(despues.requisitos[1].costo, null);
     assert.deepEqual(despues.requisitos[0], antes.requisitos[0], 'otros requisitos intactos');
     assert.equal((await c.updateOne(plan.filtro, plan.update, plan.opciones)).matchedCount, 0, 'no reaplica la captura anterior');
+    // M6 por comportamiento: un gemelo con otro _id y el mismo contenido no se toca.
+    const gemelo = { ...requisito, _id: new ObjectId() };
+    await sembrar([gemelo, requisito]);
+    assert.equal((await c.updateOne(plan.filtro, plan.update, plan.opciones)).modifiedCount, 1);
+    const conGemelo = await c.findOne({ _id: destinoId });
+    assert.deepEqual(conGemelo.requisitos[0], gemelo, 'gemelo con otro _id intacto');
+    assert.equal(conGemelo.requisitos[1].obligatorio, 'no');
     console.log('Plan 2.0: CAS completo e identidad, BSON real, duplicados, $set/$unset declarado, fuentes vigentes y fecha Montevideo: OK');
   } finally { await cliente?.close(); await rs?.stop({ doCleanup: true, force: true }); }
 })().catch(e => { console.error(e); process.exitCode = 1; });
