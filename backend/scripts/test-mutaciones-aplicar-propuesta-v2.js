@@ -30,6 +30,7 @@ const mutaciones = [
   ['omite precondiciones dentro de la transacción', '      if (fallas.length) throw new ErrorNoAplicableV2(fallas);\n      const vigente', '      const vigente'],
   ['H2.1: omite la validación previa con los modelos', '  await validarDocumentos(plan, deps);\n', ''],
   ['H2.1: error de red sin código propio', "  if (RED.includes(err?.name)) return 'red';\n", ''],
+  ['H2.2: el evento copia al aprobador', 'adaptador: { ...ctx.adaptador }, decision_aprobacion_id: ctx.decision_aprobacion_id_esperado },', 'adaptador: { ...ctx.adaptador }, decision_aprobacion_id: ctx.decision_aprobacion_id_esperado, aprobacion: ctx.aprobacion },'],
   ['H2.1: transición por fallo sin resultado_no_registrado', "resultado_no_registrado: clasificacion.resultado,\n      finalizado_en: fin", 'finalizado_en: fin']
 ];
 function correr(m) {

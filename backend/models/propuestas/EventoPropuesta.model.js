@@ -54,6 +54,17 @@
  *
  * Política de timestamps: no se usa `{ timestamps: true }` —
  * `ocurrido_en` ya es el timestamp de negocio.
+ *
+ * DETALLE 2.0 DE LOS EVENTOS CON INTENTO (aplicacion, conflicto): con
+ * `detalle.version_contrato: '2.0'` el detalle tiene exactamente
+ * { version_contrato, resultado, auditoria, proceso_aplicador, adaptador,
+ * decision_aprobacion_id }. Tres papeles por separado y sin copias: el
+ * proceso en `actor` (sistema), el aplicador en `detalle.auditoria` (su
+ * `origen` distingue panel de comando; en 2.0 no hay `auditoria_panel`) y
+ * el aprobador por referencia a su evento (`decision_aprobacion_id`). Sin
+ * `version_contrato` rigen las reglas de siempre (1.0 e históricos), pero un
+ * detalle del aplicador 2.0 sin versión se rechaza. Los eventos de decisión
+ * 2.0 no cambian.
  */
 
 const mongoose = require('mongoose');
@@ -67,7 +78,18 @@ const {
   motivoTransicionInvalida
 } = require('../../services/propuestas/contrato-propuestas');
 
+const { validarAuditoria } = require('../../services/propuestas/auditoria-aplicacion');
+
 const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+// ---- Detalle 2.0 de eventos con intento (solo con detalle.version_contrato: '2.0') ----
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const NOMBRE_TECNICO = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const PROCESO_V2 = Object.freeze({ nombre: 'aplicar-propuesta-v2', version: '1' });
+const CLAVES_DETALLE_V2 = ['adaptador', 'auditoria', 'decision_aprobacion_id', 'proceso_aplicador', 'resultado', 'version_contrato'];
+const RESULTADOS_EVENTO_V2 = { aplicacion: ['exito'], conflicto: ['valor_actual_cambio', 'identidad_requisito_cambio'] };
+const esPlano = (v) => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
+const clavesExactas = (v, claves) => esPlano(v) && Object.keys(v).sort().join(',') === [...claves].sort().join(',');
 
 const actorSchema = new mongoose.Schema(
   {
@@ -148,7 +170,37 @@ eventoPropuestaSchema.pre('validate', function () {
     const motivo = motivoTransicionInvalida(this.tipo_evento, this.estado_anterior, this.estado_nuevo, this.actor.tipo);
     if (motivo) throw new Error(`eventos_propuesta: transición no permitida: ${motivo}`);
   }
+  if (TIPOS_EVENTO_CON_INTENTO.includes(this.tipo_evento)) {
+    const d = this.detalle;
+    if (esPlano(d) && d.version_contrato === '2.0') validarDetalleV2(this, d);
+    else if (esPlano(d) && d.proceso_aplicador?.nombre === PROCESO_V2.nombre) throw new Error('eventos_propuesta: un detalle del aplicador 2.0 exige version_contrato "2.0".');
+  }
 });
+
+function falla2(mensaje) {
+  throw new Error(`eventos_propuesta 2.0: ${mensaje}`);
+}
+
+// Reglas del detalle 2.0; las comunes (transición, actor, motivo) ya se aplicaron.
+function validarDetalleV2(ev, d) {
+  if (!clavesExactas(d, CLAVES_DETALLE_V2)) falla2(`detalle debe tener exactamente ${CLAVES_DETALLE_V2.join(', ')}.`);
+  const resultados = RESULTADOS_EVENTO_V2[ev.tipo_evento];
+  if (!resultados) falla2(`tipo_evento "${ev.tipo_evento}" no existe en el aplicador 2.0.`);
+  if (!resultados.includes(d.resultado)) falla2(`resultado "${d.resultado}" incoherente con "${ev.tipo_evento}".`);
+  if (ev.actor?.tipo !== 'sistema' || ev.actor?.identificador !== PROCESO_V2.nombre) falla2('actor debe ser el proceso aplicador 2.0.');
+  if (!clavesExactas(d.proceso_aplicador, ['nombre', 'version']) || d.proceso_aplicador.nombre !== PROCESO_V2.nombre || d.proceso_aplicador.version !== PROCESO_V2.version) falla2('proceso_aplicador no es el aplicador 2.0.');
+  if (!clavesExactas(d.adaptador, ['nombre', 'version']) || !NOMBRE_TECNICO.test(d.adaptador.nombre) || !NOMBRE_TECNICO.test(d.adaptador.version)) falla2('adaptador debe tener nombre y versión técnicos.');
+  if (typeof d.decision_aprobacion_id !== 'string' || !UUID.test(d.decision_aprobacion_id)) falla2('decision_aprobacion_id debe ser UUID.');
+  if (typeof ev.intento_aplicacion_id !== 'string' || !UUID.test(ev.intento_aplicacion_id)) falla2('intento_aplicacion_id debe ser UUID.');
+  let a;
+  try { a = validarAuditoria(d.auditoria); } catch { falla2('auditoria inválida.'); }
+  // La instantánea del panel describe exactamente la transición de este evento.
+  const s = a.instantanea;
+  if (s && (s.propuesta_id !== ev.propuesta_id || s.payload_hash_esperado !== ev.hash_contenido_referenciado ||
+      s.version_coordinacion_esperada + 1 !== ev.version_coordinacion_nueva || s.decision_aprobacion_id_esperado !== d.decision_aprobacion_id)) {
+    falla2('la instantánea de la auditoría no corresponde a este evento.');
+  }
+}
 
 // Integridad: historia lineal, un evento por transición de versión.
 eventoPropuestaSchema.index(

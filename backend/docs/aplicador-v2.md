@@ -1,4 +1,4 @@
-# Aplicador 2.0 — H1 (servicio aislado) y H2.1 (persistencia de auditoría)
+# Aplicador 2.0 — H1 (servicio aislado), H2.1 (persistencia de auditoría) y H2.2 (evento)
 
 Estado: servicio local `services/propuestas/aplicar-propuesta-v2.js`, probado solo en
 Mongo efímero con replica set. **No es un flujo operativo**: no tiene rutas, CLI ni
@@ -59,7 +59,8 @@ panel; el registro 2.0 sigue cerrado y el aplicador 1.0 no cambia.
 - Historial 2.0: `campo: 'requisito'`, `cambios[]` ordenados sin repetidos con valores
   capturados `{presente, bson_tipo, valor}` y `fecha_verificacion {anterior, nueva}`. Las
   revalidaciones se leen del intento referenciado, no se copian.
-- `EventoPropuesta` no cambia en H2.1.
+
+- `EventoPropuesta` no cambia en H2.1 (ver H2.2).
 
 ### Persistencia (`services/propuestas/persistencia-aplicacion-v2.js`)
 
@@ -98,6 +99,36 @@ restaura el estado de los documentos guardados, incluido `__v`. En un subdocumen
 `strict: 'throw'` eso lanza `StrictModeError: Field __v is not in schema`, que reemplaza al
 error original (comprobado con Mongoose 9.9.4 y Mongo 8.0.32 efímero).
 
+## H2.2 — Evento de aplicación y conflicto 2.0
+
+- Contrato del `detalle` (solo eventos con intento: `aplicacion`, `conflicto`), validado por
+  `EventoPropuesta` cuando `detalle.version_contrato === '2.0'`:
+  `{ version_contrato, resultado, auditoria, proceso_aplicador, adaptador, decision_aprobacion_id }`,
+  con claves exactas. `resultado` coherente con el tipo (`exito`; `valor_actual_cambio` o
+  `identidad_requisito_cambio`), `actor` = sistema `aplicar-propuesta-v2`, proceso y adaptador
+  técnicos, auditoría válida (`validarAuditoria`) y, si viene del panel, su instantánea
+  corresponde a este evento (propuesta, hash, versión anterior y decisión).
+- Tres papeles por separado y sin copias: el proceso en `actor`; el aplicador en
+  `detalle.auditoria` (su `origen` distingue panel de comando, por eso en 2.0 no existe
+  `auditoria_panel`); el aprobador por referencia (`decision_aprobacion_id`) a su propio
+  evento. El intento conserva su copia validada de `aprobacion`; el evento ya no repite
+  `propuesta_id`, `operador`, `identidad_operador` ni `aprobacion`.
+- Compatibilidad: sin `version_contrato` rigen las reglas de siempre (eventos 1.0, con o sin
+  `auditoria_panel`, e históricos sin auditoría). Un detalle con el proceso 2.0 y sin versión
+  se rechaza. Los eventos de decisión 2.0 no cambian. No hay eventos 2.0 de aplicación
+  persistidos (el aplicador 2.0 no está conectado), así que el cambio de forma no afecta datos.
+- Panel (`lectura-propuestas.js`): sin cambios. Lee los eventos 2.0 con la misma forma que el
+  resto y sin datos privados: su proyección (fijada por la suite 1.0 de lectura como garantía
+  de privacidad) no trae la auditoría del aplicador, así que `origen` y `metodo_identidad`
+  salen `null` en los eventos 2.0 de aplicación y conflicto. En los eventos reales de
+  aplicación 1.0 `origen` ya salía `null` (no tienen `detalle.comando`) y `metodo_identidad`
+  sale de su `identidad_operador`.
+- Pendiente de decisión (producto/API, con H3): (1) ampliar la proyección del lector con
+  `detalle.auditoria.comando.nombre` e `identidad.metodo` para mostrar origen y método de los
+  eventos de aplicación 1.0 y 2.0 cambia la proyección fijada por la suite 1.0; (2) mostrar
+  aplicador humano, adaptador o versión de contrato agregaría campos a todos los eventos.
+  `esReenvioIdentico` (reenvío del panel) sigue siendo solo 1.0; el reenvío 2.0 es de H3.
+
 ## Errores y datos del llamador
 
 - Los mensajes públicos de error pasan por `sanearMensaje`, pero `cause` (y los extras
@@ -121,8 +152,7 @@ error original (comprobado con Mongoose 9.9.4 y Mongo 8.0.32 efímero).
 - Mejora posterior: mover a `services/` y congelar el SPEC del índice transversal, hoy
   importado de `scripts/preparar-indice-transversal.js` (mutable y compartido con el
   ejecutor del índice ya revisado).
-- H2.2: auditoría del evento (`adaptador`, `auditoria_panel` en el detalle de
-  `EventoPropuesta`) y sus lectores del panel.
+- Decidir qué datos del evento de aplicación muestra el panel (ver H2.2) junto con la API de H3.
 - H3: autenticación y permiso del operador (H1 solo valida la forma de la auditoría ya
   resuelta), selección autenticada del adaptador, InicioIntento antes de revalidar,
   adaptador 2.0 que produce `revalidaciones`, registro de intentos por revalidación

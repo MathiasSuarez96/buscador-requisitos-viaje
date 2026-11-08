@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const { ObjectId } = require('bson');
 const IntentoAplicacion = require('../models/propuestas/IntentoAplicacion.model');
 const HistorialCambio = require('../models/propuestas/HistorialCambio.model');
+const EventoPropuesta = require('../models/propuestas/EventoPropuesta.model');
 const A1 = require('../services/propuestas/aplicar-propuesta');
 const { crearPersistenciaV2 } = require('../services/propuestas/persistencia-aplicacion-v2');
 
@@ -217,6 +218,54 @@ const conModelo = (M, d) => new M(d).validate();
   // null frente a ausente: ambos valores capturados válidos y distintos.
   await pasa('fecha anterior null', () => P.validarHistorial({ ...historial2(), fecha_verificacion: { anterior: structuredClone(nulo), nueva: valor('2026-10-26') } }));
   await pasa('fecha anterior ausente', () => P.validarHistorial({ ...historial2(), fecha_verificacion: { anterior: structuredClone(ausente), nueva: valor('2026-10-26') } }));
+
+  // ---- H2.2: evento de aplicación/conflicto 2.0 ----
+  const ADAPTADOR = { nombre: 'migracion-colombia', version: '1' }, PROCESO = { nombre: 'aplicar-propuesta-v2', version: '1' };
+  const evento2 = (tipo = 'aplicacion') => ({ evento_id: uuid(), propuesta_id: PROPUESTA, tipo_evento: tipo, estado_anterior: 'aprobada', estado_nuevo: tipo === 'aplicacion' ? 'aplicada' : 'conflicto',
+    hash_contenido_referenciado: H, version_coordinacion_nueva: 2, ocurrido_en: T, actor: { tipo: 'sistema', identificador: 'aplicar-propuesta-v2' },
+    ...(tipo === 'conflicto' ? { motivo: 'claves desconocidas' } : {}),
+    detalle: { version_contrato: '2.0', resultado: tipo === 'aplicacion' ? 'exito' : 'valor_actual_cambio', auditoria: structuredClone(auditoria), proceso_aplicador: { ...PROCESO },
+      adaptador: { ...ADAPTADOR }, decision_aprobacion_id: DECISION }, intento_aplicacion_id: uuid() });
+  const comando2 = () => { const e = evento2(); e.detalle.auditoria = { origen: 'comando_administrativo', operador: 'op', identidad: { metodo: 'connection_status', usuario_atlas: 'u', db_autenticacion: 'admin' }, comando: { nombre: 'aplicar-propuesta', version: '1' } }; return e; };
+  await pasa('evento 2.0 aplicación (panel)', () => P.validarEvento(evento2()));
+  await pasa('evento 2.0 conflicto', () => P.validarEvento(evento2('conflicto')));
+  await pasa('evento 2.0 aplicación (comando, sin instantánea)', () => P.validarEvento(comando2()));
+  // 1.0 e históricos, y decisiones 2.0, sin cambios.
+  const aud1Panel = { ...structuredClone(auditoria), instantanea: { ...auditoria.instantanea, propuesta_id: ctx1.propuesta_id } };
+  for (const [n, e] of [
+    ['evento 1.0 aplicación por comando', A1.construirEvento(ctx1, 'aplicacion', T, 'exito', null)],
+    ['evento 1.0 aplicación por panel (auditoria_panel)', A1.construirEvento({ ...ctx1, auditoria: aud1Panel, auditoria_panel: aud1Panel }, 'aplicacion', T, 'exito', null)],
+    ['evento 1.0 histórico sin auditoría', (() => { const e = A1.construirEvento(ctx1, 'aplicacion', T, 'exito', null); delete e.detalle.auditoria; return e; })()],
+    ['evento 1.0 conflicto', A1.construirEvento(ctx1, 'conflicto', T, 'valor_actual_cambio', 'cambió')],
+    ['decisión 2.0', { evento_id: uuid(), propuesta_id: PROPUESTA, tipo_evento: 'aprobacion', estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'aprobada', hash_contenido_referenciado: H,
+      version_coordinacion_nueva: 1, ocurrido_en: T, actor: { tipo: 'humano', identificador: 'aprobador' },
+      detalle: { identidad_operador: { metodo: 'oidc_google', sub: 'sub-apr' }, comando: { nombre: 'panel-propuestas', version: '1' }, version_contrato: '2.0', advertencias_aceptadas: [] } }]
+  ]) await pasa(n, () => conModelo(EventoPropuesta, e));
+  const invE = async (n, cambiar, origen = evento2) => falla(`evento 2.0: ${n}`, () => { const e = origen(); cambiar(e); return P.validarEvento(e); });
+  await invE('copia del aprobador', e => { e.detalle.aprobacion = { evento_id: DECISION, actor: { tipo: 'humano', identificador: 'aprobador' } }; });
+  await invE('copia de identidad_operador', e => { e.detalle.identidad_operador = { metodo: 'oidc_google', sub: 'sub-apl' }; });
+  await invE('auditoria_panel duplicada', e => { e.detalle.auditoria_panel = structuredClone(e.detalle.auditoria); });
+  await invE('propuesta_id duplicado', e => { e.detalle.propuesta_id = PROPUESTA; });
+  for (const c of ['resultado', 'auditoria', 'proceso_aplicador', 'adaptador', 'decision_aprobacion_id']) await invE(`sin ${c}`, e => { delete e.detalle[c]; });
+  await invE('resultado incoherente', e => { e.detalle.resultado = 'valor_actual_cambio'; });
+  await invE('conflicto con exito', e => { e.detalle.resultado = 'exito'; }, () => evento2('conflicto'));
+  await invE('tipo inexistente en 2.0', e => { e.tipo_evento = 'obsolescencia'; e.estado_nuevo = 'obsoleta'; e.detalle.resultado = 'fuente_cambio'; });
+  await invE('actor de otro proceso', e => { e.actor.identificador = 'aplicar-propuesta'; });
+  await invE('proceso 1.0', e => { e.detalle.proceso_aplicador = { nombre: 'aplicar-propuesta', version: '1' }; });
+  await invE('proceso con clave extra', e => { e.detalle.proceso_aplicador.extra = 'x'; });
+  await invE('adaptador de texto libre', e => { e.detalle.adaptador.nombre = 'Adaptador libre'; });
+  await invE('adaptador con clave extra', e => { e.detalle.adaptador.url = 'https://x'; });
+  await invE('decision_aprobacion_id no UUID', e => { e.detalle.decision_aprobacion_id = 'x'; });
+  await invE('auditoría sin sub', e => { delete e.detalle.auditoria.identidad.sub; });
+  await invE('auditoría con token', e => { e.detalle.auditoria.identidad.token = 'eyJabc'; });
+  await invE('auditoría con error crudo', e => { e.detalle.auditoria.error = 'mongodb://u:p@h'; });
+  await invE('instantánea de otra versión', e => { e.version_coordinacion_nueva = 3; });
+  await invE('instantánea de otro hash', e => { e.hash_contenido_referenciado = 'f'.repeat(64); });
+  await invE('instantánea de otra decisión', e => { e.detalle.decision_aprobacion_id = uuid(); });
+  await invE('instantánea de otra propuesta', e => { e.propuesta_id = uuid(); });
+  await invE('detalle 2.0 sin versión', e => { delete e.detalle.version_contrato; });
+  await invE('versión desconocida con proceso 2.0', e => { e.detalle.version_contrato = '3.0'; });
+  await invE('función en el detalle', e => { e.detalle.auditoria.comando.nombre = () => 'panel-propuestas'; });
 
   console.log('Modelos de auditoría 2.0: 1.0 e históricos intactos, versión explícita, reglas por resultado y etapa, mezclas, strict, fechas y valores capturados: OK');
 })().catch(e => { console.error(e); process.exitCode = 1; });

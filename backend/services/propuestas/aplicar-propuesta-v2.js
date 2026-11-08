@@ -8,8 +8,9 @@
  *
  * H2.1: intento e historial se escriben con version_contrato '2.0' y se
  * validan con los modelos existentes (persistencia-aplicacion-v2.js). Los
- * persistidores se INYECTAN y comparten la sesión de la transacción. El
- * detalle del evento (adaptador, auditoria_panel) queda para H2.2.
+ * persistidores se INYECTAN y comparten la sesión de la transacción.
+ * H2.2: el detalle del evento sigue el contrato 2.0 de EventoPropuesta
+ * (auditoría del aplicador, proceso, adaptador y referencia a la aprobación).
  *
  * Fuera de H1 (dependencias explícitas, no simuladas aquí):
  *  - H3: autenticación y permiso del operador (panel: token + permiso
@@ -199,7 +200,10 @@ function construirEventoV2(ctx, tipoEvento, resultado, motivo) {
     estado_anterior: 'aprobada', estado_nuevo: TRANSICIONES[tipoEvento].hacia,
     hash_contenido_referenciado: ctx.hash_esperado, version_coordinacion_nueva: ctx.version_esperada + 1,
     ocurrido_en: ctx.t, actor: { ...ACTOR_SISTEMA_V2 },
-    detalle: { resultado, ...base(ctx) },
+    // H2.2: aplicador en auditoria (su origen distingue panel de comando; sin auditoria_panel) y
+    // aprobador por referencia a su evento, sin copiar identidades del intento.
+    detalle: { version_contrato: VERSION_CONTRATO, resultado, auditoria: ctx.auditoria, proceso_aplicador: { ...PROCESO_APLICADOR_V2 },
+      adaptador: { ...ctx.adaptador }, decision_aprobacion_id: ctx.decision_aprobacion_id_esperado },
     intento_aplicacion_id: ctx.intento_id
   };
   if (motivo != null) evento.motivo = sanearMensaje(motivo);

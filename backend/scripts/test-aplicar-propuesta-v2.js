@@ -12,6 +12,7 @@ const Destino = require('../models/Destino.model');
 const V2 = require('../services/propuestas/aplicar-propuesta-v2');
 const { crearPersistenciaV2 } = require('../services/propuestas/persistencia-aplicacion-v2');
 const A1 = require('../services/propuestas/aplicar-propuesta');
+const { crearLectorPropuestas } = require('../services/panel/lectura-propuestas');
 const D = require('../services/propuestas/decidir-propuesta');
 const { crearSobreRequisitoV2, hashHechos, ALGORITMO_HECHOS_HASH } = require('../services/propuestas/payload-requisito-v2');
 const { capturarIdentidadEInstantanea } = require('../services/propuestas/contrato-requisito-v2');
@@ -105,6 +106,24 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       assert.deepEqual([i?.version_contrato, i?.error_externo, i?.error_mensaje], ['2.0', codigo, 'La escritura del aplicador 2.0 se abortó sin cambios en destinos; ver error_externo.'], msg);
       return i;
     };
+    // H2.2: lectura real del panel sobre lo persistido. Misma forma de evento que el 1.0 y nada privado:
+    // ni sub, request_id, instantánea, usuario_atlas ni la auditoría o identidades del detalle.
+    const OP_LECTOR = { identificador: 'lector-panel', permisos: ['decidir', 'aplicar'] };
+    const leerPanel = async propuestaId => {
+      const vista = await crearLectorPropuestas({ obtenerDb: () => db }).detalle(propuestaId, OP_LECTOR);
+      const texto = JSON.stringify(vista);
+      for (const prohibido of ['sub-', 'request_id', 'instantanea', 'usuario_atlas', 'identidad_operador', 'auditoria', 'decision_aprobacion_id_esperado', 'mongodb://', 'eyJ']) {
+        assert.ok(!texto.includes(prohibido), `respuesta del panel sin ${prohibido}`);
+      }
+      for (const ev of await col('eventos_propuesta').find({ propuesta_id: propuestaId }).toArray()) {
+        if (typeof ev.detalle?.auditoria?.request_id === 'string') assert.ok(!texto.includes(ev.detalle.auditoria.request_id), 'request_id del aplicador oculto');
+      }
+      return vista;
+    };
+    const eventoPanel = (ev, extra = {}) => ({ evento_id: ev.evento_id, tipo_evento: ev.tipo_evento, estado_anterior: 'aprobada', estado_nuevo: ev.estado_nuevo, ocurrido_en: ev.ocurrido_en.toISOString(),
+      version_coordinacion_nueva: ev.version_coordinacion_nueva, hash_contenido_referenciado: ev.hash_contenido_referenciado, actor: { tipo: 'sistema', identificador: 'aplicar-propuesta-v2' },
+      // La proyección del lector (fijada por el 1.0) no trae la auditoría del aplicador: origen y método no se infieren.
+      origen: null, metodo_identidad: null, motivo: null, intento_aplicacion_id: ev.intento_aplicacion_id, ...extra });
     const sinEscrituraDeDestino = async (c, antes, msg) => assert.equal(JSON.stringify(await leerDestino(c.destinoId)), antes.destino, msg);
 
     // ---- El 1.0 rechaza una propuesta 2.0 antes de escribir (comportamiento sin cambios) ----
@@ -167,7 +186,18 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     assert.deepEqual(historialCo.cambios.map(x => x.campo), ['descripcion', 'link', 'obligatorio']);
     assert.deepEqual([eventoCo.actor.tipo, eventoCo.estado_anterior, eventoCo.estado_nuevo, eventoCo.version_coordinacion_nueva, eventoCo.intento_aplicacion_id],
       ['sistema', 'aprobada', 'aplicada', 2, r.intento_id]);
-    assert.equal(eventoCo.detalle.aprobacion.evento_id, co.eventoAprobacion);
+    // H2.2: el evento referencia al aprobador sin copiar identidades; el aplicador queda en su auditoría.
+    assert.deepEqual(Object.keys(eventoCo.detalle).sort(), ['adaptador', 'auditoria', 'decision_aprobacion_id', 'proceso_aplicador', 'resultado', 'version_contrato']);
+    assert.deepEqual([eventoCo.detalle.decision_aprobacion_id, eventoCo.detalle.version_contrato, eventoCo.detalle.resultado], [co.eventoAprobacion, '2.0', 'exito']);
+    assert.deepEqual(eventoCo.detalle.auditoria, intentoCo.auditoria, 'el aplicador del evento es el del intento');
+    assert.deepEqual(eventoCo.detalle.adaptador, intentoCo.adaptador);
+    for (const c of ['aprobacion', 'identidad_operador', 'operador', 'propuesta_id', 'auditoria_panel']) assert.equal(Object.hasOwn(eventoCo.detalle, c), false, `evento 2.0 sin copia de ${c}`);
+    {
+      const vista = await leerPanel(co.propuestaId);
+      assert.deepEqual(vista.eventos.map(e => e.tipo_evento), ['aprobacion', 'aplicacion'], 'eventos en orden de versión');
+      assert.deepEqual(vista.eventos[1], eventoPanel(eventoCo), 'evento 2.0 de aplicación con la forma exacta del panel');
+      assert.deepEqual([vista.eventos[0].actor, vista.eventos[0].origen], [{ tipo: 'humano', identificador: 'mathias-operador' }, 'panel-propuestas'], 'aprobador por separado, en su evento');
+    }
     // Reaplicar la misma entrada no escribe de nuevo.
     const reaplicada = await aplicar(co.entrada, contexto(co.entrada), crearDeps());
     assert.equal(reaplicada.resultado, 'propuesta_no_aplicable');
@@ -225,6 +255,11 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       assert.equal(rc.estado_propuesta_nuevo, 'conflicto');
       if (opciones.insertarDestino !== false) await sinEscrituraDeDestino(c, antes, `${nombre}: destino intacto`);
       assert.deepEqual(await conteos(c.propuestaId), { intentos: [resultadoEsperado], historial: 0, eventos: ['conflicto'] }, nombre);
+      const ev = await col('eventos_propuesta').findOne({ evento_id: rc.evento_id });
+      assert.deepEqual([ev.detalle.resultado, ev.detalle.decision_aprobacion_id, Object.hasOwn(ev.detalle, 'aprobacion')], [resultadoEsperado, c.eventoAprobacion, false], `${nombre}: detalle 2.0`);
+      const vista = await leerPanel(c.propuestaId);
+      assert.deepEqual(vista.eventos.at(-1), eventoPanel(ev, { motivo: vista.eventos.at(-1).motivo }), `${nombre}: evento de conflicto en el panel`);
+      assert.equal(typeof vista.eventos.at(-1).motivo, 'string', `${nombre}: motivo saneado presente`);
       return rc;
     }
     { const id = new ObjectId(); await conflicto('claves desconocidas', { requisitoId: id, objetivo: checkmig(id), requisitos: [visa(), { ...checkmig(id), notas_internas: 'agregado' }] }, 'valor_actual_cambio', 'claves_desconocidas'); }

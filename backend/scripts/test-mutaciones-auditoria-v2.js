@@ -1,4 +1,4 @@
-// H2.1 — mutaciones de los modelos versionados y de la persistencia 2.0.
+// H2.1/H2.2 — mutaciones de los modelos versionados, la persistencia 2.0, el evento 2.0 y su lectura en el panel.
 // Cada mutación compila el módulo alterado en memoria y corre la suite indicada en un proceso hijo.
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
@@ -6,6 +6,8 @@ const path = require('node:path');
 const I = path.join(__dirname, '../models/propuestas/IntentoAplicacion.model.js');
 const H = path.join(__dirname, '../models/propuestas/HistorialCambio.model.js');
 const P = path.join(__dirname, '../services/propuestas/persistencia-aplicacion-v2.js');
+const E = path.join(__dirname, '../models/propuestas/EventoPropuesta.model.js');
+const L = path.join(__dirname, '../services/panel/lectura-propuestas.js');
 const ESQUEMA = 'test-modelos-auditoria-v2.js', PERSIST = 'test-persistencia-aplicacion-v2.js';
 const mutaciones = [
   ['intento: versión 2.0 nunca reconocida', I, ESQUEMA, "const esV2 = (doc) => doc.version_contrato === '2.0';", 'const esV2 = (doc) => false;'],
@@ -49,7 +51,17 @@ const mutaciones = [
     "  const CACHE = (nuevo.cache ??= new WeakMap());\n  if (CACHE.has(doc)) return CACHE.get(doc);\n  const m = new Modelo(doc, null, { strict: 'throw' }); CACHE.set(doc, m);\n  const salida"],
   ['persistencia: historial sin sesión en save', P, PERSIST, 'await nuevo(HistorialCambio, doc).save({ session }); },', 'await nuevo(HistorialCambio, doc).save(); },'],
   ['persistencia: intento sin sesión en save', P, PERSIST, 'await nuevo(IntentoAplicacion, doc).save({ session }); },', 'await nuevo(IntentoAplicacion, doc).save(); },'],
-  ['persistencia: no exige sesión', P, PERSIST, "  if (!session || typeof session.inTransaction !== 'function' || !session.inTransaction()) {", '  if (false) {']
+  ['persistencia: no exige sesión', P, PERSIST, "  if (!session || typeof session.inTransaction !== 'function' || !session.inTransaction()) {", '  if (false) {'],
+  ["evento: detalle 2.0 nunca validado", E, ESQUEMA, "    if (esPlano(d) && d.version_contrato === '2.0') validarDetalleV2(this, d);", "    if (false) validarDetalleV2(this, d);"],
+  ["evento: admite copias en el detalle", E, ESQUEMA, "  if (!clavesExactas(d, CLAVES_DETALLE_V2)) falla2(", "  if (false) falla2("],
+  ["evento: tipo sin regla 2.0", E, ESQUEMA, "  if (!resultados) falla2(", "  if (false) falla2("],
+  ["evento: resultado sin coherencia", E, ESQUEMA, "  if (!resultados.includes(d.resultado)) falla2(", "  if (false) falla2("],
+  ["evento: actor de cualquier proceso", E, ESQUEMA, "  if (ev.actor?.tipo !== 'sistema' || ev.actor?.identificador !== PROCESO_V2.nombre) falla2(", "  if (false) falla2("],
+  ["evento: adaptador libre", E, ESQUEMA, "  if (!clavesExactas(d.adaptador, ['nombre', 'version']) || !NOMBRE_TECNICO.test(d.adaptador.nombre) || !NOMBRE_TECNICO.test(d.adaptador.version)) falla2(", "  if (false) falla2("],
+  ["evento: auditoría sin validar", E, ESQUEMA, "  try { a = validarAuditoria(d.auditoria); } catch { falla2('auditoria inválida.'); }", "  a = d.auditoria ?? {};"],
+  ["evento: instantánea sin comparar", E, ESQUEMA, "  if (s && (s.propuesta_id", "  if (false && (s.propuesta_id"],
+  ["evento: proceso 2.0 sin versión aceptado", E, ESQUEMA, "    else if (esPlano(d) && d.proceso_aplicador?.nombre === PROCESO_V2.nombre) throw", "    else if (false) throw"],
+  ["lector: expone identidad_operador del evento", L, PERSIST, "    metodo_identidad: METODOS_CONOCIDOS.includes(metodo) ? metodo : null,", "    metodo_identidad: METODOS_CONOCIDOS.includes(metodo) ? metodo : null, identidad_operador: e.detalle?.identidad_operador,"],
 ];
 function correr(m, suite) {
   const prueba = path.join(__dirname, suite);

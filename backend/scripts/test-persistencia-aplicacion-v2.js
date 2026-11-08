@@ -9,6 +9,7 @@ const { crearPersistenciaV2 } = require('../services/propuestas/persistencia-apl
 const { INDICES_APLICACION } = require('../services/propuestas/indices-propuestas');
 const { INDICE_TRANSVERSAL } = require('../services/propuestas/aplicar-propuesta-v2');
 const A1 = require('../services/propuestas/aplicar-propuesta');
+const { crearLectorPropuestas } = require('../services/panel/lectura-propuestas');
 require('../models/propuestas/InicioIntentoAplicacion.model');
 
 const uuid = () => crypto.randomUUID();
@@ -32,7 +33,9 @@ function documentos() {
       cambios: [{ campo: 'link', anterior: valor('https://www.migracioncolombia.gov.co/checkmig'), nuevo: { ...ausente } }, { campo: 'obligatorio', anterior: valor('si'), nuevo: valor('no') }],
       fecha_verificacion: { anterior: valor('2026-08-18'), nueva: valor('2026-10-26') }, aplicado_en: T, propuesta_id: propuesta, decision_aprobacion_id: decision, intento_aplicacion_id: intento },
     evento: { evento_id: evento, propuesta_id: propuesta, tipo_evento: 'aplicacion', estado_anterior: 'aprobada', estado_nuevo: 'aplicada', hash_contenido_referenciado: H,
-      version_coordinacion_nueva: 2, ocurrido_en: T, actor: { tipo: 'sistema', identificador: 'aplicar-propuesta-v2' }, detalle: { resultado: 'exito', version_contrato: '2.0' }, intento_aplicacion_id: intento },
+      version_coordinacion_nueva: 2, ocurrido_en: T, actor: { tipo: 'sistema', identificador: 'aplicar-propuesta-v2' },
+      detalle: { version_contrato: '2.0', resultado: 'exito', auditoria: structuredClone(auditoria), proceso_aplicador: { nombre: 'aplicar-propuesta-v2', version: '1' },
+        adaptador: { nombre: 'migracion-colombia', version: '1' }, decision_aprobacion_id: decision }, intento_aplicacion_id: intento },
     abortada: { intento_id: uuid(), ...base, resultado: 'escritura_abortada', etapa_fallo: 'escritura_aplicacion', revalidaciones: revs, error_externo: 'red', error_mensaje: 'abortada' }
   };
 }
@@ -140,6 +143,35 @@ const transitorio = () => new MongoServerError({ message: 'transitorio', errmsg:
     await new IntentoAplicacion(doc1).save();
     const crudo1 = await col('intentos_aplicacion').findOne({ intento_id: ctx1.intento_id });
     for (const c of ['version_contrato', 'revalidaciones', 'precondiciones', 'aprobacion', 'conflicto', 'fecha_verificacion', 'error_externo', 'identidad_operador']) assert.equal(Object.hasOwn(crudo1, c), false, `1.0 sin ${c}`);
+
+    // 7b. H2.2: eventos 1.0 reales (constructor del 1.0) siguen guardándose con el modelo y el panel los lee
+    // como antes (origen solo de detalle.comando, que la aplicación no tiene); nada privado en la respuesta.
+    {
+      const EventoPropuesta = mongoose.model('EventoPropuesta');
+      const pid = uuid(), dec = uuid();
+      await col('propuestas_cambio').insertOne({ propuesta_id: pid, estado: 'aplicada', version_coordinacion: 4, payload: {} });
+      const idAtlas = { metodo: 'connection_status', usuario_atlas: 'atlas-privado', db_autenticacion: 'admin' };
+      const ctxE = (version, extra = {}) => ({ ...ctx1, propuesta_id: pid, evento_id: uuid(), intento_id: uuid(), hash_esperado: H, version_esperada: version, decision_aprobacion_id_esperado: dec,
+        identidad_operador: idAtlas, auditoria: { origen: 'comando_administrativo', operador: 'op', identidad: idAtlas, comando: { nombre: 'aplicar-propuesta', version: '1' } }, ...extra });
+      const audPanel = { origen: 'panel', request_id: uuid(), operador: 'operador.panel', identidad: { metodo: 'oidc_google', sub: 'sub-privado-panel' }, comando: { nombre: 'panel-propuestas', version: '1' },
+        instantanea: { propuesta_id: pid, estado_esperado: 'aprobada', payload_hash_esperado: H, version_coordinacion_esperada: 1, decision_aprobacion_id_esperado: dec } };
+      const historico = A1.construirEvento(ctxE(2), 'conflicto', T, 'valor_actual_cambio', 'cambió'); delete historico.detalle.auditoria;
+      const porPanel = A1.construirEvento(ctxE(1, { auditoria: audPanel, auditoria_panel: audPanel, identidad_operador: { metodo: 'oidc_google', sub: 'sub-privado-panel' } }), 'aplicacion', T, 'exito', null);
+      const porComando = A1.construirEvento(ctxE(3), 'conflicto', T, 'identidad_requisito_cambio', 'identidad');
+      // Estados ficticios para tres transiciones lineales de la misma propuesta (el panel solo lee).
+      const docs = [porPanel, { ...historico, version_coordinacion_nueva: 3 }, { ...porComando, version_coordinacion_nueva: 4 }];
+      for (const e of docs) await new EventoPropuesta(e).save();
+      const vista = await crearLectorPropuestas({ obtenerDb: () => db }).detalle(pid, { identificador: 'lector', permisos: [] });
+      assert.deepEqual(vista.eventos.map(e => [e.tipo_evento, e.origen, e.metodo_identidad, e.actor.identificador]), [
+        ['aplicacion', null, 'oidc_google', 'aplicar-propuesta'],
+        ['conflicto', null, 'connection_status', 'aplicar-propuesta'],
+        ['conflicto', null, 'connection_status', 'aplicar-propuesta']
+      ], '1.0: panel, histórico sin auditoría y comando');
+      assert.deepEqual(Object.keys(vista.eventos[0]), ['evento_id', 'tipo_evento', 'estado_anterior', 'estado_nuevo', 'ocurrido_en', 'version_coordinacion_nueva', 'hash_contenido_referenciado',
+        'actor', 'origen', 'metodo_identidad', 'motivo', 'intento_aplicacion_id'], 'forma del evento del panel sin cambios');
+      const texto = JSON.stringify(vista);
+      for (const p of ['sub-privado-panel', audPanel.request_id, 'usuario_atlas', 'atlas-privado', 'instantanea', 'auditoria', 'identidad_operador']) assert.ok(!texto.includes(p), `panel sin ${p}`);
+    }
 
     // 8. Índices intactos: los modelos (autoIndex: false) no crearon ni cambiaron ninguno. Se espera init()
     // (donde Mongoose crearía los índices) y se compara con el inventario exacto creado por esta prueba,
