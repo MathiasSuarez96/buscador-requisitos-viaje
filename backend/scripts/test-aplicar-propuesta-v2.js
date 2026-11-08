@@ -122,8 +122,8 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     };
     const eventoPanel = (ev, extra = {}) => ({ evento_id: ev.evento_id, tipo_evento: ev.tipo_evento, estado_anterior: 'aprobada', estado_nuevo: ev.estado_nuevo, ocurrido_en: ev.ocurrido_en.toISOString(),
       version_coordinacion_nueva: ev.version_coordinacion_nueva, hash_contenido_referenciado: ev.hash_contenido_referenciado, actor: { tipo: 'sistema', identificador: 'aplicar-propuesta-v2' },
-      // La proyección del lector (fijada por el 1.0) no trae la auditoría del aplicador: origen y método no se infieren.
-      origen: null, metodo_identidad: null, motivo: null, intento_aplicacion_id: ev.intento_aplicacion_id, ...extra });
+      // Origen y método salen de las hojas seguras de detalle.auditoria (la auditoría de esta suite es del panel).
+      origen: 'panel-propuestas', metodo_identidad: 'oidc_google', motivo: null, intento_aplicacion_id: ev.intento_aplicacion_id, ...extra });
     const sinEscrituraDeDestino = async (c, antes, msg) => assert.equal(JSON.stringify(await leerDestino(c.destinoId)), antes.destino, msg);
 
     // ---- El 1.0 rechaza una propuesta 2.0 antes de escribir (comportamiento sin cambios) ----

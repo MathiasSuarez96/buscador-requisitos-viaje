@@ -117,16 +117,16 @@ error original (comprobado con Mongoose 9.9.4 y Mongo 8.0.32 efímero).
   `auditoria_panel`, e históricos sin auditoría). Un detalle con el proceso 2.0 y sin versión
   se rechaza. Los eventos de decisión 2.0 no cambian. No hay eventos 2.0 de aplicación
   persistidos (el aplicador 2.0 no está conectado), así que el cambio de forma no afecta datos.
-- Panel (`lectura-propuestas.js`): sin cambios. Lee los eventos 2.0 con la misma forma que el
-  resto y sin datos privados: su proyección (fijada por la suite 1.0 de lectura como garantía
-  de privacidad) no trae la auditoría del aplicador, así que `origen` y `metodo_identidad`
-  salen `null` en los eventos 2.0 de aplicación y conflicto. En los eventos reales de
-  aplicación 1.0 `origen` ya salía `null` (no tienen `detalle.comando`) y `metodo_identidad`
-  sale de su `identidad_operador`.
-- Pendiente de decisión (producto/API, con H3): (1) ampliar la proyección del lector con
-  `detalle.auditoria.comando.nombre` e `identidad.metodo` para mostrar origen y método de los
-  eventos de aplicación 1.0 y 2.0 cambia la proyección fijada por la suite 1.0; (2) mostrar
-  aplicador humano, adaptador o versión de contrato agregaría campos a todos los eventos.
+- Panel (`lectura-propuestas.js`): misma forma JSON de evento, sin campos nuevos. Para
+  `aplicacion`/`conflicto` con `detalle.version_contrato: '2.0'`, `origen` y
+  `metodo_identidad` salen de `detalle.auditoria.comando.nombre` e
+  `detalle.auditoria.identidad.metodo`, con las mismas allowlists. La proyección agrega solo
+  esas dos hojas y `detalle.version_contrato`; nunca la auditoría entera, `sub`,
+  `usuario_atlas`, `request_id` ni la instantánea. Eventos 1.0, históricos y decisiones
+  (también las 2.0) siguen exactamente igual: los de aplicación 1.0 conservan `origen: null`
+  (no tienen `detalle.comando`) y su método sale de `identidad_operador`.
+- Pendiente de decisión (producto/API, con H3): mostrar aplicador humano, adaptador o
+  versión de contrato del evento agregaría campos a todos los eventos de la respuesta.
   `esReenvioIdentico` (reenvío del panel) sigue siendo solo 1.0; el reenvío 2.0 es de H3.
 
 ## Errores y datos del llamador
@@ -152,7 +152,7 @@ error original (comprobado con Mongoose 9.9.4 y Mongo 8.0.32 efímero).
 - Mejora posterior: mover a `services/` y congelar el SPEC del índice transversal, hoy
   importado de `scripts/preparar-indice-transversal.js` (mutable y compartido con el
   ejecutor del índice ya revisado).
-- Decidir qué datos del evento de aplicación muestra el panel (ver H2.2) junto con la API de H3.
+- Decidir si el panel muestra más datos del evento de aplicación (ver H2.2) junto con la API de H3.
 - H3: autenticación y permiso del operador (H1 solo valida la forma de la auditoría ya
   resuelta), selección autenticada del adaptador, InicioIntento antes de revalidar,
   adaptador 2.0 que produce `revalidaciones`, registro de intentos por revalidación

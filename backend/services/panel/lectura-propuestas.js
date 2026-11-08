@@ -39,7 +39,10 @@
  *      valor actual del campo { presente, valor } contra valor_anterior
  *   5. eventos_propuesta.find({ propuesta_id }) ordenado por
  *      { version_coordinacion_nueva: 1, _id: 1 }, con proyección que NO
- *      trae detalle.identidad_operador (sub, email, usuario_atlas).
+ *      trae detalle.identidad_operador (sub, email, usuario_atlas). De la
+ *      auditoría del aplicador 2.0 solo lee comando.nombre e identidad.metodo
+ *      (más detalle.version_contrato), nunca sub, usuario_atlas, request_id
+ *      ni la instantánea.
  *   requisito_actual.destino: destinoSeguro, el mismo saneamiento que el
  *   destino del listado.
  *   acciones_bloqueadas: { aprobar: [...], rechazar: [...] }, los motivos
@@ -227,7 +230,11 @@ const PROYECCION_EVENTOS = Object.freeze({
   motivo: 1,
   intento_aplicacion_id: 1,
   'detalle.comando.nombre': 1,
-  'detalle.identidad_operador.metodo': 1
+  'detalle.identidad_operador.metodo': 1,
+  // Solo eventos de aplicación/conflicto 2.0: la versión y dos hojas seguras de la auditoría del aplicador.
+  'detalle.version_contrato': 1,
+  'detalle.auditoria.comando.nombre': 1,
+  'detalle.auditoria.identidad.metodo': 1
 });
 
 // ------------------------------------------------------------------
@@ -441,9 +448,14 @@ function actorSeguro(actor, operador) {
 const ORIGENES_CONOCIDOS = ['decidir-propuesta', 'panel-propuestas', 'aplicar-propuesta'];
 const METODOS_CONOCIDOS = ['connection_status', 'oidc_google'];
 
+// Eventos del aplicador 2.0: el aplicador queda en detalle.auditoria (sin copia en
+// detalle.comando ni identidad_operador). 1.0, históricos y decisiones no cambian.
+const TIPOS_AUDITORIA_V2 = ['aplicacion', 'conflicto'];
+
 function eventoSeguro(e, operador) {
-  const origen = e.detalle?.comando?.nombre;
-  const metodo = e.detalle?.identidad_operador?.metodo;
+  const v2 = e.detalle?.version_contrato === '2.0' && TIPOS_AUDITORIA_V2.includes(e.tipo_evento);
+  const origen = v2 ? e.detalle.auditoria?.comando?.nombre : e.detalle?.comando?.nombre;
+  const metodo = v2 ? e.detalle.auditoria?.identidad?.metodo : e.detalle?.identidad_operador?.metodo;
   return {
     evento_id: texto(e.evento_id, 36),
     tipo_evento: texto(e.tipo_evento, 50),

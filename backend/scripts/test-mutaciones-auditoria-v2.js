@@ -61,6 +61,12 @@ const mutaciones = [
   ["evento: auditoría sin validar", E, ESQUEMA, "  try { a = validarAuditoria(d.auditoria); } catch { falla2('auditoria inválida.'); }", "  a = d.auditoria ?? {};"],
   ["evento: instantánea sin comparar", E, ESQUEMA, "  if (s && (s.propuesta_id", "  if (false && (s.propuesta_id"],
   ["evento: proceso 2.0 sin versión aceptado", E, ESQUEMA, "    else if (esPlano(d) && d.proceso_aplicador?.nombre === PROCESO_V2.nombre) throw", "    else if (false) throw"],
+  ["lector: 2.0 sin origen de la auditoría", L, PERSIST, "  const origen = v2 ? e.detalle.auditoria?.comando?.nombre : e.detalle?.comando?.nombre;", "  const origen = e.detalle?.comando?.nombre;"],
+  ["lector: 2.0 sin método de la auditoría", L, PERSIST, "  const metodo = v2 ? e.detalle.auditoria?.identidad?.metodo : e.detalle?.identidad_operador?.metodo;", "  const metodo = e.detalle?.identidad_operador?.metodo;"],
+  ["lector: rama 2.0 también para eventos 1.0 con auditoría", L, PERSIST, "  const v2 = e.detalle?.version_contrato === '2.0' && TIPOS_AUDITORIA_V2.includes(e.tipo_evento);", "  const v2 = e.detalle?.auditoria != null;"],
+  ["lector: rama 2.0 para cualquier tipo (decisiones 2.0)", L, PERSIST, "  const v2 = e.detalle?.version_contrato === '2.0' && TIPOS_AUDITORIA_V2.includes(e.tipo_evento);", "  const v2 = e.detalle?.version_contrato === '2.0';"],
+  ["lector: sin allowlist de origen", L, PERSIST, "    origen: ORIGENES_CONOCIDOS.includes(origen) ? origen : null,", "    origen: origen ?? null,"],
+  ["lector: proyección sin la hoja de comando de la auditoría", L, PERSIST, "  'detalle.auditoria.comando.nombre': 1,\n", ""],
   ["lector: expone identidad_operador del evento", L, PERSIST, "    metodo_identidad: METODOS_CONOCIDOS.includes(metodo) ? metodo : null,", "    metodo_identidad: METODOS_CONOCIDOS.includes(metodo) ? metodo : null, identidad_operador: e.detalle?.identidad_operador,"],
 ];
 function correr(m, suite) {

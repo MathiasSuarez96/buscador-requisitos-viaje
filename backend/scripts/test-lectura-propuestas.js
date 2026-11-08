@@ -247,7 +247,8 @@ const sinProhibidos = (obj, etiqueta) => {
     assert.deepStrictEqual(llamadas[2].opciones.sort, { version_coordinacion_nueva: 1, _id: 1 });
     assert.strictEqual(llamadas[2].opciones.limit, L.MAXIMO_EVENTOS + 1);
     // Proyección literal: de detalle solo comando.nombre e identidad_operador.metodo
-    // (sub, email y usuario_atlas ni siquiera se leen).
+    // (sub, email y usuario_atlas ni siquiera se leen) y, para eventos del aplicador 2.0,
+    // version_contrato y las dos hojas seguras de la auditoría (nunca la auditoría entera).
     assert.deepStrictEqual(llamadas[2].opciones.projection, {
       _id: 1,
       evento_id: 1,
@@ -261,7 +262,10 @@ const sinProhibidos = (obj, etiqueta) => {
       motivo: 1,
       intento_aplicacion_id: 1,
       'detalle.comando.nombre': 1,
-      'detalle.identidad_operador.metodo': 1
+      'detalle.identidad_operador.metodo': 1,
+      'detalle.version_contrato': 1,
+      'detalle.auditoria.comando.nombre': 1,
+      'detalle.auditoria.identidad.metodo': 1
     });
 
     // Inexistente: una sola lectura, null.

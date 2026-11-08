@@ -173,6 +173,43 @@ const transitorio = () => new MongoServerError({ message: 'transitorio', errmsg:
       for (const p of ['sub-privado-panel', audPanel.request_id, 'usuario_atlas', 'atlas-privado', 'instantanea', 'auditoria', 'identidad_operador']) assert.ok(!texto.includes(p), `panel sin ${p}`);
     }
 
+    // 7c. H2.2: eventos de aplicación y conflicto 2.0 (guardados con el modelo) exponen origen y método
+    // desde las hojas seguras de detalle.auditoria; misma forma JSON, allowlists y nada privado.
+    {
+      const EventoPropuesta = mongoose.model('EventoPropuesta');
+      const pid = uuid(), dec = uuid(), reqId = uuid();
+      await col('propuestas_cambio').insertOne({ propuesta_id: pid, estado: 'conflicto', version_coordinacion: 6, payload: {} });
+      const audPanel = v => ({ origen: 'panel', request_id: reqId, operador: 'aplicador.panel', identidad: { metodo: 'oidc_google', sub: 'sub-privado-v2' }, comando: { nombre: 'panel-propuestas', version: '1' },
+        instantanea: { propuesta_id: pid, estado_esperado: 'aprobada', payload_hash_esperado: H, version_coordinacion_esperada: v - 1, decision_aprobacion_id_esperado: dec } });
+      const audComando = { origen: 'comando_administrativo', operador: 'aplicador.cli', identidad: { metodo: 'connection_status', usuario_atlas: 'atlas-privado-v2', db_autenticacion: 'admin' }, comando: { nombre: 'aplicar-propuesta', version: '1' } };
+      const ev2 = (tipo, v, auditoria) => ({ evento_id: uuid(), propuesta_id: pid, tipo_evento: tipo, estado_anterior: 'aprobada', estado_nuevo: tipo === 'aplicacion' ? 'aplicada' : 'conflicto',
+        hash_contenido_referenciado: H, version_coordinacion_nueva: v, ocurrido_en: T, actor: { tipo: 'sistema', identificador: 'aplicar-propuesta-v2' }, ...(tipo === 'conflicto' ? { motivo: 'conflicto' } : {}),
+        detalle: { version_contrato: '2.0', resultado: tipo === 'aplicacion' ? 'exito' : 'valor_actual_cambio', auditoria, proceso_aplicador: { nombre: 'aplicar-propuesta-v2', version: '1' },
+          adaptador: { nombre: 'migracion-colombia', version: '1' }, decision_aprobacion_id: dec }, intento_aplicacion_id: uuid() });
+      const decision2 = { evento_id: uuid(), propuesta_id: pid, tipo_evento: 'aprobacion', estado_anterior: 'pendiente_aprobacion', estado_nuevo: 'aprobada', hash_contenido_referenciado: H,
+        version_coordinacion_nueva: 1, ocurrido_en: T, actor: { tipo: 'humano', identificador: 'aprobador' },
+        detalle: { identidad_operador: { metodo: 'oidc_google', sub: 'sub-privado-aprobador' }, comando: { nombre: 'panel-propuestas', version: '1' }, version_contrato: '2.0', advertencias_aceptadas: [] } };
+      for (const e of [decision2, ev2('aplicacion', 2, audPanel(2)), ev2('conflicto', 3, audPanel(3)), ev2('aplicacion', 4, audComando), ev2('conflicto', 5, audComando)]) await new EventoPropuesta(e).save();
+      // No confiable (escrito sin el modelo): valores fuera de las allowlists siguen saliendo null.
+      const raro = ev2('conflicto', 6, { ...audComando, comando: { nombre: '<script>', version: '1' }, identidad: { metodo: 'token', usuario_atlas: 'atlas-privado-v2' } });
+      await col('eventos_propuesta').insertOne(raro);
+      const vista = await crearLectorPropuestas({ obtenerDb: () => db }).detalle(pid, { identificador: 'lector', permisos: [] });
+      assert.deepEqual(vista.eventos.map(e => [e.version_coordinacion_nueva, e.tipo_evento, e.origen, e.metodo_identidad, e.actor.tipo, e.actor.identificador]), [
+        [1, 'aprobacion', 'panel-propuestas', 'oidc_google', 'humano', 'aprobador'],
+        [2, 'aplicacion', 'panel-propuestas', 'oidc_google', 'sistema', 'aplicar-propuesta-v2'],
+        [3, 'conflicto', 'panel-propuestas', 'oidc_google', 'sistema', 'aplicar-propuesta-v2'],
+        [4, 'aplicacion', 'aplicar-propuesta', 'connection_status', 'sistema', 'aplicar-propuesta-v2'],
+        [5, 'conflicto', 'aplicar-propuesta', 'connection_status', 'sistema', 'aplicar-propuesta-v2'],
+        [6, 'conflicto', null, null, 'sistema', 'aplicar-propuesta-v2']
+      ], '2.0: origen y método desde la auditoría; decisión 2.0 por su camino; allowlists conservadas');
+      const CLAVES = ['evento_id', 'tipo_evento', 'estado_anterior', 'estado_nuevo', 'ocurrido_en', 'version_coordinacion_nueva', 'hash_contenido_referenciado', 'actor', 'origen', 'metodo_identidad', 'motivo', 'intento_aplicacion_id'];
+      for (const e of vista.eventos) assert.deepEqual(Object.keys(e), CLAVES, 'forma JSON del evento intacta');
+      const texto = JSON.stringify(vista);
+      for (const p of ['sub-privado', reqId, 'usuario_atlas', 'atlas-privado', 'instantanea', 'auditoria', 'identidad_operador', 'aplicador.panel', 'aplicador.cli', 'migracion-colombia', '<script>', 'token']) {
+        assert.ok(!texto.includes(p), `panel 2.0 sin ${p}`);
+      }
+    }
+
     // 8. Índices intactos: los modelos (autoIndex: false) no crearon ni cambiaron ninguno. Se espera init()
     // (donde Mongoose crearía los índices) y se compara con el inventario exacto creado por esta prueba,
     // porque la foto «antes» se toma ya conectados.
