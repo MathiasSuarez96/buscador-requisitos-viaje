@@ -27,7 +27,10 @@ const mutaciones = [
     "    revalidaciones_resumen: Array.isArray(revalidaciones) ? revalidaciones.map(r => ({ url: r?.url ?? null, fuente_nombre: r?.fuente_nombre ?? null, revalidada_en: r?.revalidada_en ?? null })) : []\n  };"],
   ['omite el resumen validado', '  ctx.revalidaciones_resumen = resumirRevalidaciones(construido.payload, revalidaciones);\n', ''],
   ['omite precondiciones en la etapa 0', '  const fallas = verificarPrecondicionesV2(entrada, propuesta, evento);\n  let construido;', '  const fallas = [];\n  let construido;'],
-  ['omite precondiciones dentro de la transacción', '      if (fallas.length) throw new ErrorNoAplicableV2(fallas);\n      const vigente', '      const vigente']
+  ['omite precondiciones dentro de la transacción', '      if (fallas.length) throw new ErrorNoAplicableV2(fallas);\n      const vigente', '      const vigente'],
+  ['H2.1: omite la validación previa con los modelos', '  await validarDocumentos(plan, deps);\n', ''],
+  ['H2.1: error de red sin código propio', "  if (RED.includes(err?.name)) return 'red';\n", ''],
+  ['H2.1: transición por fallo sin resultado_no_registrado', "resultado_no_registrado: clasificacion.resultado,\n      finalizado_en: fin", 'finalizado_en: fin']
 ];
 function correr(m) {
   const codigo = `const fs=require('node:fs');const Module=require('node:module');const path=require('node:path');const f=${JSON.stringify(archivo)};const m=${JSON.stringify(m)};

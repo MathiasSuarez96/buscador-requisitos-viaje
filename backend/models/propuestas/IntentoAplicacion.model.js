@@ -68,10 +68,20 @@
  *
  * Política de timestamps: no se usa `{ timestamps: true }` —
  * iniciado_en/finalizado_en ya cubren el ciclo de vida del intento.
+ *
+ * VERSIONES: sin `version_contrato` el documento es 1.0 y rigen
+ * exactamente las reglas de arriba (también para históricos). Con
+ * `version_contrato: '2.0'` rigen las reglas 2.0 (validarV2): los campos
+ * exclusivos del 1.0 se rechazan, la evidencia sale del payload aprobado
+ * (revalidaciones[] ya validadas, conflicto, precondiciones, fecha) y los
+ * errores externos solo se guardan como código cerrado. No hay default
+ * de versión ni migración.
  */
 
 const mongoose = require('mongoose');
 const { validarAuditoria } = require('../../services/propuestas/auditoria-aplicacion');
+const { canonicalizarValor } = require('../../services/propuestas/canonicalizacion-propuestas');
+const { esFechaCalendario } = require('../../services/propuestas/contrato-requisito-v2');
 const crypto = require('crypto');
 const {
   RESULTADOS_INTENTO,
@@ -93,6 +103,24 @@ const RESULTADOS_CON_PRECONDICION = ['exito', 'valor_actual_cambio'];
 const RESULTADOS_CON_VALOR_OBSERVADO = ['valor_actual_cambio'];
 const RESULTADOS_CON_IDENTIDAD_ESPERADA = ['identidad_requisito_cambio'];
 const RESULTADOS_SIN_DECISION_OBLIGATORIA = ['propuesta_no_aplicable'];
+
+// ---- Contrato 2.0 (solo con version_contrato: '2.0') ----
+const VERSIONES_CONTRATO = ['2.0'];
+const esV2 = (doc) => doc.version_contrato === '2.0';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const NOMBRE_TECNICO = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const PROCESO_V2 = Object.freeze({ nombre: 'aplicar-propuesta-v2', version: '1' });
+const RESULTADOS_V2 = ['exito', 'valor_actual_cambio', 'identidad_requisito_cambio', 'propuesta_no_aplicable', 'escritura_abortada'];
+const CATEGORIAS_CONFLICTO_V2 = {
+  identidad_requisito_cambio: ['destino_no_encontrado', 'requisito_id_no_encontrado', 'requisito_id_duplicado', 'identidad_semantica_no_coincide'],
+  valor_actual_cambio: ['claves_desconocidas', 'valor_no_capturable', 'instantanea_no_coincide']
+};
+const CODIGOS_ERROR_EXTERNO = ['red', 'clave_duplicada', 'servidor', 'inconsistencia', 'desconocido'];
+// Campos que solo existen en una versión: su presencia en la otra es una mezcla.
+const CAMPOS_SOLO_V1 = ['evidencia_fresca', 'revalidacion', 'precondicion', 'valor_observado', 'identidad_esperada_no_coincide'];
+const CAMPOS_SOLO_V2 = ['identidad_operador', 'aprobacion', 'revalidaciones', 'conflicto', 'precondiciones', 'fecha_verificacion', 'error_externo'];
+const canonico = (v) => JSON.stringify(canonicalizarValor(v ?? null));
+const presenteEn = (doc, campo) => doc.get(campo) !== undefined;
 
 function registraTransicionFallida(doc) {
   return doc.resultado === 'escritura_abortada' && doc.etapa_fallo === 'transicion_por_fallo';
@@ -149,6 +177,46 @@ const revalidacionSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Subesquemas 2.0 con strict por defecto: con strict 'throw' en un subdocumento, el abort
+// de connection.transaction (rollback o reintento) restaura __v y lanza StrictModeError,
+// que tapa el error original. Los descartes anidados los detecta la persistencia 2.0
+// comparando entrada y documento construido.
+const revalidacionV2Schema = new mongoose.Schema(
+  {
+    url: { type: String, required: true },
+    fuente_nombre: { type: String, required: true },
+    hechos_hash: { type: String, required: true, match: SHA256_HEX },
+    revalidada_en: { type: Date, required: true }
+  },
+  { _id: false }
+);
+
+const aprobacionV2Schema = new mongoose.Schema(
+  {
+    evento_id: { type: String, required: true },
+    actor: { type: operadorSchema, required: true },
+    identidad_operador: { type: mongoose.Schema.Types.Mixed },
+    ocurrido_en: { type: Date }
+  },
+  { _id: false }
+);
+
+const conflictoV2Schema = new mongoose.Schema(
+  {
+    categoria: { type: String, required: true },
+    detalle: { type: mongoose.Schema.Types.Mixed }
+  },
+  { _id: false, minimize: false }
+);
+
+const precondicionV2Schema = new mongoose.Schema(
+  {
+    codigo: { type: String, required: true, match: /^[a-z0-9_]{1,80}$/ },
+    detalle: { type: mongoose.Schema.Types.Mixed }
+  },
+  { _id: false, minimize: false }
+);
+
 const identidadEsperadaSchema = new mongoose.Schema(
   {
     categoria: { type: String, required: true, enum: CATEGORIAS_IDENTIDAD_NO_COINCIDE },
@@ -166,6 +234,9 @@ const intentoAplicacionSchema = new mongoose.Schema(
       immutable: true,
       default: () => crypto.randomUUID()
     },
+
+    // Ausente = 1.0 (históricos incluidos). Sin default.
+    version_contrato: { type: String, enum: VERSIONES_CONTRATO, immutable: true },
 
     propuesta_id: { type: String, required: true, immutable: true },
 
@@ -220,7 +291,8 @@ const intentoAplicacionSchema = new mongoose.Schema(
       immutable: true
     },
 
-    evidencia_fresca: { type: mongoose.Schema.Types.Mixed, required: true, immutable: true },
+    // Solo 1.0. En 2.0 la evidencia se resume en revalidaciones[] ya validadas.
+    evidencia_fresca: { type: mongoose.Schema.Types.Mixed, required: function () { return !esV2(this); }, immutable: true },
 
     // Revalidación externa contra la fuente ORIGINAL, SIEMPRE hecha
     // antes de abrir cualquier transacción de Mongo (nunca HTTP dentro
@@ -228,7 +300,7 @@ const intentoAplicacionSchema = new mongoose.Schema(
     revalidacion: {
       type: revalidacionSchema,
       required: function () {
-        return exigeRevalidacion(this);
+        return !esV2(this) && exigeRevalidacion(this);
       },
       immutable: true
     },
@@ -237,7 +309,7 @@ const intentoAplicacionSchema = new mongoose.Schema(
     precondicion: {
       type: valorConPresenciaSchema,
       required: function () {
-        return RESULTADOS_CON_PRECONDICION.includes(resultadoEfectivo(this));
+        return !esV2(this) && RESULTADOS_CON_PRECONDICION.includes(resultadoEfectivo(this));
       },
       immutable: true
     },
@@ -247,7 +319,7 @@ const intentoAplicacionSchema = new mongoose.Schema(
     valor_observado: {
       type: valorConPresenciaSchema,
       required: function () {
-        return RESULTADOS_CON_VALOR_OBSERVADO.includes(resultadoEfectivo(this));
+        return !esV2(this) && RESULTADOS_CON_VALOR_OBSERVADO.includes(resultadoEfectivo(this));
       },
       immutable: true
     },
@@ -255,7 +327,7 @@ const intentoAplicacionSchema = new mongoose.Schema(
     identidad_esperada_no_coincide: {
       type: identidadEsperadaSchema,
       required: function () {
-        return RESULTADOS_CON_IDENTIDAD_ESPERADA.includes(resultadoEfectivo(this));
+        return !esV2(this) && RESULTADOS_CON_IDENTIDAD_ESPERADA.includes(resultadoEfectivo(this));
       },
       immutable: true
     },
@@ -267,7 +339,18 @@ const intentoAplicacionSchema = new mongoose.Schema(
         return this.resultado === 'exito';
       },
       immutable: true
-    }
+    },
+
+    // ---- Solo 2.0 (validarV2); prohibidos en 1.0 ----
+    identidad_operador: { type: mongoose.Schema.Types.Mixed, immutable: true },
+    aprobacion: { type: aprobacionV2Schema, immutable: true },
+    // default undefined: sin [] implícito (el rechazo temprano no lleva el campo).
+    revalidaciones: { type: [revalidacionV2Schema], default: undefined, immutable: true },
+    conflicto: { type: conflictoV2Schema, immutable: true },
+    precondiciones: { type: [precondicionV2Schema], default: undefined, immutable: true },
+    // Mixed: un path String convertiría un Date a texto local; se valida como string.
+    fecha_verificacion: { type: mongoose.Schema.Types.Mixed, immutable: true },
+    error_externo: { type: String, enum: CODIGOS_ERROR_EXTERNO, immutable: true }
   },
   {
     collection: 'intentos_aplicacion',
@@ -319,7 +402,88 @@ intentoAplicacionSchema.pre('validate', function () {
   if (!RESULTADOS_CON_VALOR_OBSERVADO.includes(resultadoEfectivo(this)) && this.valor_observado != null) {
     throw new Error(`intentos_aplicacion: resultado efectivo "${resultadoEfectivo(this)}" no admite valor_observado.`);
   }
+
+  if (esV2(this)) validarV2(this);
+  else {
+    const mezclados = CAMPOS_SOLO_V2.filter((c) => presenteEn(this, c));
+    if (mezclados.length) throw new Error(`intentos_aplicacion: un documento 1.0 no admite campos 2.0 (${mezclados.join(', ')}).`);
+  }
 });
+
+function falla2(mensaje) {
+  throw new Error(`intentos_aplicacion 2.0: ${mensaje}`);
+}
+
+function urlHttpsSinCredenciales(valor) {
+  try {
+    const u = new URL(valor);
+    return u.protocol === 'https:' && u.username === '' && u.password === '' && u.href === valor;
+  } catch {
+    return false;
+  }
+}
+
+// Reglas 2.0 por resultado y etapa; las reglas comunes ya se aplicaron arriba.
+function validarV2(doc) {
+  const mezclados = CAMPOS_SOLO_V1.filter((c) => presenteEn(doc, c));
+  if (mezclados.length) falla2(`campos exclusivos del 1.0 no admitidos (${mezclados.join(', ')}).`);
+  if (!RESULTADOS_V2.includes(doc.resultado)) falla2(`resultado "${doc.resultado}" no admitido.`);
+  const efectivo = resultadoEfectivo(doc);
+
+  for (const campo of ['intento_id', 'propuesta_id']) if (!UUID.test(doc[campo] ?? '')) falla2(`${campo} debe ser UUID.`);
+  if (doc.decision_aprobacion_id != null && !UUID.test(doc.decision_aprobacion_id)) falla2('decision_aprobacion_id debe ser UUID.');
+  if (doc.historial_id != null && !UUID.test(doc.historial_id)) falla2('historial_id debe ser UUID.');
+  if (doc.proceso_aplicador?.nombre !== PROCESO_V2.nombre || doc.proceso_aplicador?.version !== PROCESO_V2.version) falla2('proceso_aplicador no es el aplicador 2.0.');
+  if (!NOMBRE_TECNICO.test(doc.adaptador?.nombre ?? '') || !NOMBRE_TECNICO.test(doc.adaptador?.version ?? '')) falla2('adaptador debe tener nombre y versión técnicos.');
+
+  // Aplicador: auditoría obligatoria y coherente con operador e identidad.
+  if (doc.auditoria == null) falla2('auditoria es obligatoria.');
+  if (doc.operador?.identificador !== doc.auditoria.operador) falla2('operador no coincide con la auditoría.');
+  if (canonico(doc.identidad_operador) !== canonico(doc.auditoria.identidad)) falla2('identidad_operador no coincide con la auditoría.');
+
+  // Aprobador: separado del aplicador y atado a la decisión salvo en no aplicable.
+  if (doc.resultado !== 'propuesta_no_aplicable') {
+    if (doc.aprobacion == null) falla2('aprobacion es obligatoria.');
+    if (doc.aprobacion.evento_id !== doc.decision_aprobacion_id) falla2('aprobacion.evento_id no coincide con decision_aprobacion_id.');
+  }
+  if (doc.aprobacion != null && !UUID.test(doc.aprobacion.evento_id)) falla2('aprobacion.evento_id debe ser UUID.');
+
+  // Revalidaciones: solo ya validadas; el rechazo temprano no lleva el campo.
+  if (doc.etapa_fallo === 'precondiciones_propuesta') {
+    if (doc.revalidaciones !== undefined) falla2('el rechazo de etapa 0 no admite revalidaciones.');
+  } else {
+    if (!Array.isArray(doc.revalidaciones) || doc.revalidaciones.length === 0) falla2('revalidaciones es obligatoria y no vacía.');
+    const urls = doc.revalidaciones.map((r) => r.url);
+    if (new Set(urls).size !== urls.length) falla2('revalidaciones con URL repetida.');
+    for (const r of doc.revalidaciones) {
+      if (!urlHttpsSinCredenciales(r.url)) falla2('revalidaciones[].url debe ser https canónica sin credenciales.');
+      if (r.fuente_nombre.trim() === '' || r.fuente_nombre.length > 200) falla2('revalidaciones[].fuente_nombre inválido.');
+    }
+  }
+
+  // Conflicto: solo y siempre en los resultados de conflicto, con categoría coherente.
+  const categorias = CATEGORIAS_CONFLICTO_V2[efectivo];
+  if (categorias) {
+    if (doc.conflicto == null) falla2(`resultado efectivo "${efectivo}" exige conflicto.`);
+    if (!categorias.includes(doc.conflicto.categoria)) falla2(`categoría "${doc.conflicto.categoria}" incoherente con "${efectivo}".`);
+  } else if (presenteEn(doc, 'conflicto')) falla2(`resultado efectivo "${efectivo}" no admite conflicto.`);
+
+  // Precondiciones: obligatorias en el rechazo de etapa 0; solo en propuesta_no_aplicable.
+  if (doc.resultado === 'propuesta_no_aplicable') {
+    if (doc.etapa_fallo === 'precondiciones_propuesta' && (!Array.isArray(doc.precondiciones) || doc.precondiciones.length === 0)) falla2('el rechazo de etapa 0 exige precondiciones.');
+  } else if (presenteEn(doc, 'precondiciones')) falla2(`resultado "${doc.resultado}" no admite precondiciones.`);
+
+  // Fecha: solo en exito, string YYYY-MM-DD de calendario; un Date se rechaza sin convertirlo.
+  const fecha = doc.get('fecha_verificacion');
+  if (doc.resultado === 'exito') {
+    if (typeof fecha !== 'string' || !esFechaCalendario(fecha)) falla2('fecha_verificacion debe ser string YYYY-MM-DD válido.');
+  } else if (fecha !== undefined) falla2(`resultado "${doc.resultado}" no admite fecha_verificacion.`);
+
+  // Errores externos: solo un código cerrado, y solo en escritura_abortada.
+  if (doc.resultado === 'escritura_abortada') {
+    if (doc.error_externo == null) falla2('escritura_abortada exige error_externo.');
+  } else if (presenteEn(doc, 'error_externo')) falla2(`resultado "${doc.resultado}" no admite error_externo.`);
+}
 
 // Integridad: a lo sumo un intento exitoso por propuesta.
 intentoAplicacionSchema.index(
@@ -331,3 +495,4 @@ intentoAplicacionSchema.index({ propuesta_id: 1, finalizado_en: -1 });
 intentoAplicacionSchema.index({ resultado: 1, finalizado_en: -1 });
 
 module.exports = mongoose.model('IntentoAplicacion', intentoAplicacionSchema);
+module.exports.CODIGOS_ERROR_EXTERNO = CODIGOS_ERROR_EXTERNO;

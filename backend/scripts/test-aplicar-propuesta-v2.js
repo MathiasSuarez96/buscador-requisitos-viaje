@@ -10,6 +10,7 @@ const { MongoMemoryReplSet } = require('mongodb-memory-server');
 const { MongoClient, ObjectId, MongoServerError, MongoNetworkError } = require('mongodb');
 const Destino = require('../models/Destino.model');
 const V2 = require('../services/propuestas/aplicar-propuesta-v2');
+const { crearPersistenciaV2 } = require('../services/propuestas/persistencia-aplicacion-v2');
 const A1 = require('../services/propuestas/aplicar-propuesta');
 const D = require('../services/propuestas/decidir-propuesta');
 const { crearSobreRequisitoV2, hashHechos, ALGORITMO_HECHOS_HASH } = require('../services/propuestas/payload-requisito-v2');
@@ -53,14 +54,10 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
         ejecutarTransaccion: fn => conexion.transaction(fn, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } }),
         leerPropuesta: (id, s) => col('propuestas_cambio').findOne({ propuesta_id: id }, s ? { session: s } : {}),
         leerEvento: (id, s) => col('eventos_propuesta').findOne({ evento_id: id }, s ? { session: s } : {}),
-        leerIntento: id => col('intentos_aplicacion').findOne({ intento_id: id }),
-        leerHistorial: id => col('historial_cambios').findOne({ historial_id: id }),
+        // H2.1: persistidores reales (modelos, strict 'throw', sesión explícita).
+        ...crearPersistenciaV2(),
         ...V2.dependenciasDestino(Destino.collection),
         actualizarPropuestaCas: (f, u, s) => col('propuestas_cambio').updateOne(f, u, { session: s }),
-        insertarHistorial: (d, s) => col('historial_cambios').insertOne(d, { session: s }),
-        insertarIntento: (d, s) => col('intentos_aplicacion').insertOne(d, { session: s }),
-        insertarEvento: (d, s) => col('eventos_propuesta').insertOne(d, { session: s }),
-        insertarIntentoIndependiente: d => col('intentos_aplicacion').insertOne(d, { writeConcern: { w: 'majority' } })
       };
       return { ...base, ...alterar(base) };
     }
@@ -91,7 +88,8 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     }
     const auditoria = (entrada, operador = 'mathias-aplicador') => ({ origen: 'panel', request_id: uuid(), operador, identidad: { metodo: 'oidc_google', sub: `sub-${operador}` },
       comando: { nombre: 'panel-propuestas', version: '1' }, instantanea: { ...entrada } });
-    const contexto = (entrada, operador) => ({ auditoria: auditoria(entrada, operador), revalidaciones });
+    const ADAPTADOR = { nombre: 'migracion-colombia-checkmig', version: '1' };
+    const contexto = (entrada, operador) => ({ adaptador: ADAPTADOR, auditoria: auditoria(entrada, operador), revalidaciones });
     // Donde se espera un resultado, un rechazo se vuelve un resultado comparable (falla por aserción).
     const aplicar = (...a) => V2.aplicarPropuestaV2(...a).catch(e => ({ resultado: `rechazo:${e?.constructor?.name}`, mensaje: String(e?.message).slice(0, 200) }));
     const leerDestino = id => col('destinos').findOne({ _id: id });
@@ -101,6 +99,12 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       return { intentos: intentos.map(i => i.resultado).sort(), historial: await col('historial_cambios').countDocuments({ propuesta_id: propuestaId }),
         eventos: (await col('eventos_propuesta').find({ propuesta_id: propuestaId, tipo_evento: { $ne: 'aprobacion' } }).toArray()).map(e => e.tipo_evento).sort() };
     }
+    // H2.1: el intento abortado guarda solo un código cerrado y un mensaje fijo, nunca el error crudo.
+    const abortadoCon = async (propuestaId, codigo, msg) => {
+      const i = await col('intentos_aplicacion').findOne({ propuesta_id: propuestaId, resultado: 'escritura_abortada' });
+      assert.deepEqual([i?.version_contrato, i?.error_externo, i?.error_mensaje], ['2.0', codigo, 'La escritura del aplicador 2.0 se abortó sin cambios en destinos; ver error_externo.'], msg);
+      return i;
+    };
     const sinEscrituraDeDestino = async (c, antes, msg) => assert.equal(JSON.stringify(await leerDestino(c.destinoId)), antes.destino, msg);
 
     // ---- El 1.0 rechaza una propuesta 2.0 antes de escribir (comportamiento sin cambios) ----
@@ -289,10 +293,23 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       await sinEscrituraDeDestino(c, antes, 'matchedCount 0: destino intacto');
       assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada', 'CAS de la propuesta revertido');
       assert.deepEqual(await conteos(c.propuestaId), { intentos: ['escritura_abortada'], historial: 0, eventos: [] });
+      await abortadoCon(c.propuestaId, 'inconsistencia', 'matchedCount 0: código inconsistencia');
       const c2 = await sembrar();
       const deps2 = crearDeps(() => ({ actualizarDestino: async () => ({ matchedCount: 1, modifiedCount: 0 }) }));
       await assert.rejects(V2.aplicarPropuestaV2(c2.entrada, contexto(c2.entrada), deps2), A1.ErrorInconsistencia);
       assert.ok(!(await conteos(c2.propuestaId)).intentos.includes('exito'), 'modifiedCount 0 tampoco es éxito');
+    }
+
+    // ---- H2.1: un documento de auditoría que el modelo rechaza frena todo antes de la transacción ----
+    for (const validar of ['validarHistorial', 'validarIntento', 'validarEvento']) {
+      const c = await sembrar(), antes = await huella(c);
+      let transacciones = 0;
+      const deps = crearDeps(b => ({ [validar]: async () => { throw new Error('rechazado por el modelo'); }, ejecutarTransaccion: fn => { transacciones++; return b.ejecutarTransaccion(fn); } }));
+      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada), deps), e => e instanceof A1.ErrorInconsistencia && e.message.includes(validar), validar);
+      assert.equal(transacciones, 0, `${validar}: sin abrir la transacción`);
+      await sinEscrituraDeDestino(c, antes, `${validar}: destino intacto`);
+      assert.deepEqual(await conteos(c.propuestaId), { intentos: [], historial: 0, eventos: [] }, `${validar}: sin auditoría`);
+      assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada', `${validar}: propuesta intacta`);
     }
 
     // ---- Payload alterado con hash recalculado y entradas que intentan sustituir lo aprobado ----
@@ -309,7 +326,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       await sinEscrituraDeDestino(c, antes, 'payload alterado: destino intacto');
       await assert.rejects(V2.aplicarPropuestaV2({ ...c.entrada, payload: c.sobre.payload }, contexto(c.entrada), crearDeps()), A1.ErrorEntradaInvalida);
       await assert.rejects(V2.aplicarPropuestaV2(c.entrada, { ...contexto(c.entrada), operador: 'otro' }, crearDeps()), A1.ErrorEntradaInvalida);
-      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, { auditoria: { ...auditoria(c.entrada), operador: '' }, revalidaciones }, crearDeps()), A1.ErrorEntradaInvalida);
+      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, { adaptador: ADAPTADOR, auditoria: { ...auditoria(c.entrada), operador: '' }, revalidaciones }, crearDeps()), A1.ErrorEntradaInvalida);
     }
 
     // ---- Aprobación desactualizada y advertencias no aceptadas ----
@@ -347,7 +364,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     {
       const c = await sembrar(), antes = await huella(c);
       const viejas = [{ ...revalidaciones[0], revalidada_en: new Date(T.getTime() - 16 * 60 * 1000) }];
-      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, { auditoria: auditoria(c.entrada), revalidaciones: viejas }, crearDeps()), e => e instanceof V2.ErrorRevalidacionV2 && e.codigo === 'revalidacion_vencida');
+      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, { adaptador: ADAPTADOR, auditoria: auditoria(c.entrada), revalidaciones: viejas }, crearDeps()), e => e instanceof V2.ErrorRevalidacionV2 && e.codigo === 'revalidacion_vencida');
       await sinEscrituraDeDestino(c, antes, 'revalidación vencida');
       assert.deepEqual(await conteos(c.propuestaId), { intentos: [], historial: 0, eventos: [] });
     }
@@ -373,6 +390,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       await sinEscrituraDeDestino(c, antes, 'rollback del destino');
       assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada', 'rollback del CAS');
       assert.deepEqual(await conteos(c.propuestaId), { intentos: ['escritura_abortada'], historial: 0, eventos: [] }, 'rollback de historial e intento');
+      await abortadoCon(c.propuestaId, 'desconocido', 'error ajeno a Mongo: código desconocido');
     }
 
     // ---- Reintento del callback por error transitorio: sin duplicar auditoría ----
@@ -411,6 +429,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       await assert.rejects(V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada), deps), V2.ErrorEscrituraAbortadaV2);
       assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada');
       assert.deepEqual(await conteos(c.propuestaId), { intentos: ['escritura_abortada'], historial: 0, eventos: [] });
+      await abortadoCon(c.propuestaId, 'red', 'error de red: código red');
     }
 
     // ---- Relectura fallida: resultado incierto, sin registrar más ni reintentar ----
@@ -436,7 +455,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       // Rechazo de etapa 0 con revalidaciones maliciosas: se registra, sin `revalidaciones`.
       const c1 = await sembrar();
       await col('propuestas_cambio').updateOne({ propuesta_id: c1.propuestaId }, { $set: { ultimo_evento_id: uuid() } });
-      const r1 = await aplicar(c1.entrada, { auditoria: auditoria(c1.entrada), revalidaciones: maliciosas }, crearDeps());
+      const r1 = await aplicar(c1.entrada, { adaptador: ADAPTADOR, auditoria: auditoria(c1.entrada), revalidaciones: maliciosas }, crearDeps());
       assert.equal(r1.resultado, 'propuesta_no_aplicable');
       const i1 = await col('intentos_aplicacion').findOne({ intento_id: r1.intento_id });
       assert.ok(i1 && i1.etapa_fallo === 'precondiciones_propuesta' && i1.precondiciones.length > 0, 'el rechazo temprano se registra con motivos seguros');
@@ -444,7 +463,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       // Propuesta válida con revalidaciones maliciosas: no coinciden con la fuente aprobada → sin escribir.
       const c2 = await sembrar(), antes2 = await huella(c2);
       let e2 = null;
-      try { await V2.aplicarPropuestaV2(c2.entrada, { auditoria: auditoria(c2.entrada), revalidaciones: maliciosas }, crearDeps()); } catch (e) { e2 = e; }
+      try { await V2.aplicarPropuestaV2(c2.entrada, { adaptador: ADAPTADOR, auditoria: auditoria(c2.entrada), revalidaciones: maliciosas }, crearDeps()); } catch (e) { e2 = e; }
       assert.ok(e2 instanceof V2.ErrorRevalidacionV2, String(e2));
       limpio(publico(e2), 'ErrorRevalidacionV2');
       await sinEscrituraDeDestino(c2, antes2, 'revalidación maliciosa');
@@ -476,7 +495,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     ]) {
       const c = await sembrar(opciones), antes = await huella(c);
       let e = null;
-      try { await V2.aplicarPropuestaV2(c.entrada, { auditoria: auditoria(c.entrada), revalidaciones: revs }, crearDeps()); } catch (x) { e = x; }
+      try { await V2.aplicarPropuestaV2(c.entrada, { adaptador: ADAPTADOR, auditoria: auditoria(c.entrada), revalidaciones: revs }, crearDeps()); } catch (x) { e = x; }
       assert.ok(e instanceof V2.ErrorRevalidacionV2 && e.codigo === codigo, `${nombre}: ${e?.codigo ?? e}`);
       await sinEscrituraDeDestino(c, antes, nombre);
       assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada', nombre);
@@ -489,7 +508,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       const t2 = new Date('2026-10-27T03:04:00.000Z');
       const c = await sembrar({ fuentes: [fuente, fuente2] });
       const revs = [revDe(fuente, new Date('2026-10-27T02:50:00.000Z')), revDe(fuente2, new Date('2026-10-27T03:02:00.000Z'))];
-      const r = await aplicar(c.entrada, { auditoria: auditoria(c.entrada), revalidaciones: revs }, crearDeps(() => ({ ahora: () => t2 })));
+      const r = await aplicar(c.entrada, { adaptador: ADAPTADOR, auditoria: auditoria(c.entrada), revalidaciones: revs }, crearDeps(() => ({ ahora: () => t2 })));
       assert.deepEqual([r.resultado, r.fecha_verificacion], ['exito', '2026-10-26'], JSON.stringify(r));
       assert.equal(await col('destinos').countDocuments({ _id: c.destinoId, requisitos: { $elemMatch: { _id: c.requisitoId, fecha_verificacion: { $type: 'string', $eq: '2026-10-26' } } } }), 1);
       const i = await col('intentos_aplicacion').findOne({ intento_id: r.intento_id });
@@ -565,6 +584,8 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c1.propuestaId })).estado, 'aprobada', 'CAS del conflicto revertido');
       assert.deepEqual(await conteos(c1.propuestaId), { intentos: ['escritura_abortada'], historial: 0, eventos: [] });
       assert.equal((await col('intentos_aplicacion').findOne({ propuesta_id: c1.propuestaId })).etapa_fallo, 'transicion_por_fallo');
+      const a1 = await abortadoCon(c1.propuestaId, 'desconocido', 'fallo del conflicto: código desconocido');
+      assert.deepEqual([a1.resultado_no_registrado, a1.conflicto?.categoria], ['valor_actual_cambio', 'claves_desconocidas'], 'transición por fallo con el conflicto no registrado');
       // Respuesta perdida después del commit del conflicto.
       const c2 = await sembrar(conClave()); let tx2 = 0;
       const r2 = await aplicar(c2.entrada, contexto(c2.entrada), crearDeps(b => ({ ejecutarTransaccion: async fn => { const k = ++tx2; const r = await b.ejecutarTransaccion(fn); if (k === 2) throw new MongoNetworkError('respuesta perdida'); return r; } })));

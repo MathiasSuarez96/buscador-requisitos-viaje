@@ -6,10 +6,12 @@
  * transacción con CAS de la propuesta + escritura nativa del destino +
  * auditoría, y relectura ante error o respuesta incierta.
  *
+ * H2.1: intento e historial se escriben con version_contrato '2.0' y se
+ * validan con los modelos existentes (persistencia-aplicacion-v2.js). Los
+ * persistidores se INYECTAN y comparten la sesión de la transacción. El
+ * detalle del evento (adaptador, auditoria_panel) queda para H2.2.
+ *
  * Fuera de H1 (dependencias explícitas, no simuladas aquí):
- *  - H2: esquemas/modelos de intento e historial 2.0. Los documentos que se
- *    construyen aquí son provisionales; los persistidores se INYECTAN y
- *    comparten la sesión de la transacción.
  *  - H3: autenticación y permiso del operador (panel: token + permiso
  *    'aplicar'; CLI: connectionStatus + allowlist), InicioIntento persistido
  *    antes de revalidar, adaptador 2.0 que produce `revalidaciones` y el
@@ -40,6 +42,9 @@ const {
 const PROCESO_APLICADOR_V2 = Object.freeze({ nombre: 'aplicar-propuesta-v2', version: '1' });
 const ACTOR_SISTEMA_V2 = Object.freeze({ tipo: 'sistema', identificador: PROCESO_APLICADOR_V2.nombre });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+// Nombre técnico cerrado: el adaptador nunca es texto libre del llamador.
+const NOMBRE_TECNICO = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const MENSAJE_ABORTADA = 'La escritura del aplicador 2.0 se abortó sin cambios en destinos; ver error_externo.';
 const CODIGOS_REVALIDACION = ['revalidaciones_incompletas', 'revalidacion_no_unica', 'revalidacion_invalida',
   'fecha_revalidacion_invalida', 'revalidacion_vencida', 'fuente_cambio'];
 
@@ -65,6 +70,15 @@ class ErrorConflictoV2 extends Error { constructor(c) { super(c.resultado); this
 class ErrorCasPropuestaV2 extends Error {}
 
 const esObjeto = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+const RED = ['MongoNetworkError', 'MongoNetworkTimeoutError', 'MongoServerSelectionError', 'MongoNotConnectedError'];
+// Pura. Código cerrado (IntentoAplicacion.CODIGOS_ERROR_EXTERNO) para persistir un error externo.
+function codigoErrorExterno(err) {
+  if (err instanceof ErrorInconsistencia) return 'inconsistencia';
+  if (err?.code === 11000) return 'clave_duplicada';
+  if (RED.includes(err?.name)) return 'red';
+  if (typeof err?.name === 'string' && err.name.startsWith('Mongo')) return 'servidor';
+  return 'desconocido';
+}
 const esObjectId = v => v instanceof ObjectId || (v != null && v._bsontype === 'ObjectId');
 const canonico = v => JSON.stringify(canonicalizarValor(v ?? null));
 const instante = v => (v instanceof Date ? v.getTime() : v == null ? null : new Date(v).getTime());
@@ -150,7 +164,7 @@ function base(ctx) {
   return {
     propuesta_id: ctx.propuesta_id, version_contrato: VERSION_CONTRATO,
     operador: { ...ctx.operador }, identidad_operador: { ...ctx.identidad_operador }, auditoria: ctx.auditoria,
-    aprobacion: ctx.aprobacion, proceso_aplicador: { ...PROCESO_APLICADOR_V2 }
+    aprobacion: ctx.aprobacion, proceso_aplicador: { ...PROCESO_APLICADOR_V2 }, adaptador: { ...ctx.adaptador }
   };
 }
 
@@ -163,7 +177,7 @@ function construirIntentoV2(ctx, r) {
     // Solo existe tras validar las revalidaciones; un rechazo temprano no persiste datos del llamador.
     ...(ctx.revalidaciones_resumen ? { revalidaciones: ctx.revalidaciones_resumen } : {})
   };
-  for (const campo of ['etapa_fallo', 'historial_id', 'conflicto', 'precondiciones', 'fecha_verificacion']) if (r[campo] !== undefined) doc[campo] = r[campo];
+  for (const campo of ['etapa_fallo', 'resultado_no_registrado', 'historial_id', 'conflicto', 'precondiciones', 'fecha_verificacion', 'error_externo']) if (r[campo] !== undefined) doc[campo] = r[campo];
   if (r.error_mensaje !== undefined) doc.error_mensaje = sanearMensaje(r.error_mensaje);
   return doc;
 }
@@ -171,7 +185,7 @@ function construirIntentoV2(ctx, r) {
 function construirHistorialV2(ctx, payload, plan) {
   return {
     historial_id: ctx.historial_id, destino_id: ctx.ids.destino_hex, requisito_id: ctx.ids.requisito_hex,
-    version_contrato: VERSION_CONTRATO,
+    version_contrato: VERSION_CONTRATO, campo: CAMPO_EXTERNO,
     cambios: payload.cambios.map(c => ({ campo: c.campo, anterior: { ...payload.instantanea_anterior[c.campo] }, nuevo: { ...c.propuesto } })),
     fecha_verificacion: { anterior: { ...payload.instantanea_anterior.fecha_verificacion }, nueva: { presente: true, bson_tipo: 'string', valor: plan.fecha_verificacion } },
     aplicado_en: ctx.t, propuesta_id: ctx.propuesta_id, decision_aprobacion_id: ctx.decision_aprobacion_id_esperado,
@@ -261,7 +275,16 @@ function resultado(ctx, r, extra = {}) {
     estado_propuesta_nuevo: null, confirmado_por_relectura: false, causa_relectura: null, ...extra };
 }
 
+// Valida con los modelos reales antes de abrir la transacción; solo se informan las rutas.
+async function validarDocumentos(plan, deps) {
+  for (const [validar, doc] of plan.documentos) {
+    try { await deps[validar](doc); }
+    catch (e) { throw new ErrorInconsistencia(`Documento de auditoría 2.0 inválido (${validar}): ${Object.keys(e?.errors ?? {}).join(', ') || e?.name}.`); }
+  }
+}
+
 async function escribirConConfirmacionV2(ctx, plan, deps) {
+  await validarDocumentos(plan, deps);
   let err;
   try {
     await deps.ejecutarTransaccion(session => plan.cuerpo(session));
@@ -272,7 +295,7 @@ async function escribirConConfirmacionV2(ctx, plan, deps) {
   if (err instanceof ErrorNoAplicableV2 || err instanceof ErrorConflictoV2 || err instanceof ErrorRevalidacionV2) throw err;
   if (err instanceof ErrorInconsistencia) {
     err.intento_id = ctx.intento_id;
-    await registrarIndependiente(ctx, plan.docAbortado(`Inconsistencia: ${err.message}`, deps.ahora()), deps, plan, err);
+    await registrarIndependiente(ctx, plan.docAbortado('inconsistencia', deps.ahora()), deps, plan, err);
     throw err;
   }
 
@@ -293,7 +316,7 @@ async function escribirConConfirmacionV2(ctx, plan, deps) {
     if (r.confirmado) return plan.confirmado('duplicado_intento_id');
     return resultado(ctx, 'propuesta_no_aplicable');
   }
-  const r = await registrarIndependiente(ctx, plan.docAbortado(`La transacción falló y no quedó nada escrito: ${err?.message ?? err}`, fin), deps, plan, err);
+  const r = await registrarIndependiente(ctx, plan.docAbortado(codigoErrorExterno(err), fin), deps, plan, err);
   if (r.confirmado) return plan.confirmado('duplicado_intento_id');
   throw new ErrorEscrituraAbortadaV2(ctx, r.doc, err);
 }
@@ -321,6 +344,7 @@ function planExitoV2(ctx, entrada, revalidaciones, payload, plan, deps) {
     nombre: 'exito',
     esperado: { propuesta: esperadoPropuesta(ctx, 'aplicacion'), evento, intento, historial,
       requisito: resultadoEsperado(payload, plan.fecha_verificacion), destino_updatedAt: ctx.t },
+    documentos: [['validarHistorial', historial], ['validarIntento', intento], ['validarEvento', evento]],
     cuerpo: async session => {
       // Relectura y validación completas dentro de la transacción.
       const p = await deps.leerPropuesta(ctx.propuesta_id, session);
@@ -345,7 +369,7 @@ function planExitoV2(ctx, entrada, revalidaciones, payload, plan, deps) {
     },
     confirmado: causa => resultado(ctx, 'exito', { evento_id: ctx.evento_id, historial_id: ctx.historial_id, estado_propuesta_nuevo: 'aplicada',
       fecha_verificacion: plan.fecha_verificacion, confirmado_por_relectura: causa !== null, causa_relectura: causa }),
-    docAbortado: (mensaje, fin) => construirIntentoV2(ctx, { resultado: 'escritura_abortada', etapa_fallo: 'escritura_aplicacion', finalizado_en: fin, error_mensaje: mensaje })
+    docAbortado: (codigo, fin) => construirIntentoV2(ctx, { resultado: 'escritura_abortada', etapa_fallo: 'escritura_aplicacion', finalizado_en: fin, error_externo: codigo, error_mensaje: MENSAJE_ABORTADA })
   };
 }
 
@@ -358,6 +382,7 @@ function planConflictoV2(ctx, clasificacion, deps) {
   return {
     nombre: clasificacion.resultado,
     esperado: { propuesta: esperadoPropuesta(ctx, tipoEvento), evento, intento, historial: null, requisito: null },
+    documentos: [['validarIntento', intento], ['validarEvento', evento]],
     cuerpo: async session => {
       await casPropuesta(ctx, tipoEvento, session, deps);
       await deps.insertarIntento(structuredClone(intento), session);
@@ -365,7 +390,8 @@ function planConflictoV2(ctx, clasificacion, deps) {
     },
     confirmado: causa => resultado(ctx, clasificacion.resultado, { evento_id: ctx.evento_id, estado_propuesta_nuevo: TRANSICIONES[tipoEvento].hacia,
       conflicto, confirmado_por_relectura: causa !== null, causa_relectura: causa }),
-    docAbortado: (mensaje, fin) => construirIntentoV2(ctx, { resultado: 'escritura_abortada', etapa_fallo: 'transicion_por_fallo', finalizado_en: fin, error_mensaje: mensaje, conflicto })
+    docAbortado: (codigo, fin) => construirIntentoV2(ctx, { resultado: 'escritura_abortada', etapa_fallo: 'transicion_por_fallo', resultado_no_registrado: clasificacion.resultado,
+      finalizado_en: fin, error_externo: codigo, error_mensaje: MENSAJE_ABORTADA, conflicto })
   };
 }
 
@@ -380,7 +406,12 @@ function planConflictoV2(ctx, clasificacion, deps) {
  */
 async function aplicarPropuestaV2(entrada, contexto, deps) {
   validarEntrada(entrada);
-  if (!esObjeto(contexto) || Object.keys(contexto).sort().join(',') !== 'auditoria,revalidaciones') throw new ErrorEntradaInvalida('aplicarPropuestaV2: contexto debe tener solo auditoria y revalidaciones.');
+  if (!esObjeto(contexto) || Object.keys(contexto).sort().join(',') !== 'adaptador,auditoria,revalidaciones') throw new ErrorEntradaInvalida('aplicarPropuestaV2: contexto debe tener solo adaptador, auditoria y revalidaciones.');
+  // Interno: la selección autenticada del adaptador real es de H3; aquí no hay default.
+  const a = contexto.adaptador;
+  if (!esObjeto(a) || Object.keys(a).sort().join(',') !== 'nombre,version' || !NOMBRE_TECNICO.test(a.nombre) || !NOMBRE_TECNICO.test(a.version)) {
+    throw new ErrorEntradaInvalida('aplicarPropuestaV2: adaptador inválido.');
+  }
   let auditoria;
   try { auditoria = validarAuditoria(contexto.auditoria, entrada); }
   catch { throw new ErrorEntradaInvalida('aplicarPropuestaV2: auditoría inválida.'); }
@@ -403,6 +434,7 @@ async function aplicarPropuestaV2(entrada, contexto, deps) {
     decision_aprobacion_id_esperado: entrada.decision_aprobacion_id_esperado,
     intento_id: generados[0], evento_id: generados[1], historial_id: generados[2], iniciado_en: iniciadoEn, t, ids, auditoria,
     operador: { tipo: 'humano', identificador: auditoria.operador }, identidad_operador: { ...auditoria.identidad },
+    adaptador: { nombre: a.nombre, version: a.version },
     // Aprobador y aplicador se conservan por separado aunque sean la misma persona.
     aprobacion: evento ? { evento_id: evento.evento_id ?? null, actor: { ...(evento.actor ?? {}) },
       identidad_operador: esObjeto(evento.detalle?.identidad_operador) ? { ...evento.detalle.identidad_operador } : null,
