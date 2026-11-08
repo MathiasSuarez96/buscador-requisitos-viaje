@@ -1,15 +1,15 @@
 /**
  * H2.1 — Persistidores de auditoría 2.0 sobre los modelos existentes
- * (intentos_aplicacion, historial_cambios, eventos_propuesta). No está
- * conectado a rutas, CLI ni panel.
+ * (intentos_aplicacion, historial_cambios, eventos_propuesta y, desde H3.1,
+ * inicios_intento_aplicacion). No está conectado a rutas, CLI ni panel.
  *
  * - Siempre una instancia NUEVA con strict 'throw': validación y hooks
  *   reales de Mongoose en cada llamada (también en cada reintento del
  *   callback de la transacción), sin descartar claves en silencio.
  * - Escrituras transaccionales: exigen la sesión de una transacción activa
  *   y la pasan explícitamente a save(); Mongoose no la propaga sola.
- * - Registro independiente (intento terminado fuera de la transacción):
- *   sin sesión y con writeConcern majority, como en el 1.0.
+ * - Registro independiente (intento terminado fuera de la transacción) e
+ *   inicio del intento: sin sesión y con writeConcern majority, como en el 1.0.
  * - Nunca collection.insertOne: eludiría los modelos de auditoría. Las
  *   lecturas de relectura sí son nativas, sin casting.
  * - Los destinos NO pasan por aquí: se leen y escriben con
@@ -19,6 +19,7 @@ const mongoose = require('mongoose');
 const IntentoAplicacion = require('../../models/propuestas/IntentoAplicacion.model');
 const HistorialCambio = require('../../models/propuestas/HistorialCambio.model');
 const EventoPropuesta = require('../../models/propuestas/EventoPropuesta.model');
+const InicioIntentoAplicacion = require('../../models/propuestas/InicioIntentoAplicacion.model');
 
 // Marcadores de hoja: no son strings, así que nunca coinciden con una hoja admitida.
 const NO_ADMITIDO = Symbol('no_admitido');
@@ -91,12 +92,17 @@ function crearPersistenciaV2() {
     validarIntento: (doc) => nuevo(IntentoAplicacion, doc).validate(),
     validarHistorial: (doc) => nuevo(HistorialCambio, doc).validate(),
     validarEvento: (doc) => nuevo(EventoPropuesta, doc).validate(),
+    validarInicio: (doc) => nuevo(InicioIntentoAplicacion, doc).validate(),
     insertarIntento: async (doc, session) => { exigirSesion(session); await nuevo(IntentoAplicacion, doc).save({ session }); },
     insertarHistorial: async (doc, session) => { exigirSesion(session); await nuevo(HistorialCambio, doc).save({ session }); },
     insertarEvento: async (doc, session) => { exigirSesion(session); await nuevo(EventoPropuesta, doc).save({ session }); },
     insertarIntentoIndependiente: async (doc) => { await nuevo(IntentoAplicacion, doc).save({ writeConcern: { w: 'majority' } }); },
+    // Inicio: insert independiente, antes de cualquier consulta externa (nunca dentro de una transacción).
+    insertarInicio: async (doc) => { await nuevo(InicioIntentoAplicacion, doc).save({ writeConcern: { w: 'majority' } }); },
     leerIntento: (intentoId) => IntentoAplicacion.collection.findOne({ intento_id: intentoId }),
-    leerHistorial: (historialId) => HistorialCambio.collection.findOne({ historial_id: historialId })
+    leerHistorial: (historialId) => HistorialCambio.collection.findOne({ historial_id: historialId }),
+    // Con la sesión de la transacción cuando se verifica el inicio dentro de ella.
+    leerInicio: (intentoId, session) => InicioIntentoAplicacion.collection.findOne({ intento_id: intentoId }, session ? { session } : {})
   });
 }
 

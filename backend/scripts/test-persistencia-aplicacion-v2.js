@@ -210,6 +210,52 @@ const transitorio = () => new MongoServerError({ message: 'transitorio', errmsg:
       }
     }
 
+    // 7d. H3.1: registrarInicioV2. Insert independiente; una colisión de id solo confirma con el registro
+    // completo; sin poder confirmarlo, incertidumbre. Nunca sobrescribe, cambia el id ni reintenta.
+    {
+      const V2 = require('../services/propuestas/aplicar-propuesta-v2');
+      const d = documentos(), decision = d.intento.decision_aprobacion_id;
+      const entrada = { propuesta_id: d.propuesta, estado_esperado: 'aprobada', payload_hash_esperado: H, version_coordinacion_esperada: 1, decision_aprobacion_id_esperado: decision };
+      const ctxDe = (extra = {}) => ({ adaptador: { nombre: 'migracion-colombia', version: '1' }, auditoria: structuredClone(d.intento.auditoria),
+        intento: { intento_id: uuid(), evento_id: uuid(), historial_id: uuid(), iniciado_en: T }, revalidaciones: [], ...extra });
+      const leerIni = id => col('inicios_intento_aplicacion').find({ intento_id: id }).toArray();
+      const SECRETO = 'mongodb://u:clave-secreta@h';
+      const sinSecreto = (e, n) => assert.ok(!`${e?.message}\n${String(e)}`.includes('clave-secreta'), `${n}: mensaje sin secretos`);
+      // Primero: se inserta tal cual (tipos BSON del modelo, sin conversiones).
+      const ctx = ctxDe(), inicio = V2.construirInicioV2(entrada, ctx);
+      assert.deepEqual(await V2.registrarInicioV2(inicio, P), { confirmado: true, causa_relectura: null });
+      const [guardado] = await leerIni(inicio.intento_id);
+      assert.deepEqual(comparable(guardado), comparable(inicio), 'inicio guardado completo');
+      assert.ok(guardado.iniciado_en instanceof Date && typeof guardado.version_coordinacion_esperada === 'number', 'tipos conservados');
+      // Repetido idéntico: E11000 + relectura exacta → confirmado, sin segundo documento.
+      assert.deepEqual(await V2.registrarInicioV2(structuredClone(inicio), P), { confirmado: true, causa_relectura: 'duplicado' });
+      assert.equal((await leerIni(inicio.intento_id)).length, 1);
+      // Mismo id, otro inicio: inconsistencia; el original queda intacto.
+      const otro = V2.construirInicioV2(entrada, ctxDe({ adaptador: { nombre: 'migracion-colombia', version: '2' }, intento: { ...ctx.intento } }));
+      await assert.rejects(V2.registrarInicioV2(otro, P), e => e instanceof A1.ErrorInconsistencia, 'colisión con otro inicio');
+      assert.deepEqual(comparable((await leerIni(inicio.intento_id))[0]), comparable(inicio), 'original sin sobrescribir');
+      // El insert falla después de escribir (respuesta perdida): la relectura exacta lo confirma.
+      const i2 = V2.construirInicioV2(entrada, ctxDe()); let llamadas = 0;
+      const perdida = { ...P, insertarInicio: async x => { llamadas++; await P.insertarInicio(x); throw new MongoServerError({ message: SECRETO, errmsg: SECRETO, code: 91 }); } };
+      assert.deepEqual(await V2.registrarInicioV2(i2, perdida), { confirmado: true, causa_relectura: 'error_insercion' });
+      assert.equal(llamadas, 1, 'sin reintento');
+      // El insert falla sin escribir: no se puede afirmar ausencia → incierto, sin reintentar ni escribir.
+      for (const [n, leerInicio] of [['relectura vacía', P.leerInicio], ['relectura fallida', async () => { throw new MongoServerError({ message: SECRETO, errmsg: SECRETO, code: 6 }); }]]) {
+        const i3 = V2.construirInicioV2(entrada, ctxDe()); let veces = 0;
+        const deps = { ...P, leerInicio, insertarInicio: async () => { veces++; throw new MongoServerError({ message: SECRETO, errmsg: SECRETO, code: 91 }); } };
+        let e = null;
+        try { await V2.registrarInicioV2(i3, deps); } catch (x) { e = x; }
+        assert.ok(e instanceof V2.ErrorInicioInciertoV2 && e.intento_id === i3.intento_id, `${n}: ${e}`);
+        assert.equal(e instanceof A1.ErrorResultadoIncierto, false, `${n}: incertidumbre del inicio, distinta de la del intento terminado`);
+        sinSecreto(e, n);
+        assert.deepEqual([veces, (await leerIni(i3.intento_id)).length], [1, 0], `${n}: un solo intento de insert y nada escrito`);
+      }
+      // Inválido para el modelo: rechazo antes de escribir.
+      const malo = { ...V2.construirInicioV2(entrada, ctxDe()), adaptador: { nombre: 'Adaptador libre', version: '1' } };
+      await assert.rejects(V2.registrarInicioV2(malo, P), e => e instanceof A1.ErrorEntradaInvalida, 'inicio inválido');
+      assert.equal((await leerIni(malo.intento_id)).length, 0, 'inicio inválido no escrito');
+    }
+
     // 8. Índices intactos: los modelos (autoIndex: false) no crearon ni cambiaron ninguno. Se espera init()
     // (donde Mongoose crearía los índices) y se compara con el inventario exacto creado por esta prueba,
     // porque la foto «antes» se toma ya conectados.

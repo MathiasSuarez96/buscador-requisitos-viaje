@@ -6,6 +6,7 @@ const { ObjectId } = require('bson');
 const IntentoAplicacion = require('../models/propuestas/IntentoAplicacion.model');
 const HistorialCambio = require('../models/propuestas/HistorialCambio.model');
 const EventoPropuesta = require('../models/propuestas/EventoPropuesta.model');
+const InicioIntentoAplicacion = require('../models/propuestas/InicioIntentoAplicacion.model');
 const A1 = require('../services/propuestas/aplicar-propuesta');
 const { crearPersistenciaV2 } = require('../services/propuestas/persistencia-aplicacion-v2');
 
@@ -266,6 +267,51 @@ const conModelo = (M, d) => new M(d).validate();
   await invE('detalle 2.0 sin versión', e => { delete e.detalle.version_contrato; });
   await invE('versión desconocida con proceso 2.0', e => { e.detalle.version_contrato = '3.0'; });
   await invE('función en el detalle', e => { e.detalle.auditoria.comando.nombre = () => 'panel-propuestas'; });
+
+  // ---- H3.1: inicio del intento 2.0 ----
+  const inicio2 = () => ({ version_contrato: '2.0', intento_id: uuid(), evento_id: uuid(), historial_id: uuid(), propuesta_id: PROPUESTA, hash_contenido_referenciado: H,
+    version_coordinacion_esperada: 1, decision_aprobacion_id_esperado: DECISION, operador: { tipo: 'humano', identificador: 'aplicador' }, auditoria: structuredClone(auditoria),
+    proceso_aplicador: { ...PROCESO }, adaptador: { ...ADAPTADOR }, iniciado_en: T });
+  const AUD_COMANDO = { origen: 'comando_administrativo', operador: 'aplicador', identidad: { metodo: 'connection_status', usuario_atlas: 'u', db_autenticacion: 'admin' }, comando: { nombre: 'aplicar-propuesta', version: '1' } };
+  await pasa('inicio 2.0 (panel)', () => P.validarInicio(inicio2()));
+  await pasa('inicio 2.0 (comando, sin instantánea)', () => P.validarInicio({ ...inicio2(), auditoria: structuredClone(AUD_COMANDO) }));
+  // 1.0 e históricos sin cambios.
+  const inicio1 = () => A1.construirInicio({ ...ctx1, hash_leido: H, version_esperada: 1 }, { host: 'h', pid: 1 });
+  await pasa('inicio 1.0', () => conModelo(InicioIntentoAplicacion, inicio1()));
+  await pasa('inicio 1.0 histórico sin auditoría ni proceso', () => { const d = inicio1(); delete d.auditoria; delete d.proceso; return conModelo(InicioIntentoAplicacion, d); });
+  for (const [c, v] of [['evento_id', uuid()], ['historial_id', uuid()], ['decision_aprobacion_id_esperado', uuid()]]) {
+    await falla(`mezcla: inicio 1.0 con ${c}`, () => conModelo(InicioIntentoAplicacion, { ...inicio1(), [c]: v }));
+  }
+  await falla('mezcla: inicio 1.0 con el proceso 2.0', () => conModelo(InicioIntentoAplicacion, { ...inicio1(), proceso_aplicador: { ...PROCESO } }));
+  for (const v of ['1.0', '3.0', '']) await falla(`inicio con versión desconocida "${v}"`, () => conModelo(InicioIntentoAplicacion, { ...inicio2(), version_contrato: v }));
+  // Sobre un inicio 1.0 (sin campos 2.0) solo el enum de versión puede rechazarla.
+  for (const v of ['1.0', '3.0', '']) await falla(`inicio 1.0 con versión desconocida "${v}"`, () => conModelo(InicioIntentoAplicacion, { ...inicio1(), version_contrato: v }));
+  const invI = async (n, cambiar) => falla(`inicio 2.0: ${n}`, () => { const d = inicio2(); cambiar(d); return P.validarInicio(d); });
+  for (const c of ['intento_id', 'evento_id', 'historial_id', 'propuesta_id', 'decision_aprobacion_id_esperado']) {
+    await invI(`${c} no UUID`, d => { d[c] = 'x'; });
+    await invI(`sin ${c}`, d => { delete d[c]; });
+  }
+  await invI('evento_id igual a intento_id', d => { d.evento_id = d.intento_id; });
+  await invI('historial_id igual a evento_id', d => { d.historial_id = d.evento_id; });
+  await invI('iniciado_en inválido', d => { d.iniciado_en = new Date('x'); });
+  await invI('iniciado_en como texto (conversión)', d => { d.iniciado_en = T.toISOString(); });
+  await invI('sin iniciado_en', d => { delete d.iniciado_en; });
+  await invI('con proceso host/pid (1.0)', d => { d.proceso = { host: 'h', pid: 1 }; });
+  await invI('proceso 1.0', d => { d.proceso_aplicador = { nombre: 'aplicar-propuesta', version: '1' }; });
+  await invI('adaptador de texto libre', d => { d.adaptador.nombre = 'Adaptador libre'; });
+  await invI('versión del adaptador numérica (conversión)', d => { d.adaptador.version = 1; });
+  await invI('sin auditoría', d => { delete d.auditoria; });
+  await invI('auditoría sin sub', d => { delete d.auditoria.identidad.sub; });
+  await invI('auditoría con token', d => { d.auditoria.identidad.token = 'eyJabc'; });
+  await invI('operador distinto de la auditoría', d => { d.operador.identificador = 'otro'; });
+  await invI('operador del sistema', d => { d.operador.tipo = 'sistema'; });
+  await invI('instantánea de otra versión', d => { d.version_coordinacion_esperada = 2; });
+  await invI('instantánea de otro hash', d => { d.hash_contenido_referenciado = 'f'.repeat(64); });
+  await invI('instantánea de otra decisión', d => { d.decision_aprobacion_id_esperado = uuid(); });
+  await invI('instantánea de otra propuesta', d => { d.propuesta_id = uuid(); });
+  await invI('versión de coordinación como texto (conversión)', d => { d.version_coordinacion_esperada = '1'; d.auditoria.instantanea.version_coordinacion_esperada = '1'; });
+  await invI('clave desconocida', d => { d.intruso = 1; });
+  await invI('función en la auditoría', d => { d.auditoria.comando.nombre = () => 'panel-propuestas'; });
 
   console.log('Modelos de auditoría 2.0: 1.0 e históricos intactos, versión explícita, reglas por resultado y etapa, mezclas, strict, fechas y valores capturados: OK');
 })().catch(e => { console.error(e); process.exitCode = 1; });

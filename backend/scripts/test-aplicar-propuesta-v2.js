@@ -50,7 +50,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     const listados = async () => Object.fromEntries(await Promise.all([...new Set(indices.map(s => s.coleccion))].map(async c => [c, await col(c).indexes()])));
     function crearDeps(alterar = () => ({})) {
       const base = {
-        uuid, ahora: () => T,
+        ahora: () => T,
         verificarIndices: async () => V2.verificarIndicesV2(await listados()),
         ejecutarTransaccion: fn => conexion.transaction(fn, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } }),
         leerPropuesta: (id, s) => col('propuestas_cambio').findOne({ propuesta_id: id }, s ? { session: s } : {}),
@@ -90,9 +90,21 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     const auditoria = (entrada, operador = 'mathias-aplicador') => ({ origen: 'panel', request_id: uuid(), operador, identidad: { metodo: 'oidc_google', sub: `sub-${operador}` },
       comando: { nombre: 'panel-propuestas', version: '1' }, instantanea: { ...entrada } });
     const ADAPTADOR = { nombre: 'migracion-colombia-checkmig', version: '1' };
-    const contexto = (entrada, operador) => ({ adaptador: ADAPTADOR, auditoria: auditoria(entrada, operador), revalidaciones });
+    // H3.1: ids e iniciado_en los genera el llamador una vez (bloque intento del contexto).
+    const intentoDe = ([intento_id, evento_id, historial_id] = [uuid(), uuid(), uuid()]) => ({ intento_id, evento_id, historial_id, iniciado_en: T });
+    const contexto = (entrada, operador, intento = intentoDe()) => ({ adaptador: ADAPTADOR, auditoria: auditoria(entrada, operador), intento, revalidaciones });
+    // El inicio se persiste ANTES de llamar al núcleo, como hará el orquestador. Un contexto o una
+    // entrada inválidos no tienen inicio: el núcleo los rechaza antes de buscarlo.
+    const P2 = crearPersistenciaV2();
+    async function iniciar(entrada, ctx) {
+      let inicio;
+      try { inicio = V2.construirInicioV2(entrada, ctx); } catch (e) { if (e instanceof A1.ErrorEntradaInvalida) return null; throw e; }
+      await V2.registrarInicioV2(inicio, P2);
+      return inicio;
+    }
+    const aplicarV2 = async (entrada, ctx, deps) => { await iniciar(entrada, ctx); return V2.aplicarPropuestaV2(entrada, ctx, deps); };
     // Donde se espera un resultado, un rechazo se vuelve un resultado comparable (falla por aserción).
-    const aplicar = (...a) => V2.aplicarPropuestaV2(...a).catch(e => ({ resultado: `rechazo:${e?.constructor?.name}`, mensaje: String(e?.message).slice(0, 200) }));
+    const aplicar = (...a) => aplicarV2(...a).catch(e => ({ resultado: `rechazo:${e?.constructor?.name}`, mensaje: String(e?.message).slice(0, 200) }));
     const leerDestino = id => col('destinos').findOne({ _id: id });
     const huella = async c => ({ destino: JSON.stringify(await leerDestino(c.destinoId)), propuesta: await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId }) });
     async function conteos(propuestaId) {
@@ -143,7 +155,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     {
       const c = await sembrar(), antes = await huella(c);
       await col('propuestas_cambio').dropIndex(V2.INDICE_TRANSVERSAL.nombre);
-      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada), crearDeps()), ErrorPrecondicionIndices);
+      await assert.rejects(aplicarV2(c.entrada, contexto(c.entrada), crearDeps()), ErrorPrecondicionIndices);
       await sinEscrituraDeDestino(c, antes, 'sin índice transversal: destino intacto');
       assert.deepEqual(await conteos(c.propuestaId), { intentos: [], historial: 0, eventos: [] });
       await crearIndice(V2.INDICE_TRANSVERSAL);
@@ -232,8 +244,8 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     // Commit real y luego se quita exactamente UNA pieza: el resto coincide byte a byte.
     for (const falta of ['intento', 'historial', 'evento', 'cas_propuesta']) {
       const c = await sembrar();
-      const ids = [uuid(), uuid(), uuid()]; let n = 0;
-      const deps = crearDeps(b => ({ uuid: () => ids[n++], ejecutarTransaccion: async fn => {
+      const ids = [uuid(), uuid(), uuid()];
+      const deps = crearDeps(b => ({ ejecutarTransaccion: async fn => {
         await b.ejecutarTransaccion(fn);
         const [intentoId, eventoId, historialId] = ids;
         if (falta === 'intento') await col('intentos_aplicacion').deleteOne({ intento_id: intentoId });
@@ -242,7 +254,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
         if (falta === 'cas_propuesta') await col('propuestas_cambio').updateOne({ propuesta_id: c.propuestaId }, { $set: { estado: 'aprobada', ultimo_evento_id: c.eventoAprobacion }, $inc: { version_coordinacion: -1 } });
         throw new MongoNetworkError('sin respuesta');
       } }));
-      const rp = await aplicar(c.entrada, contexto(c.entrada), deps);
+      const rp = await aplicar(c.entrada, contexto(c.entrada, undefined, intentoDe(ids)), deps);
       assert.equal(rp.resultado, 'rechazo:ErrorInconsistencia', `rastro parcial sin ${falta}: ${JSON.stringify(rp)}`);
     }
 
@@ -324,14 +336,14 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     {
       const c = await sembrar(), antes = await huella(c);
       const deps = crearDeps(() => ({ actualizarDestino: async () => ({ matchedCount: 0, modifiedCount: 0 }) }));
-      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada), deps), A1.ErrorInconsistencia);
+      await assert.rejects(aplicarV2(c.entrada, contexto(c.entrada), deps), A1.ErrorInconsistencia);
       await sinEscrituraDeDestino(c, antes, 'matchedCount 0: destino intacto');
       assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada', 'CAS de la propuesta revertido');
       assert.deepEqual(await conteos(c.propuestaId), { intentos: ['escritura_abortada'], historial: 0, eventos: [] });
       await abortadoCon(c.propuestaId, 'inconsistencia', 'matchedCount 0: código inconsistencia');
       const c2 = await sembrar();
       const deps2 = crearDeps(() => ({ actualizarDestino: async () => ({ matchedCount: 1, modifiedCount: 0 }) }));
-      await assert.rejects(V2.aplicarPropuestaV2(c2.entrada, contexto(c2.entrada), deps2), A1.ErrorInconsistencia);
+      await assert.rejects(aplicarV2(c2.entrada, contexto(c2.entrada), deps2), A1.ErrorInconsistencia);
       assert.ok(!(await conteos(c2.propuestaId)).intentos.includes('exito'), 'modifiedCount 0 tampoco es éxito');
     }
 
@@ -340,7 +352,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       const c = await sembrar(), antes = await huella(c);
       let transacciones = 0;
       const deps = crearDeps(b => ({ [validar]: async () => { throw new Error('rechazado por el modelo'); }, ejecutarTransaccion: fn => { transacciones++; return b.ejecutarTransaccion(fn); } }));
-      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada), deps), e => e instanceof A1.ErrorInconsistencia && e.message.includes(validar), validar);
+      await assert.rejects(aplicarV2(c.entrada, contexto(c.entrada), deps), e => e instanceof A1.ErrorInconsistencia && e.message.includes(validar), validar);
       assert.equal(transacciones, 0, `${validar}: sin abrir la transacción`);
       await sinEscrituraDeDestino(c, antes, `${validar}: destino intacto`);
       assert.deepEqual(await conteos(c.propuestaId), { intentos: [], historial: 0, eventos: [] }, `${validar}: sin auditoría`);
@@ -359,9 +371,9 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       assert.equal(ra.resultado, 'propuesta_no_aplicable');
       assert.ok(ra.fallas.includes('aprobacion_invalida'), JSON.stringify(ra.fallas));
       await sinEscrituraDeDestino(c, antes, 'payload alterado: destino intacto');
-      await assert.rejects(V2.aplicarPropuestaV2({ ...c.entrada, payload: c.sobre.payload }, contexto(c.entrada), crearDeps()), A1.ErrorEntradaInvalida);
-      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, { ...contexto(c.entrada), operador: 'otro' }, crearDeps()), A1.ErrorEntradaInvalida);
-      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, { adaptador: ADAPTADOR, auditoria: { ...auditoria(c.entrada), operador: '' }, revalidaciones }, crearDeps()), A1.ErrorEntradaInvalida);
+      await assert.rejects(aplicarV2({ ...c.entrada, payload: c.sobre.payload }, contexto(c.entrada), crearDeps()), A1.ErrorEntradaInvalida);
+      await assert.rejects(aplicarV2(c.entrada, { ...contexto(c.entrada), operador: 'otro' }, crearDeps()), A1.ErrorEntradaInvalida);
+      await assert.rejects(aplicarV2(c.entrada, { adaptador: ADAPTADOR, intento: intentoDe(), auditoria: { ...auditoria(c.entrada), operador: '' }, revalidaciones }, crearDeps()), A1.ErrorEntradaInvalida);
     }
 
     // ---- Aprobación desactualizada y advertencias no aceptadas ----
@@ -399,7 +411,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     {
       const c = await sembrar(), antes = await huella(c);
       const viejas = [{ ...revalidaciones[0], revalidada_en: new Date(T.getTime() - 16 * 60 * 1000) }];
-      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, { adaptador: ADAPTADOR, auditoria: auditoria(c.entrada), revalidaciones: viejas }, crearDeps()), e => e instanceof V2.ErrorRevalidacionV2 && e.codigo === 'revalidacion_vencida');
+      await assert.rejects(aplicarV2(c.entrada, { adaptador: ADAPTADOR, intento: intentoDe(), auditoria: auditoria(c.entrada), revalidaciones: viejas }, crearDeps()), e => e instanceof V2.ErrorRevalidacionV2 && e.codigo === 'revalidacion_vencida');
       await sinEscrituraDeDestino(c, antes, 'revalidación vencida');
       assert.deepEqual(await conteos(c.propuestaId), { intentos: [], historial: 0, eventos: [] });
     }
@@ -407,8 +419,8 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     // ---- Dos aplicaciones concurrentes: exactamente una efectiva ----
     {
       const c = await sembrar();
-      const rs2 = await Promise.allSettled([V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada, 'operador-a'), crearDeps()),
-        V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada, 'operador-b'), crearDeps())]);
+      const rs2 = await Promise.allSettled([aplicarV2(c.entrada, contexto(c.entrada, 'operador-a'), crearDeps()),
+        aplicarV2(c.entrada, contexto(c.entrada, 'operador-b'), crearDeps())]);
       const exitos = rs2.filter(x => x.status === 'fulfilled' && x.value.resultado === 'exito');
       assert.equal(exitos.length, 1, JSON.stringify(rs2.map(x => x.value?.resultado ?? x.reason?.constructor?.name)));
       const k = await conteos(c.propuestaId);
@@ -421,7 +433,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     {
       const c = await sembrar(), antes = await huella(c);
       const deps = crearDeps(() => ({ insertarEvento: async () => { throw new Error('fallo inyectado entre escrituras'); } }));
-      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada), deps), V2.ErrorEscrituraAbortadaV2);
+      await assert.rejects(aplicarV2(c.entrada, contexto(c.entrada), deps), V2.ErrorEscrituraAbortadaV2);
       await sinEscrituraDeDestino(c, antes, 'rollback del destino');
       assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada', 'rollback del CAS');
       assert.deepEqual(await conteos(c.propuestaId), { intentos: ['escritura_abortada'], historial: 0, eventos: [] }, 'rollback de historial e intento');
@@ -461,7 +473,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
           'requisitos.$.fecha_verificacion': FECHA, updatedAt: T }, $unset: { 'requisitos.$.link': '' } });
         throw new MongoNetworkError('sin respuesta');
       } }));
-      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada), deps), V2.ErrorEscrituraAbortadaV2);
+      await assert.rejects(aplicarV2(c.entrada, contexto(c.entrada), deps), V2.ErrorEscrituraAbortadaV2);
       assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada');
       assert.deepEqual(await conteos(c.propuestaId), { intentos: ['escritura_abortada'], historial: 0, eventos: [] });
       await abortadoCon(c.propuestaId, 'red', 'error de red: código red');
@@ -475,7 +487,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
         ejecutarTransaccion: async fn => { transacciones++; await b.ejecutarTransaccion(fn); tras = true; throw new MongoNetworkError('corte'); },
         leerPropuesta: async (id, s) => { if (tras && !s) throw new MongoNetworkError('relectura caída'); return b.leerPropuesta(id, s); }
       }));
-      await assert.rejects(V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada), deps), A1.ErrorResultadoIncierto);
+      await assert.rejects(aplicarV2(c.entrada, contexto(c.entrada), deps), A1.ErrorResultadoIncierto);
       assert.equal(transacciones, 1, 'sin reintento a ciegas');
       assert.deepEqual(await conteos(c.propuestaId), { intentos: ['exito'], historial: 1, eventos: ['aplicacion'] }, 'el commit ocurrió; no se agregó escritura_abortada');
     }
@@ -490,7 +502,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       // Rechazo de etapa 0 con revalidaciones maliciosas: se registra, sin `revalidaciones`.
       const c1 = await sembrar();
       await col('propuestas_cambio').updateOne({ propuesta_id: c1.propuestaId }, { $set: { ultimo_evento_id: uuid() } });
-      const r1 = await aplicar(c1.entrada, { adaptador: ADAPTADOR, auditoria: auditoria(c1.entrada), revalidaciones: maliciosas }, crearDeps());
+      const r1 = await aplicar(c1.entrada, { adaptador: ADAPTADOR, intento: intentoDe(), auditoria: auditoria(c1.entrada), revalidaciones: maliciosas }, crearDeps());
       assert.equal(r1.resultado, 'propuesta_no_aplicable');
       const i1 = await col('intentos_aplicacion').findOne({ intento_id: r1.intento_id });
       assert.ok(i1 && i1.etapa_fallo === 'precondiciones_propuesta' && i1.precondiciones.length > 0, 'el rechazo temprano se registra con motivos seguros');
@@ -498,7 +510,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       // Propuesta válida con revalidaciones maliciosas: no coinciden con la fuente aprobada → sin escribir.
       const c2 = await sembrar(), antes2 = await huella(c2);
       let e2 = null;
-      try { await V2.aplicarPropuestaV2(c2.entrada, { adaptador: ADAPTADOR, auditoria: auditoria(c2.entrada), revalidaciones: maliciosas }, crearDeps()); } catch (e) { e2 = e; }
+      try { await aplicarV2(c2.entrada, { adaptador: ADAPTADOR, intento: intentoDe(), auditoria: auditoria(c2.entrada), revalidaciones: maliciosas }, crearDeps()); } catch (e) { e2 = e; }
       assert.ok(e2 instanceof V2.ErrorRevalidacionV2, String(e2));
       limpio(publico(e2), 'ErrorRevalidacionV2');
       await sinEscrituraDeDestino(c2, antes2, 'revalidación maliciosa');
@@ -506,7 +518,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       // Error con secretos dentro de la transacción: mensaje público y auditoría limpios.
       const c3 = await sembrar();
       let e3 = null;
-      try { await V2.aplicarPropuestaV2(c3.entrada, contexto(c3.entrada), crearDeps(() => ({ insertarEvento: async () => { throw new Error(conSecretos); } }))); } catch (e) { e3 = e; }
+      try { await aplicarV2(c3.entrada, contexto(c3.entrada), crearDeps(() => ({ insertarEvento: async () => { throw new Error(conSecretos); } }))); } catch (e) { e3 = e; }
       assert.ok(e3 instanceof V2.ErrorEscrituraAbortadaV2);
       limpio(publico(e3), 'ErrorEscrituraAbortadaV2');
       assert.deepEqual(await conteos(c3.propuestaId), { intentos: ['escritura_abortada'], historial: 0, eventos: [] });
@@ -530,7 +542,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
     ]) {
       const c = await sembrar(opciones), antes = await huella(c);
       let e = null;
-      try { await V2.aplicarPropuestaV2(c.entrada, { adaptador: ADAPTADOR, auditoria: auditoria(c.entrada), revalidaciones: revs }, crearDeps()); } catch (x) { e = x; }
+      try { await aplicarV2(c.entrada, { adaptador: ADAPTADOR, intento: intentoDe(), auditoria: auditoria(c.entrada), revalidaciones: revs }, crearDeps()); } catch (x) { e = x; }
       assert.ok(e instanceof V2.ErrorRevalidacionV2 && e.codigo === codigo, `${nombre}: ${e?.codigo ?? e}`);
       await sinEscrituraDeDestino(c, antes, nombre);
       assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada', nombre);
@@ -543,7 +555,7 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       const t2 = new Date('2026-10-27T03:04:00.000Z');
       const c = await sembrar({ fuentes: [fuente, fuente2] });
       const revs = [revDe(fuente, new Date('2026-10-27T02:50:00.000Z')), revDe(fuente2, new Date('2026-10-27T03:02:00.000Z'))];
-      const r = await aplicar(c.entrada, { adaptador: ADAPTADOR, auditoria: auditoria(c.entrada), revalidaciones: revs }, crearDeps(() => ({ ahora: () => t2 })));
+      const r = await aplicar(c.entrada, { adaptador: ADAPTADOR, intento: intentoDe(), auditoria: auditoria(c.entrada), revalidaciones: revs }, crearDeps(() => ({ ahora: () => t2 })));
       assert.deepEqual([r.resultado, r.fecha_verificacion], ['exito', '2026-10-26'], JSON.stringify(r));
       assert.equal(await col('destinos').countDocuments({ _id: c.destinoId, requisitos: { $elemMatch: { _id: c.requisitoId, fecha_verificacion: { $type: 'string', $eq: '2026-10-26' } } } }), 1);
       const i = await col('intentos_aplicacion').findOne({ intento_id: r.intento_id });
@@ -554,9 +566,9 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
 
     // ---- 3c. E11000 dentro de la transacción: sin éxito ni escritura del destino ----
     {
-      const c = await sembrar(), antes = await huella(c), ids = [uuid(), uuid(), uuid()]; let n = 0;
+      const c = await sembrar(), antes = await huella(c), ids = [uuid(), uuid(), uuid()];
       await col('historial_cambios').insertOne({ historial_id: ids[2], propuesta_id: uuid(), intento_aplicacion_id: uuid() });
-      const r = await aplicar(c.entrada, contexto(c.entrada), crearDeps(() => ({ uuid: () => ids[n++] })));
+      const r = await aplicar(c.entrada, contexto(c.entrada, undefined, intentoDe(ids)), crearDeps());
       assert.equal(r.resultado, 'rechazo:ErrorInconsistencia', JSON.stringify(r));
       await sinEscrituraDeDestino(c, antes, 'E11000 en la transacción');
       assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada');
@@ -565,15 +577,15 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
 
     // ---- 3d. intento_id duplicado en el registro independiente (sin plan) y dentro de la transacción ----
     {
-      const c = await sembrar(), ids = [uuid(), uuid(), uuid()]; let n = 0;
+      const c = await sembrar(), ids = [uuid(), uuid(), uuid()];
       await col('intentos_aplicacion').insertOne({ intento_id: ids[0], propuesta_id: uuid(), resultado: 'escritura_abortada' });
       await col('propuestas_cambio').updateOne({ propuesta_id: c.propuestaId }, { $set: { ultimo_evento_id: uuid() } });
-      const r = await aplicar(c.entrada, contexto(c.entrada), crearDeps(() => ({ uuid: () => ids[n++] })));
+      const r = await aplicar(c.entrada, contexto(c.entrada, undefined, intentoDe(ids)), crearDeps());
       assert.equal(r.resultado, 'rechazo:ErrorInconsistencia', `registro independiente duplicado: ${JSON.stringify(r)}`);
       assert.deepEqual(await conteos(c.propuestaId), { intentos: [], historial: 0, eventos: [] });
-      const c2 = await sembrar(), antes2 = await huella(c2), ids2 = [uuid(), uuid(), uuid()]; let m = 0;
+      const c2 = await sembrar(), antes2 = await huella(c2), ids2 = [uuid(), uuid(), uuid()];
       await col('intentos_aplicacion').insertOne({ intento_id: ids2[0], propuesta_id: uuid(), resultado: 'escritura_abortada' });
-      const r2 = await aplicar(c2.entrada, contexto(c2.entrada), crearDeps(() => ({ uuid: () => ids2[m++], insertarEvento: async () => { throw new Error('fallo tras el intento'); } })));
+      const r2 = await aplicar(c2.entrada, contexto(c2.entrada, undefined, intentoDe(ids2)), crearDeps(() => ({ insertarEvento: async () => { throw new Error('fallo tras el intento'); } })));
       assert.equal(r2.resultado, 'rechazo:ErrorInconsistencia', `intento_id ajeno en la transacción: ${JSON.stringify(r2)}`);
       await sinEscrituraDeDestino(c2, antes2, 'intento_id ajeno');
       assert.deepEqual(await conteos(c2.propuestaId), { intentos: [], historial: 0, eventos: [] });
@@ -637,6 +649,166 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c3.propuestaId })).estado, 'cancelada');
     }
 
-    console.log('Aplicador 2.0 (H1): vínculo con la aprobación, CAS, gemelo, conflictos, concurrencia, matchedCount, rollback, reintento, relectura, fecha string y $unset: OK');
+    // ================================================================
+    // H3.1 — inicio durable: sin el inicio exacto no hay ninguna escritura; mismos ids en todo resultado.
+    // ================================================================
+    const inicios = propuestaId => col('inicios_intento_aplicacion').find({ propuesta_id: propuestaId }).toArray();
+    const sinNada = async (c, antes, msg) => {
+      await sinEscrituraDeDestino(c, antes, `${msg}: destino intacto`);
+      assert.deepEqual(await conteos(c.propuestaId), { intentos: [], historial: 0, eventos: [] }, `${msg}: sin intento, historial ni evento`);
+      assert.equal((await col('propuestas_cambio').findOne({ propuesta_id: c.propuestaId })).estado, 'aprobada', `${msg}: propuesta intacta`);
+    };
+    const SECRETOS_INICIO = ['sub-mathias-aplicador', 'oidc_google', 'instantanea', 'mongodb://', 'eyJ'];
+    const sinSecretos = (e, donde) => { const t = `${e?.message}\n${String(e)}`; assert.deepEqual(SECRETOS_INICIO.filter(x => t.includes(x)), [], `${donde}: mensaje sin secretos`); };
+    // Mismos ids e iniciado_en en el inicio y en todo lo que el intento dejó.
+    async function mismosIds(c, r, msg) {
+      const [ini] = await inicios(c.propuestaId);
+      assert.ok(ini && ini.intento_id === r.intento_id, `${msg}: inicio con el intento_id del resultado`);
+      const intento = await col('intentos_aplicacion').findOne({ intento_id: r.intento_id });
+      assert.ok(intento, `${msg}: intento terminado con el mismo id`);
+      assert.equal(intento.iniciado_en.getTime(), ini.iniciado_en.getTime(), `${msg}: iniciado_en conservado`);
+      for (const ev of await col('eventos_propuesta').find({ propuesta_id: c.propuestaId, intento_aplicacion_id: { $exists: true } }).toArray()) {
+        assert.deepEqual([ev.evento_id, ev.intento_aplicacion_id], [ini.evento_id, ini.intento_id], `${msg}: evento con el id reservado`);
+      }
+      const h = await col('historial_cambios').findOne({ propuesta_id: c.propuestaId });
+      if (h) assert.deepEqual([h.historial_id, h.intento_aplicacion_id], [ini.historial_id, ini.intento_id], `${msg}: historial con el id reservado`);
+      return ini;
+    }
+
+    // a) Sin inicio: error controlado y cero escrituras, también donde habría rechazo temprano.
+    for (const [nombre, preparar] of [['aplicable', async () => {}], ['rechazo temprano', async c => col('propuestas_cambio').updateOne({ propuesta_id: c.propuestaId }, { $set: { ultimo_evento_id: uuid() } })]]) {
+      const c = await sembrar(); await preparar(c); const antes = await huella(c);
+      let e = null;
+      try { await V2.aplicarPropuestaV2(c.entrada, contexto(c.entrada), crearDeps()); } catch (x) { e = x; }
+      assert.ok(e instanceof V2.ErrorInicioV2 && e.codigo === 'inicio_ausente', `sin inicio (${nombre}): ${e}`);
+      sinSecretos(e, `sin inicio (${nombre})`);
+      await sinNada(c, antes, `sin inicio (${nombre})`);
+      assert.deepEqual(await inicios(c.propuestaId), [], `sin inicio (${nombre}): el núcleo no lo crea`);
+    }
+
+    // b) Inicio discrepante en cada campo comparado: cero escrituras (insertado sin el modelo, como dato ajeno).
+    for (const [campo, alterar] of [
+      ['version_contrato', d => { delete d.version_contrato; }], ['evento_id', d => { d.evento_id = uuid(); }], ['historial_id', d => { d.historial_id = uuid(); }],
+      ['propuesta_id', d => { d.propuesta_id = uuid(); }], ['hash', d => { d.hash_contenido_referenciado = 'e'.repeat(64); }],
+      ['version_coordinacion_esperada', d => { d.version_coordinacion_esperada = 7; }], ['decision', d => { d.decision_aprobacion_id_esperado = uuid(); }],
+      ['operador', d => { d.operador.identificador = 'otro'; }], ['auditoria', d => { d.auditoria.request_id = uuid(); }],
+      ['proceso_aplicador', d => { d.proceso_aplicador.version = '2'; }], ['adaptador', d => { d.adaptador.version = '9'; }],
+      ['iniciado_en', d => { d.iniciado_en = new Date(T.getTime() + 1); }], ['clave extra', d => { d.proceso = { host: 'h', pid: 1 }; }]
+    ]) {
+      const c = await sembrar(), antes = await huella(c), ctx = contexto(c.entrada);
+      const doc = structuredClone(V2.construirInicioV2(c.entrada, ctx)); alterar(doc);
+      await col('inicios_intento_aplicacion').insertOne(doc);
+      let e = null;
+      try { await V2.aplicarPropuestaV2(c.entrada, ctx, crearDeps()); } catch (x) { e = x; }
+      assert.ok(e instanceof V2.ErrorInicioV2 && e.codigo === 'inicio_discrepante', `inicio con ${campo} distinto: ${e}`);
+      sinSecretos(e, `inicio con ${campo} distinto`);
+      await sinNada(c, antes, `inicio con ${campo} distinto`);
+    }
+
+    // c) Dentro de cada transacción el inicio se verifica con su sesión, también en el reintento del callback.
+    {
+      const c = await sembrar(), ctx = contexto(c.entrada); await iniciar(c.entrada, ctx);
+      const lecturas = []; let vueltas = 0;
+      const transitorio = new MongoServerError({ message: 'transitorio', errmsg: 'transitorio', code: 112, codeName: 'WriteConflict', errorLabels: ['TransientTransactionError'] });
+      const deps = crearDeps(b => ({
+        leerInicio: (id, s) => { lecturas.push(s ? (s.inTransaction() ? 'tx' : 'sesion_sin_tx') : 'sin_sesion'); return b.leerInicio(id, s); },
+        insertarEvento: async (d, s) => { if (++vueltas === 1) throw transitorio; return b.insertarEvento(d, s); }
+      }));
+      const r = await aplicar(c.entrada, ctx, deps);
+      assert.equal(r.resultado, 'exito', JSON.stringify(r));
+      assert.deepEqual(lecturas, ['sin_sesion', 'tx', 'tx'], 'temprano sin sesión y una vez por cada vuelta del callback, con la sesión de la transacción');
+      await mismosIds(c, r, 'éxito tras reintento');
+    }
+
+    // d) El inicio desaparece entre el chequeo temprano y la transacción: el callback lo detecta y no se registra nada.
+    for (const [nombre, opciones] of [['éxito', {}], ['conflicto', (() => { const id = new ObjectId(); return { requisitoId: id, objetivo: checkmig(id), requisitos: [visa(), { ...checkmig(id), notas_internas: 'agregado' }] }; })()]]) {
+      const c = await sembrar(opciones), antes = await huella(c), ctx = contexto(c.entrada); await iniciar(c.entrada, ctx);
+      // En el conflicto el inicio falta solo en la SEGUNDA transacción (la que registra el conflicto).
+      let k = 0;
+      const deps = crearDeps(b => ({ leerInicio: (id, s) => (!s ? b.leerInicio(id, s) : nombre === 'conflicto' && ++k === 1 ? b.leerInicio(id, s) : null) }));
+      let e = null;
+      try { await V2.aplicarPropuestaV2(c.entrada, ctx, deps); } catch (x) { e = x; }
+      assert.ok(e instanceof V2.ErrorInicioV2 && e.codigo === 'inicio_ausente', `inicio ausente en la transacción de ${nombre}: ${e}`);
+      await sinNada(c, antes, `inicio ausente en la transacción de ${nombre}`);
+    }
+
+    // e) Registros independientes: el inicio se verifica antes de escribir el intento abortado.
+    for (const [nombre, leerTarde, esperado] of [
+      ['inicio ausente al registrar', () => null, e => e instanceof V2.ErrorInicioV2 && e.codigo === 'inicio_ausente'],
+      ['relectura del inicio fallida al registrar', () => { throw new MongoNetworkError('sin red mongodb://u:clave@h'); }, e => e instanceof A1.ErrorResultadoIncierto]
+    ]) {
+      const c = await sembrar(), antes = await huella(c), ctx = contexto(c.entrada); await iniciar(c.entrada, ctx);
+      let n = 0;
+      const deps = crearDeps(b => ({
+        ejecutarTransaccion: async () => { throw new Error('fallo antes del commit'); },
+        leerInicio: (id, s) => (++n === 1 ? b.leerInicio(id, s) : leerTarde())
+      }));
+      let e = null;
+      try { await V2.aplicarPropuestaV2(c.entrada, ctx, deps); } catch (x) { e = x; }
+      assert.ok(esperado(e), `${nombre}: ${e?.constructor?.name} ${e?.message}`);
+      sinSecretos(e, nombre);
+      await sinNada(c, antes, nombre);
+    }
+
+    // f) Mismos ids e iniciado_en en cada resultado existente: rechazo temprano, conflicto, abortada, rollback.
+    {
+      const c1 = await sembrar(); await col('propuestas_cambio').updateOne({ propuesta_id: c1.propuestaId }, { $set: { ultimo_evento_id: uuid() } });
+      const r1 = await aplicar(c1.entrada, contexto(c1.entrada), crearDeps());
+      assert.equal(r1.resultado, 'propuesta_no_aplicable'); await mismosIds(c1, r1, 'rechazo temprano');
+      const id = new ObjectId();
+      const c2 = await sembrar({ requisitoId: id, objetivo: checkmig(id), requisitos: [visa(), { ...checkmig(id), notas_internas: 'agregado' }] });
+      const r2 = await aplicar(c2.entrada, contexto(c2.entrada), crearDeps());
+      assert.equal(r2.resultado, 'valor_actual_cambio'); await mismosIds(c2, r2, 'conflicto');
+      const c3 = await sembrar(), ctx3 = contexto(c3.entrada);
+      const r3 = await aplicar(c3.entrada, ctx3, crearDeps(() => ({ insertarEvento: async () => { throw new Error('fallo inyectado'); } })));
+      assert.equal(r3.resultado, 'rechazo:ErrorEscrituraAbortadaV2', JSON.stringify(r3));
+      const abortado = await col('intentos_aplicacion').findOne({ propuesta_id: c3.propuestaId });
+      assert.deepEqual([abortado.intento_id, abortado.resultado, abortado.iniciado_en.getTime()], [ctx3.intento.intento_id, 'escritura_abortada', T.getTime()], 'abortada con el mismo id');
+      assert.equal((await inicios(c3.propuestaId)).length, 1, 'el inicio sobrevive al rollback');
+      const c4 = await sembrar(), ctx4 = contexto(c4.entrada);
+      const r4 = await aplicar(c4.entrada, ctx4, crearDeps());
+      assert.equal(r4.resultado, 'exito'); await mismosIds(c4, r4, 'éxito');
+      assert.deepEqual([r4.intento_id, r4.evento_id, r4.historial_id], [ctx4.intento.intento_id, ctx4.intento.evento_id, ctx4.intento.historial_id], 'resultado con los ids recibidos');
+    }
+
+    // g) Respuesta perdida tras el commit: la relectura confirma solo con el inicio exacto; sin él, no hay confirmación.
+    {
+      const c = await sembrar(), ctx = contexto(c.entrada); await iniciar(c.entrada, ctx);
+      const r = await aplicar(c.entrada, ctx, crearDeps(b => ({ ejecutarTransaccion: async fn => { await b.ejecutarTransaccion(fn); throw new MongoNetworkError('respuesta perdida'); } })));
+      assert.deepEqual([r.resultado, r.confirmado_por_relectura], ['exito', true], JSON.stringify(r));
+      const c2 = await sembrar(), ctx2 = contexto(c2.entrada); await iniciar(c2.entrada, ctx2); let tras = false;
+      const r2 = await aplicar(c2.entrada, ctx2, crearDeps(b => ({
+        ejecutarTransaccion: async fn => { await b.ejecutarTransaccion(fn); tras = true; throw new MongoNetworkError('respuesta perdida'); },
+        leerInicio: (id, s) => (tras ? null : b.leerInicio(id, s))
+      })));
+      assert.equal(r2.resultado, 'rechazo:ErrorInconsistencia', `sin inicio la escritura no se confirma: ${JSON.stringify(r2)}`);
+    }
+
+    // h) Contexto intento inválido: rechazo antes de cualquier lectura o escritura.
+    {
+      const c = await sembrar(), antes = await huella(c), u = uuid();
+      for (const [nombre, intento] of [
+        ['sin intento', undefined], ['ids repetidos', { intento_id: u, evento_id: u, historial_id: uuid(), iniciado_en: T }],
+        ['id no UUID', { intento_id: 'x', evento_id: uuid(), historial_id: uuid(), iniciado_en: T }], ['fecha inválida', { ...intentoDe(), iniciado_en: new Date('x') }],
+        ['fecha como texto', { ...intentoDe(), iniciado_en: T.toISOString() }], ['clave extra', { ...intentoDe(), uuid: 'x' }], ['falta una clave', (({ historial_id, ...r }) => r)(intentoDe())]
+      ]) {
+        const ctx = { ...contexto(c.entrada) }; if (intento === undefined) delete ctx.intento; else ctx.intento = intento;
+        let lecturas = 0;
+        await assert.rejects(V2.aplicarPropuestaV2(c.entrada, ctx, crearDeps(b => ({ verificarIndices: async () => { lecturas++; return b.verificarIndices(); } }))), A1.ErrorEntradaInvalida, nombre);
+        assert.equal(lecturas, 0, `${nombre}: rechazado antes del primer await`);
+      }
+      await sinNada(c, antes, 'contexto intento inválido');
+      // Copia defensiva: cambiar el bloque (y su Date) después de llamar no altera lo usado.
+      const ctx = contexto(c.entrada, undefined, { ...intentoDe(), iniciado_en: new Date(T.getTime()) }); await iniciar(c.entrada, ctx);
+      const original = { ...ctx.intento };
+      // El inicio ya está persistido; un rechazo se vuelve un resultado comparable (falla por aserción).
+      const p = V2.aplicarPropuestaV2(c.entrada, ctx, crearDeps()).catch(e => ({ resultado: `rechazo:${e?.constructor?.name}` }));
+      ctx.intento.intento_id = uuid(); ctx.intento.iniciado_en.setTime(0);
+      const r = await p;
+      assert.deepEqual([r.resultado, r.intento_id], ['exito', original.intento_id], 'ids copiados antes del primer await');
+      assert.equal((await col('intentos_aplicacion').findOne({ intento_id: original.intento_id })).iniciado_en.getTime(), T.getTime(), 'iniciado_en copiado antes del primer await');
+    }
+
+    console.log('Aplicador 2.0 (H1/H3.1): inicio durable obligatorio y mismos ids, vínculo con la aprobación, CAS, gemelo, conflictos, concurrencia, matchedCount, rollback, reintento, relectura, fecha string y $unset: OK');
   } finally { await mongoose.disconnect(); await externo?.close(); await rs?.stop({ doCleanup: true, force: true }); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

@@ -14,9 +14,11 @@
  *
  * Fuera de H1 (dependencias explícitas, no simuladas aquí):
  *  - H3: autenticación y permiso del operador (panel: token + permiso
- *    'aplicar'; CLI: connectionStatus + allowlist), InicioIntento persistido
- *    antes de revalidar, adaptador 2.0 que produce `revalidaciones` y el
- *    registro de intentos por revalidación vencida o fuente cambiada.
+ *    'aplicar'; CLI: connectionStatus + allowlist), orquestación que persiste
+ *    el inicio antes de revalidar (H3.1 deja construirInicioV2/registrarInicioV2
+ *    y exige el inicio exacto antes de toda escritura), adaptador 2.0 que
+ *    produce `revalidaciones` y el registro de intentos por revalidación
+ *    vencida o fuente cambiada.
  *    H1 recibe una auditoría ya resuelta por esa capa y solo valida su forma;
  *    nunca toma identidades del cuerpo HTTP.
  *
@@ -63,6 +65,25 @@ class ErrorEscrituraAbortadaV2 extends Error {
     this.intento_id = ctx.intento_id;
     this.propuesta_id = ctx.propuesta_id;
     this.resultado = 'escritura_abortada';
+  }
+}
+// H3.1: sin el inicio persistido que corresponde a este intento no se escribe nada.
+// Mensaje fijo: nunca incluye la auditoría ni el documento leído.
+class ErrorInicioV2 extends Error {
+  constructor(codigo, ctx) {
+    super(`aplicarPropuestaV2: ${codigo === 'inicio_ausente' ? 'no existe el inicio del intento' : 'el inicio persistido no corresponde a este intento'} ${ctx.intento_id}; no se escribe nada.`);
+    this.codigo = codigo;
+    this.intento_id = ctx.intento_id;
+    this.propuesta_id = ctx.propuesta_id;
+  }
+}
+// H3.1: no se pudo confirmar que el inicio quedó persistido; no continuar hacia fuentes ni escrituras.
+class ErrorInicioInciertoV2 extends Error {
+  constructor(inicio, causa, extras = {}) {
+    super(`registrarInicioV2: no se puede confirmar el inicio del intento ${inicio.intento_id} (propuesta ${inicio.propuesta_id}); no continuar ni reintentar con otro id.`, { cause: causa });
+    this.intento_id = inicio.intento_id;
+    this.propuesta_id = inicio.propuesta_id;
+    Object.assign(this, extras);
   }
 }
 // Centinelas internos: el callback los lanza y la transacción aborta con certeza.
@@ -169,6 +190,26 @@ function base(ctx) {
   };
 }
 
+// Pura. El inicio 2.0 que corresponde a este intento (InicioIntentoAplicacion con
+// version_contrato '2.0'): reserva los tres ids y fija todo el contexto de escritura.
+function inicioDesdeCtx(ctx) {
+  return {
+    version_contrato: VERSION_CONTRATO, intento_id: ctx.intento_id, evento_id: ctx.evento_id, historial_id: ctx.historial_id,
+    propuesta_id: ctx.propuesta_id, hash_contenido_referenciado: ctx.hash_esperado, version_coordinacion_esperada: ctx.version_esperada,
+    decision_aprobacion_id_esperado: ctx.decision_aprobacion_id_esperado, operador: { ...ctx.operador }, auditoria: ctx.auditoria,
+    proceso_aplicador: { ...PROCESO_APLICADOR_V2 }, adaptador: { ...ctx.adaptador }, iniciado_en: new Date(ctx.iniciado_en.getTime())
+  };
+}
+
+const coincideInicio = (leido, esperado) => canonico(normalizarBson(sinMetadatos(leido))) === canonico(normalizarBson(esperado));
+
+// Antes de CUALQUIER escritura (con la sesión de la transacción dentro de ella).
+async function verificarInicioV2(ctx, session, deps) {
+  const leido = await deps.leerInicio(ctx.intento_id, session);
+  if (!leido) throw new ErrorInicioV2('inicio_ausente', ctx);
+  if (!coincideInicio(leido, ctx.inicio_esperado)) throw new ErrorInicioV2('inicio_discrepante', ctx);
+}
+
 function construirIntentoV2(ctx, r) {
   const doc = {
     intento_id: ctx.intento_id, ...base(ctx),
@@ -232,6 +273,8 @@ function diferenciasConfirmadaV2(esperado, leido, ids) {
     const ideal = campo === 'updatedAt' ? instante(valor) : valor;
     if (real !== ideal) diffs.push(`propuesta.${campo}=${JSON.stringify(real)} (esperado ${JSON.stringify(ideal)})`);
   }
+  // H3.1: la confirmación exige también el inicio exacto del mismo intento.
+  if (esperado.inicio !== undefined) compararDocumento(diffs, 'inicio', leido.inicio, esperado.inicio);
   compararDocumento(diffs, 'evento', leido.evento, esperado.evento);
   compararDocumento(diffs, 'intento', leido.intento, esperado.intento);
   compararDocumento(diffs, 'historial', leido.historial, esperado.historial);
@@ -247,11 +290,11 @@ function diferenciasConfirmadaV2(esperado, leido, ids) {
 }
 
 async function releer(ctx, deps) {
-  const [propuesta, evento, intento, historial, destino] = await Promise.all([
+  const [propuesta, evento, intento, historial, destino, inicio] = await Promise.all([
     deps.leerPropuesta(ctx.propuesta_id, null), deps.leerEvento(ctx.evento_id, null), deps.leerIntento(ctx.intento_id),
-    deps.leerHistorial(ctx.historial_id), deps.leerDestino({ _id: ctx.ids.destino_id }, null)
+    deps.leerHistorial(ctx.historial_id), deps.leerDestino({ _id: ctx.ids.destino_id }, null), deps.leerInicio(ctx.intento_id, null)
   ]);
-  return { propuesta, evento, intento, historial, destino };
+  return { propuesta, evento, intento, historial, destino, inicio };
 }
 
 const esDuplicadoIntento = err => { const d = indiceDuplicado(err); return d !== null && d.coleccion === 'intentos_aplicacion' && d.indice === 'intento_id_1'; };
@@ -259,6 +302,11 @@ const esDuplicadoIntento = err => { const d = indiceDuplicado(err); return d !==
 // Insert independiente de un intento terminado (fuera de transacción).
 // E11000 de intento_id con plan: el commit del plan pudo ocurrir → se relee.
 async function registrarIndependiente(ctx, doc, deps, plan, errOriginal = null) {
+  try { await verificarInicioV2(ctx, null, deps); }
+  catch (err) {
+    if (err instanceof ErrorInicioV2) throw err;
+    throw new ErrorResultadoIncierto(ctx, `no se pudo verificar el inicio antes de registrar ${doc.resultado}.`, errOriginal ?? err, { error_relectura: err });
+  }
   try { await deps.insertarIntentoIndependiente(doc); return { doc }; }
   catch (err) {
     if (esDuplicadoIntento(err) && !plan) throw new ErrorInconsistencia(`E11000 al registrar ${doc.resultado}: ya existe otro intento con el intento_id ${ctx.intento_id}.`);
@@ -296,7 +344,7 @@ async function escribirConConfirmacionV2(ctx, plan, deps) {
   } catch (e) { err = e; }
 
   // Lanzados por el callback: la transacción abortó con certeza.
-  if (err instanceof ErrorNoAplicableV2 || err instanceof ErrorConflictoV2 || err instanceof ErrorRevalidacionV2) throw err;
+  if (err instanceof ErrorNoAplicableV2 || err instanceof ErrorConflictoV2 || err instanceof ErrorRevalidacionV2 || err instanceof ErrorInicioV2) throw err;
   if (err instanceof ErrorInconsistencia) {
     err.intento_id = ctx.intento_id;
     await registrarIndependiente(ctx, plan.docAbortado('inconsistencia', deps.ahora()), deps, plan, err);
@@ -346,10 +394,11 @@ function planExitoV2(ctx, entrada, revalidaciones, payload, plan, deps) {
   const evento = construirEventoV2(ctx, 'aplicacion', 'exito', null);
   return {
     nombre: 'exito',
-    esperado: { propuesta: esperadoPropuesta(ctx, 'aplicacion'), evento, intento, historial,
+    esperado: { inicio: ctx.inicio_esperado, propuesta: esperadoPropuesta(ctx, 'aplicacion'), evento, intento, historial,
       requisito: resultadoEsperado(payload, plan.fecha_verificacion), destino_updatedAt: ctx.t },
     documentos: [['validarHistorial', historial], ['validarIntento', intento], ['validarEvento', evento]],
     cuerpo: async session => {
+      await verificarInicioV2(ctx, session, deps);
       // Relectura y validación completas dentro de la transacción.
       const p = await deps.leerPropuesta(ctx.propuesta_id, session);
       if (!p) throw new ErrorNoAplicableV2([{ codigo: 'propuesta_inexistente', detalle: {} }]);
@@ -385,9 +434,10 @@ function planConflictoV2(ctx, clasificacion, deps) {
   const evento = construirEventoV2(ctx, tipoEvento, clasificacion.resultado, motivo);
   return {
     nombre: clasificacion.resultado,
-    esperado: { propuesta: esperadoPropuesta(ctx, tipoEvento), evento, intento, historial: null, requisito: null },
+    esperado: { inicio: ctx.inicio_esperado, propuesta: esperadoPropuesta(ctx, tipoEvento), evento, intento, historial: null, requisito: null },
     documentos: [['validarIntento', intento], ['validarEvento', evento]],
     cuerpo: async session => {
+      await verificarInicioV2(ctx, session, deps);
       await casPropuesta(ctx, tipoEvento, session, deps);
       await deps.insertarIntento(structuredClone(intento), session);
       await deps.insertarEvento(structuredClone(evento), session);
@@ -406,11 +456,15 @@ function planConflictoV2(ctx, clasificacion, deps) {
 /**
  * entrada: los 5 campos del 1.0 (nunca payload ni identidades).
  * contexto.auditoria: resuelta por la capa autenticada (H3); aquí solo se valida su forma.
+ * contexto.intento: { intento_id, evento_id, historial_id, iniciado_en } generados UNA vez por
+ *   el llamador, que ya persistió su inicio (registrarInicioV2) antes de consultar fuentes.
  * contexto.revalidaciones: producidas por el adaptador 2.0 (H3) ANTES de llamar.
  */
-async function aplicarPropuestaV2(entrada, contexto, deps) {
-  validarEntrada(entrada);
-  if (!esObjeto(contexto) || Object.keys(contexto).sort().join(',') !== 'adaptador,auditoria,revalidaciones') throw new ErrorEntradaInvalida('aplicarPropuestaV2: contexto debe tener solo adaptador, auditoria y revalidaciones.');
+// Pura. Valida el contexto interno y devuelve copias defensivas (antes de cualquier await).
+function validarContextoV2(entrada, contexto) {
+  if (!esObjeto(contexto) || Object.keys(contexto).sort().join(',') !== 'adaptador,auditoria,intento,revalidaciones') {
+    throw new ErrorEntradaInvalida('aplicarPropuestaV2: contexto debe tener solo adaptador, auditoria, intento y revalidaciones.');
+  }
   // Interno: la selección autenticada del adaptador real es de H3; aquí no hay default.
   const a = contexto.adaptador;
   if (!esObjeto(a) || Object.keys(a).sort().join(',') !== 'nombre,version' || !NOMBRE_TECNICO.test(a.nombre) || !NOMBRE_TECNICO.test(a.version)) {
@@ -419,13 +473,57 @@ async function aplicarPropuestaV2(entrada, contexto, deps) {
   let auditoria;
   try { auditoria = validarAuditoria(contexto.auditoria, entrada); }
   catch { throw new ErrorEntradaInvalida('aplicarPropuestaV2: auditoría inválida.'); }
-  const revalidaciones = contexto.revalidaciones;
-  await deps.verificarIndices();
+  // Los ids e iniciado_en los fija el llamador una sola vez: nunca se regeneran ni tienen default.
+  const i = contexto.intento;
+  if (!esObjeto(i) || Object.getPrototypeOf(i) !== Object.prototype || Object.keys(i).sort().join(',') !== 'evento_id,historial_id,iniciado_en,intento_id') {
+    throw new ErrorEntradaInvalida('aplicarPropuestaV2: intento debe tener solo intento_id, evento_id, historial_id e iniciado_en.');
+  }
+  const ids = [i.intento_id, i.evento_id, i.historial_id];
+  if (!ids.every(u => typeof u === 'string' && UUID.test(u)) || new Set(ids).size !== 3) throw new ErrorEntradaInvalida('aplicarPropuestaV2: intento con UUIDs inválidos o repetidos.');
+  if (!(i.iniciado_en instanceof Date) || Number.isNaN(i.iniciado_en.getTime())) throw new ErrorEntradaInvalida('aplicarPropuestaV2: intento.iniciado_en inválido.');
+  return {
+    adaptador: { nombre: a.nombre, version: a.version }, auditoria, revalidaciones: contexto.revalidaciones,
+    intento: Object.freeze({ intento_id: ids[0], evento_id: ids[1], historial_id: ids[2], iniciado_en: new Date(i.iniciado_en.getTime()) })
+  };
+}
 
-  // Una sola vez: todo reintento reutiliza exactamente estos valores.
-  const generados = [deps.uuid(), deps.uuid(), deps.uuid()];
-  if (!generados.every(u => typeof u === 'string' && UUID.test(u)) || new Set(generados).size !== 3) throw new Error('deps.uuid() no devolvió UUIDs distintos.');
-  const iniciadoEn = deps.ahora();
+// Pura. Inicio 2.0 que el llamador debe persistir con registrarInicioV2 antes de consultar fuentes.
+function construirInicioV2(entrada, contexto) {
+  validarEntrada(entrada);
+  const c = validarContextoV2(entrada, contexto);
+  return inicioDesdeCtx({
+    propuesta_id: entrada.propuesta_id, hash_esperado: entrada.payload_hash_esperado, version_esperada: entrada.version_coordinacion_esperada,
+    decision_aprobacion_id_esperado: entrada.decision_aprobacion_id_esperado, ...c.intento, auditoria: c.auditoria,
+    operador: { tipo: 'humano', identificador: c.auditoria.operador }, adaptador: c.adaptador
+  });
+}
+
+const esDuplicadoInicio = err => { const d = indiceDuplicado(err); return d !== null && d.coleccion === 'inicios_intento_aplicacion' && d.indice === 'intento_id_1'; };
+
+/**
+ * Inserta el inicio (independiente, majority) y solo lo da por confirmado si se insertó o si
+ * la relectura encuentra EXACTAMENTE el mismo documento. Un E11000 por sí solo no confirma:
+ * otro inicio con ese id es inconsistencia; sin poder releer o sin encontrarlo, incertidumbre.
+ * Nunca sobrescribe, genera otro id ni reintenta.
+ */
+async function registrarInicioV2(inicio, deps) {
+  try { await deps.validarInicio(inicio); }
+  catch (e) { throw new ErrorEntradaInvalida(`registrarInicioV2: inicio inválido (${Object.keys(e?.errors ?? {}).join(', ') || e?.name}).`); }
+  let errInsertar;
+  try { await deps.insertarInicio(structuredClone(inicio)); return { confirmado: true, causa_relectura: null }; }
+  catch (e) { errInsertar = e; }
+  let leido;
+  try { leido = await deps.leerInicio(inicio.intento_id, null); }
+  catch (errRelectura) { throw new ErrorInicioInciertoV2(inicio, errInsertar, { error_relectura: errRelectura }); }
+  if (leido && coincideInicio(leido, inicio)) return { confirmado: true, causa_relectura: esDuplicadoInicio(errInsertar) ? 'duplicado' : 'error_insercion' };
+  if (leido) throw new ErrorInconsistencia(`registrarInicioV2: ya existe otro inicio con el intento_id ${inicio.intento_id}; no se sobrescribe.`);
+  throw new ErrorInicioInciertoV2(inicio, errInsertar);
+}
+
+async function aplicarPropuestaV2(entrada, contexto, deps) {
+  validarEntrada(entrada);
+  const { adaptador: a, auditoria, revalidaciones, intento } = validarContextoV2(entrada, contexto);
+  await deps.verificarIndices();
 
   // ---- Etapa 0, solo lectura, fuera de la transacción ----
   const propuesta = await deps.leerPropuesta(entrada.propuesta_id, null);
@@ -436,7 +534,7 @@ async function aplicarPropuestaV2(entrada, contexto, deps) {
   const ctx = {
     propuesta_id: entrada.propuesta_id, hash_esperado: entrada.payload_hash_esperado, version_esperada: entrada.version_coordinacion_esperada,
     decision_aprobacion_id_esperado: entrada.decision_aprobacion_id_esperado,
-    intento_id: generados[0], evento_id: generados[1], historial_id: generados[2], iniciado_en: iniciadoEn, t, ids, auditoria,
+    intento_id: intento.intento_id, evento_id: intento.evento_id, historial_id: intento.historial_id, iniciado_en: intento.iniciado_en, t, ids, auditoria,
     operador: { tipo: 'humano', identificador: auditoria.operador }, identidad_operador: { ...auditoria.identidad },
     adaptador: { nombre: a.nombre, version: a.version },
     // Aprobador y aplicador se conservan por separado aunque sean la misma persona.
@@ -445,6 +543,9 @@ async function aplicarPropuestaV2(entrada, contexto, deps) {
       ocurrido_en: evento.ocurrido_en ?? null } : null,
     revalidaciones_resumen: null
   };
+  ctx.inicio_esperado = inicioDesdeCtx(ctx);
+  // Antes de cualquier escritura, incluido el rechazo temprano: sin el inicio exacto no se sigue.
+  await verificarInicioV2(ctx, null, deps);
   const fallas = verificarPrecondicionesV2(entrada, propuesta, evento);
   let construido;
   if (!fallas.length) {
@@ -486,7 +587,8 @@ function dependenciasDestino(coleccion) {
 }
 
 module.exports = {
-  PROCESO_APLICADOR_V2, ACTOR_SISTEMA_V2, ErrorRevalidacionV2, ErrorEscrituraAbortadaV2,
+  PROCESO_APLICADOR_V2, ACTOR_SISTEMA_V2, ErrorRevalidacionV2, ErrorEscrituraAbortadaV2, ErrorInicioV2, ErrorInicioInciertoV2,
+  construirInicioV2, registrarInicioV2,
   verificarIndicesV2, verificarPrecondicionesV2, clasificarRequisitoV2, resultadoEsperado, diferenciasConfirmadaV2,
   construirIntentoV2, construirHistorialV2, construirEventoV2, dependenciasDestino, aplicarPropuestaV2,
   INDICE_TRANSVERSAL

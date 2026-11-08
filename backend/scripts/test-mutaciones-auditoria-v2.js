@@ -8,6 +8,8 @@ const H = path.join(__dirname, '../models/propuestas/HistorialCambio.model.js');
 const P = path.join(__dirname, '../services/propuestas/persistencia-aplicacion-v2.js');
 const E = path.join(__dirname, '../models/propuestas/EventoPropuesta.model.js');
 const L = path.join(__dirname, '../services/panel/lectura-propuestas.js');
+const IN = path.join(__dirname, '../models/propuestas/InicioIntentoAplicacion.model.js');
+const V = path.join(__dirname, '../services/propuestas/aplicar-propuesta-v2.js');
 const ESQUEMA = 'test-modelos-auditoria-v2.js', PERSIST = 'test-persistencia-aplicacion-v2.js';
 const mutaciones = [
   ['intento: versión 2.0 nunca reconocida', I, ESQUEMA, "const esV2 = (doc) => doc.version_contrato === '2.0';", 'const esV2 = (doc) => false;'],
@@ -67,6 +69,21 @@ const mutaciones = [
   ["lector: rama 2.0 para cualquier tipo (decisiones 2.0)", L, PERSIST, "  const v2 = e.detalle?.version_contrato === '2.0' && TIPOS_AUDITORIA_V2.includes(e.tipo_evento);", "  const v2 = e.detalle?.version_contrato === '2.0';"],
   ["lector: sin allowlist de origen", L, PERSIST, "    origen: ORIGENES_CONOCIDOS.includes(origen) ? origen : null,", "    origen: origen ?? null,"],
   ["lector: proyección sin la hoja de comando de la auditoría", L, PERSIST, "  'detalle.auditoria.comando.nombre': 1,\n", ""],
+  ["inicio: versión 2.0 nunca reconocida", IN, ESQUEMA, "const esV2 = (doc) => doc.version_contrato === '2.0';", "const esV2 = (doc) => false;"],
+  ["inicio: acepta versiones desconocidas", IN, ESQUEMA, "version_contrato: { type: String, enum: VERSIONES_CONTRATO, immutable: true },", "version_contrato: { type: String, immutable: true },"],
+  ["inicio: 1.0 admite campos 2.0", IN, ESQUEMA, "    if (mezclados.length) throw new Error(`inicios_intento_aplicacion: un documento 1.0", "    if (false) throw new Error(`inicios_intento_aplicacion: un documento 1.0"],
+  ["inicio: 1.0 con el proceso 2.0", IN, ESQUEMA, "    if (this.proceso_aplicador?.nombre === PROCESO_V2.nombre) throw", "    if (false) throw"],
+  ["inicio: 2.0 admite proceso host/pid", IN, ESQUEMA, "  if (mezclados.length) falla2(`campos exclusivos del 1.0", "  if (false) falla2(`campos exclusivos del 1.0"],
+  ["inicio: ids repetidos", IN, ESQUEMA, "  if (new Set([doc.intento_id, doc.evento_id, doc.historial_id]).size !== 3) falla2(", "  if (false) falla2("],
+  ["inicio: proceso de cualquier aplicador", IN, ESQUEMA, "  if (doc.proceso_aplicador?.nombre !== PROCESO_V2.nombre || doc.proceso_aplicador?.version !== PROCESO_V2.version) falla2(", "  if (false) falla2("],
+  ["inicio: adaptador libre", IN, ESQUEMA, "  if (!NOMBRE_TECNICO.test(doc.adaptador?.nombre ?? '') || !NOMBRE_TECNICO.test(doc.adaptador?.version ?? '')) falla2(", "  if (false) falla2("],
+  ["inicio: operador sin coherencia", IN, ESQUEMA, "  if (doc.operador?.identificador !== a.operador) falla2(", "  if (false) falla2("],
+  ["inicio: instantánea sin comparar", IN, ESQUEMA, "  if (s && (s.propuesta_id !== doc.propuesta_id", "  if (false && (s.propuesta_id !== doc.propuesta_id"],
+  ["registrarInicioV2: colisión confirmada sin comparar", V, PERSIST, "  if (leido && coincideInicio(leido, inicio)) return", "  if (leido) return"],
+  ["registrarInicioV2: incertidumbre tomada como confirmación", V, PERSIST, "  throw new ErrorInicioInciertoV2(inicio, errInsertar);\n}", "  return { confirmado: true, causa_relectura: 'supuesto' };\n}"],
+  ["registrarInicioV2: relectura fallida tomada como confirmación", V, PERSIST, "  catch (errRelectura) { throw new ErrorInicioInciertoV2(inicio, errInsertar, { error_relectura: errRelectura }); }", "  catch (errRelectura) { return { confirmado: true, causa_relectura: 'supuesto' }; }"],
+  ["registrarInicioV2: sin validar con el modelo", V, PERSIST, "  try { await deps.validarInicio(inicio); }\n", "  try { }\n"],
+  ["persistencia: inicio sin el modelo de inicio", P, ESQUEMA, "    validarInicio: (doc) => nuevo(InicioIntentoAplicacion, doc).validate(),", "    validarInicio: async () => {},"],
   ["lector: expone identidad_operador del evento", L, PERSIST, "    metodo_identidad: METODOS_CONOCIDOS.includes(metodo) ? metodo : null,", "    metodo_identidad: METODOS_CONOCIDOS.includes(metodo) ? metodo : null, identidad_operador: e.detalle?.identidad_operador,"],
 ];
 function correr(m, suite) {

@@ -30,6 +30,16 @@ const mutaciones = [
   ['omite precondiciones dentro de la transacción', '      if (fallas.length) throw new ErrorNoAplicableV2(fallas);\n      const vigente', '      const vigente'],
   ['H2.1: omite la validación previa con los modelos', '  await validarDocumentos(plan, deps);\n', ''],
   ['H2.1: error de red sin código propio', "  if (RED.includes(err?.name)) return 'red';\n", ''],
+  ['H3.1: sin chequeo temprano del inicio', '  await verificarInicioV2(ctx, null, deps);\n  const fallas', '  const fallas'],
+  ['H3.1: transacción de éxito sin verificar el inicio', '      await verificarInicioV2(ctx, session, deps);\n      // Relectura y validación completas', '      // Relectura y validación completas'],
+  ['H3.1: transacción de conflicto sin verificar el inicio', '      await verificarInicioV2(ctx, session, deps);\n      await casPropuesta(ctx, tipoEvento', '      await casPropuesta(ctx, tipoEvento'],
+  ['H3.1: inicio de la transacción leído sin su sesión', '      await verificarInicioV2(ctx, session, deps);\n      // Relectura y validación completas', '      await verificarInicioV2(ctx, null, deps);\n      // Relectura y validación completas'],
+  ['H3.1: registro independiente sin verificar el inicio', '  try { await verificarInicioV2(ctx, null, deps); }\n  catch (err) {\n    if (err instanceof ErrorInicioV2) throw err;', '  try { }\n  catch (err) {\n    if (err instanceof ErrorInicioV2) throw err;'],
+  ['H3.1: inicio fallido en la transacción se registra', ' || err instanceof ErrorRevalidacionV2 || err instanceof ErrorInicioV2) throw err;', ' || err instanceof ErrorRevalidacionV2) throw err;'],
+  ['H3.1: inicio discrepante aceptado', "  if (!coincideInicio(leido, ctx.inicio_esperado)) throw new ErrorInicioV2('inicio_discrepante', ctx);\n", ''],
+  ['H3.1: confirmación sin comparar el inicio', "  if (esperado.inicio !== undefined) compararDocumento(diffs, 'inicio', leido.inicio, esperado.inicio);\n", ''],
+  ['H3.1: iniciado_en sin copia defensiva', 'iniciado_en: new Date(i.iniciado_en.getTime()) })', 'iniciado_en: i.iniciado_en })'],
+  ['H3.1: ids repetidos admitidos', ' || new Set(ids).size !== 3) throw new ErrorEntradaInvalida', ') throw new ErrorEntradaInvalida'],
   ['H2.2: el evento copia al aprobador', 'adaptador: { ...ctx.adaptador }, decision_aprobacion_id: ctx.decision_aprobacion_id_esperado },', 'adaptador: { ...ctx.adaptador }, decision_aprobacion_id: ctx.decision_aprobacion_id_esperado, aprobacion: ctx.aprobacion },'],
   ['H2.1: transición por fallo sin resultado_no_registrado', "resultado_no_registrado: clasificacion.resultado,\n      finalizado_en: fin", 'finalizado_en: fin']
 ];

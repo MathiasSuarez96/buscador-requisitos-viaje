@@ -1,4 +1,4 @@
-# Aplicador 2.0 — H1 (servicio aislado), H2.1 (persistencia de auditoría) y H2.2 (evento)
+# Aplicador 2.0 — H1 (servicio aislado), H2.1 (persistencia de auditoría), H2.2 (evento) y H3.1 (inicio)
 
 Estado: servicio local `services/propuestas/aplicar-propuesta-v2.js`, probado solo en
 Mongo efímero con replica set. **No es un flujo operativo**: no tiene rutas, CLI ni
@@ -129,6 +129,84 @@ error original (comprobado con Mongoose 9.9.4 y Mongo 8.0.32 efímero).
   versión de contrato del evento agregaría campos a todos los eventos de la respuesta.
   `esReenvioIdentico` (reenvío del panel) sigue siendo solo 1.0; el reenvío 2.0 es de H3.
 
+## H3.1 — Inicio durable del intento 2.0
+
+Alcance: modelo, persistencia y adaptación del núcleo. **No es el flujo completo**: no hay
+orquestador, adaptador 2.0, clasificador de fuentes, resultados nuevos de revalidación,
+CLI, rutas ni contrato HTTP. El aplicador sigue aislado, el registro 2.0 cerrado, y el
+inicio no reemplaza la autenticación ni el permiso del operador (pendientes del orquestador).
+
+### Forma del inicio (`InicioIntentoAplicacion`, `version_contrato: '2.0'`)
+
+```
+{ version_contrato: '2.0',
+  intento_id, evento_id, historial_id,        // UUID distintos: los tres ids del intento quedan reservados acá
+  propuesta_id, hash_contenido_referenciado,  // hash esperado de la entrada (el aprobado)
+  version_coordinacion_esperada, decision_aprobacion_id_esperado,
+  operador: { tipo: 'humano', identificador },  // = auditoria.operador
+  auditoria,                                    // obligatoria (validarAuditoria); si es del panel, su instantánea = estos campos
+  proceso_aplicador: { nombre: 'aplicar-propuesta-v2', version: '1' },
+  adaptador: { nombre, version },               // nombres técnicos
+  iniciado_en: Date }
+```
+
+- Sin `version_contrato` rigen las reglas 1.0 (también históricos sin auditoría). Sin default
+  de versión ni migración; versión desconocida rechazada.
+- Mezclas rechazadas: un 1.0 con `evento_id`, `historial_id` o `decision_aprobacion_id_esperado`,
+  o con el proceso 2.0; un 2.0 con `proceso` (host/pid). En 2.0 no se guarda `proceso` para que el
+  núcleo pueda comparar el registro completo (si el orquestador lo necesita, se decidirá ahí).
+- Append-only, sin índices nuevos ni cambios de `autoIndex` (usa `intento_id_1` existente).
+
+### Persistencia
+
+- `validarInicio`, `insertarInicio` (independiente, `writeConcern` majority, nunca en una
+  transacción) y `leerInicio(intento_id, session?)` (nativo; con la sesión dentro de una
+  transacción). Mismas garantías que H2.1: instancia nueva, modelo y hooks reales, strict,
+  comparación tipada, tipos no persistibles rechazados.
+- `construirInicioV2(entrada, contexto)` (pura) produce el inicio exacto que el núcleo espera.
+- `registrarInicioV2(inicio, deps)`:
+  - insertado → confirmado;
+  - error al insertar (incluido E11000) → relee: el **mismo documento completo** confirma
+    (`causa_relectura: 'duplicado' | 'error_insercion'`); otro documento con ese id →
+    `ErrorInconsistencia`; relectura fallida o sin documento → `ErrorInicioInciertoV2`.
+  - Nunca sobrescribe, genera otro id ni reintenta. Mientras el inicio no esté confirmado, el
+    llamador no debe consultar fuentes ni llamar al núcleo.
+  - Mensajes públicos sin la causa ni la auditoría.
+
+### Núcleo (`aplicarPropuestaV2`)
+
+- `contexto` = exactamente `{ adaptador, auditoria, intento, revalidaciones }` con
+  `intento = { intento_id, evento_id, historial_id, iniciado_en }`: UUID distintos, `Date`
+  válido, copiados antes del primer `await`. El núcleo ya no genera ids (`deps.uuid` no se usa).
+- El inicio persistido se compara completo (versión, ids, propuesta, hash, versión de
+  coordinación, decisión, operador, auditoría, proceso, adaptador, `iniciado_en`) contra el
+  esperado:
+  - temprano, antes de las precondiciones (también antes del rechazo temprano);
+  - dentro de cada transacción (éxito y conflicto) con su sesión, en cada vuelta del callback;
+  - antes de cada registro independiente (rechazo, CAS perdido, escritura abortada,
+    inconsistencia);
+  - en la relectura de confirmación: sin el inicio exacto no se confirma nada.
+- Sin inicio o con discrepancias: `ErrorInicioV2` (`inicio_ausente` | `inicio_discrepante`),
+  mensaje fijo, cero escrituras en destinos, propuestas, historial, eventos o intentos. Si la
+  verificación previa a un registro independiente no puede leerse: `ErrorResultadoIncierto`
+  sin registrar.
+- Mismos ids e `iniciado_en` en inicio, intento terminado, evento e historial en éxito,
+  conflicto, rechazo temprano, CAS perdido, escritura abortada, reintento del callback y
+  relectura de confirmación. Un intento ya registrado conserva las garantías existentes: un
+  E11000 de intento_id no confirma sin la relectura completa.
+
+### Límites
+
+- `writeConcern` majority del inicio no se puede probar con un solo nodo: las pruebas
+  comprueban el insert independiente y fuera de la transacción, no la replicación.
+- Leer el inicio sin la sesión dentro de la transacción es equivalente en comportamiento (el
+  inicio es inmutable y anterior); la prueba lo cubre por estructura (registro de lecturas).
+- Para bloques posteriores (no implementados): una revalidación vencida no vuelve obsoleta una
+  propuesta; superar un plazo indica posible interrupción, no terminación; una respuesta
+  inválida del adaptador se distingue de una caída de la fuente; evidencia normalizada,
+  motivos de red y límites de respuesta se definirán con el prototipo de solo lectura de
+  Colombia, antes de cerrar el contrato del adaptador (H3.2).
+
 ## Errores y datos del llamador
 
 - Los mensajes públicos de error pasan por `sanearMensaje`, pero `cause` (y los extras
@@ -153,8 +231,8 @@ error original (comprobado con Mongoose 9.9.4 y Mongo 8.0.32 efímero).
   importado de `scripts/preparar-indice-transversal.js` (mutable y compartido con el
   ejecutor del índice ya revisado).
 - Decidir si el panel muestra más datos del evento de aplicación (ver H2.2) junto con la API de H3.
-- H3: autenticación y permiso del operador (H1 solo valida la forma de la auditoría ya
-  resuelta), selección autenticada del adaptador, InicioIntento antes de revalidar,
+- H3 (resto): autenticación y permiso del operador (H1 solo valida la forma de la auditoría ya
+  resuelta), selección autenticada del adaptador, orquestación del inicio (H3.1 lo deja listo),
   adaptador 2.0 que produce `revalidaciones`, registro de intentos por revalidación
   vencida o fuente cambiada, orquestación y CLI.
 - Contrato HTTP del panel al terminar H3. Índice transversal en Atlas: sin él, el servicio
