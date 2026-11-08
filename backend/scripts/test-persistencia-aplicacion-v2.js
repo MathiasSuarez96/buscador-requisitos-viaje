@@ -114,6 +114,23 @@ const transitorio = () => new MongoServerError({ message: 'transitorio', errmsg:
     await assert.rejects(P.insertarIntentoIndependiente({ ...d6.abortada, revalidaciones: undefined, etapa_fallo: 'escritura_aplicacion' }), undefined, 'abortada sin revalidaciones');
     assert.equal(await col('intentos_aplicacion').countDocuments({ propuesta_id: d6.propuesta }), 0, 'ningún documento inválido persistido');
 
+    // 6b. Mixed: una función anidada (Mongoose la conserva, Mongo la descartaría) o un undefined desconocido
+    // se rechazan antes de escribir, en la transacción y fuera de ella; los tipos legítimos se guardan con su tipo.
+    const d6b = documentos();
+    const conflictoDe = detalle => ({ ...d6b.abortada, intento_id: uuid(), etapa_fallo: 'transicion_por_fallo', resultado_no_registrado: 'valor_actual_cambio',
+      conflicto: { categoria: 'claves_desconocidas', detalle } });
+    const conFuncion = conflictoDe({ dato: 'conservar', evidencia: () => 'dato perdido' });
+    await assert.rejects(P.insertarIntentoIndependiente(conFuncion), e => e?.name === 'StrictModeError' && /tipos no persistibles/.test(e.message), 'función anidada: independiente');
+    await assert.rejects(tx(s => P.insertarIntento(conflictoDe({ dato: 'conservar', evidencia: () => 'x' }), s)), e => e?.name === 'StrictModeError', 'función anidada: en transacción');
+    await assert.rejects(P.insertarIntentoIndependiente(conflictoDe({ dato: 'conservar', extra: undefined })), e => e?.name === 'StrictModeError', 'undefined en Mixed');
+    await assert.rejects(P.insertarIntentoIndependiente({ ...d6b.abortada, intento_id: uuid(), revalidaciones: [{ ...d6b.abortada.revalidaciones[0], intruso: undefined }] }), e => e?.name === 'StrictModeError', 'undefined desconocido anidado');
+    assert.equal(await col('intentos_aplicacion').countDocuments({ propuesta_id: d6b.propuesta }), 0, 'ninguna escritura de los rechazados');
+    const legitimo = conflictoDe({ visto_en: T, destino: new ObjectId(), 'a.b': 1, vacio: {}, lista: [1, 'x', null], decimal: 1.5, bandera: false, nulo: null });
+    await P.insertarIntentoIndependiente(legitimo);
+    const guardado = (await col('intentos_aplicacion').findOne({ intento_id: legitimo.intento_id })).conflicto.detalle;
+    assert.ok(guardado.visto_en instanceof Date && guardado.destino instanceof ObjectId, 'Date y ObjectId conservan su tipo BSON');
+    assert.deepEqual(comparable(guardado), comparable(legitimo.conflicto.detalle), 'Mixed legítimo guardado completo');
+
     // 7. Un 1.0 guardado por el modelo no gana campos 2.0 ni [] implícitos.
     const IntentoAplicacion = mongoose.model('IntentoAplicacion');
     const ctx1 = { intento_id: uuid(), propuesta_id: uuid(), operador: { tipo: 'humano', identificador: 'op' }, adaptador: { nombre: 'govuk-uk-eta', version: '1' }, hash_leido: H, version_esperada: 0,

@@ -110,6 +110,13 @@ const conModelo = (M, d) => new M(d).validate();
   await inv('URL http', 'exito', d => { d.revalidaciones[0].url = 'http://www.migracioncolombia.gov.co/checkmig'; });
   await inv('URL repetida', 'exito', d => { d.revalidaciones.push(structuredClone(d.revalidaciones[0])); });
   await inv('hechos_hash inválido', 'exito', d => { d.revalidaciones[0].hechos_hash = 'xyz'; });
+  // Rechazo por regla, sin TypeError: fuente ausente, null o no string y elemento vacío (por persistencia y por modelo).
+  for (const [n, cambiar] of [['fuente_nombre ausente', d => { delete d.revalidaciones[0].fuente_nombre; }], ['fuente_nombre null', d => { d.revalidaciones[0].fuente_nombre = null; }],
+    ['fuente_nombre número', d => { d.revalidaciones[0].fuente_nombre = 7; }], ['revalidación null', d => { d.revalidaciones[0] = null; }]]) {
+    await inv(n, 'exito', cambiar);
+    // El número solo se rechaza por persistencia: el modelo solo lo castea a string, como en el 1.0.
+    if (n !== 'fuente_nombre número') await falla(`intento 2.0: ${n} (modelo)`, () => { const d = INTENTOS.exito(); cambiar(d); return conModelo(IntentoAplicacion, d); });
+  }
   await inv('fecha como Date', 'exito', d => { d.fecha_verificacion = new Date('2026-10-26T00:00:00Z'); });
   await inv('fecha inexistente', 'exito', d => { d.fecha_verificacion = '2026-02-30'; });
   // El modelo por sí solo (sin la comparación de la persistencia) no convierte la fecha a string.
@@ -156,6 +163,29 @@ const conModelo = (M, d) => new M(d).validate();
     await assert.rejects(async () => P.validarIntento(d), e => e?.name === 'StrictModeError', `conversión: ${n}`);
   }
   await assert.rejects(async () => P.validarHistorial({ ...historial2(), aplicado_en: T.toISOString() }), e => e?.name === 'StrictModeError', 'conversión: historial aplicado_en ISO');
+  // Tipos no persistibles en Mixed: Mongoose los conserva pero Mongo los perdería o cambiaría; se rechazan antes de construir.
+  const conDetalle = extra => ({ ...INTENTOS.valor_actual_cambio(), conflicto: { categoria: 'claves_desconocidas', detalle: { dato: 'conservar', ...extra } } });
+  for (const [n, extra] of [
+    ['función anidada', { evidencia: () => 'dato perdido' }], ['símbolo', { s: Symbol('x') }], ['BigInt', { n: 1n }], ['NaN', { n: NaN }], ['Infinity', { n: Infinity }],
+    ['Date inválido', { f: new Date('x') }], ['String objeto', { s: new String('x') }], ['Map', { m: new Map([['a', 1]]) }], ['RegExp', { r: /x/ }],
+    ['función en array', { lista: [1, () => 2] }]
+  ]) {
+    await assert.rejects(async () => P.validarIntento(conDetalle(extra)), e => e?.name === 'StrictModeError' && /tipos no persistibles/.test(e.message), `no persistible: ${n}`);
+  }
+  // undefined: ruta presente ≠ ruta ausente. Solo un campo opcional declarado puede venir undefined.
+  for (const [n, cambiar] of [
+    ['clave anidada desconocida', d => { d.revalidaciones[0].intruso = undefined; }],
+    ['dentro de un Mixed anidado', d => { d.conflicto.detalle.extra = undefined; }],
+    ['dentro de un Mixed raíz', d => { d.auditoria.instantanea.extra = undefined; }],
+    ['Mixed raíz con clave homónima', d => { d.auditoria.instantanea.auditoria = undefined; }],
+    ['clave raíz desconocida', d => { d.intruso = undefined; }],
+    ['declarada que el default completaría', d => { d.intento_id = undefined; }]
+  ]) {
+    const d = INTENTOS.valor_actual_cambio(); cambiar(d);
+    await assert.rejects(async () => P.validarIntento(d), e => e?.name === 'StrictModeError', `undefined ${n}`);
+  }
+  await pasa('undefined en opcionales declarados', () => P.validarIntento({ ...INTENTOS.valor_actual_cambio(), historial_id: undefined, fecha_verificacion: undefined,
+    aprobacion: { ...INTENTOS.valor_actual_cambio().aprobacion, ocurrido_en: undefined, identidad_operador: undefined } }));
   // Tipos legítimos: hex → ObjectId (como en el 1.0), ObjectId tal cual, Date y BSON dentro de Mixed, clave con punto en Mixed.
   await pasa('historial 2.0 con ObjectId reales', () => P.validarHistorial({ ...historial2(), destino_id: new ObjectId(), requisito_id: new ObjectId() }));
   await pasa('intento 2.0 con Date y ObjectId en Mixed', () => P.validarIntento({ ...INTENTOS.valor_actual_cambio(),
@@ -167,6 +197,8 @@ const conModelo = (M, d) => new M(d).validate();
   await invH('cambios vacío', d => { d.cambios = []; });
   await invH('sin cambios', d => { delete d.cambios; });
   await invH('cambios desordenados', d => { d.cambios.reverse(); });
+  await invH('cambio null', d => { d.cambios[0] = null; });
+  await falla('historial 2.0: cambio null (modelo)', () => { const d = historial2(); d.cambios[1] = null; return conModelo(HistorialCambio, d); });
   await invH('campo repetido', d => { d.cambios[1].campo = 'link'; });
   await invH('campo no modificable', d => { d.cambios[0].campo = 'costo'; });
   await invH('cambio sin efecto', d => { d.cambios[1].nuevo = valor('si'); });

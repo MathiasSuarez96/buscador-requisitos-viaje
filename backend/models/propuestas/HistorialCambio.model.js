@@ -174,6 +174,7 @@ function validarV2(doc) {
   if (!Array.isArray(doc.cambios) || doc.cambios.length === 0) falla2('cambios es obligatorio y no vacío.');
   let previo = null;
   for (const [i, c] of doc.cambios.entries()) {
+    if (c == null) falla2(`cambios[${i}] vacío.`);
     if (!CAMPOS_MODIFICABLES.includes(c.campo)) falla2(`cambios[${i}].campo no modificable.`);
     if (previo !== null && !(previo < c.campo)) falla2('cambios debe estar ordenado por campo y sin repetidos.');
     previo = c.campo;

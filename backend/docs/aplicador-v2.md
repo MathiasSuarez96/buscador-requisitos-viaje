@@ -53,6 +53,9 @@ panel; el registro 2.0 sigue cerrado y el aplicador 1.0 no cambia.
   resultado efectivo; precondiciones solo en `propuesta_no_aplicable`; `fecha_verificacion`
   solo en éxito, como string `YYYY-MM-DD` de calendario (path Mixed: un path String
   convertiría a texto un Date, un `String` objeto o cualquier objeto con `toString`).
+- Los hooks 2.0 rechazan por regla, nunca por un `TypeError` accidental: `fuente_nombre`
+  ausente, null o no string y los elementos vacíos de `revalidaciones[]` o `cambios[]`
+  tienen guardia propia (barrido de ausente/null sobre cada ruta de los fixtures 2.0).
 - Historial 2.0: `campo: 'requisito'`, `cambios[]` ordenados sin repetidos con valores
   capturados `{presente, bson_tipo, valor}` y `fecha_verificacion {anterior, nueva}`. Las
   revalidaciones se leen del intento referenciado, no se copian.
@@ -69,13 +72,21 @@ panel; el registro 2.0 sigue cerrado y el aplicador 1.0 no cambia.
   falta o no está en transacción) y la pasan explícitamente a `save({ session })`.
 - Registro independiente del intento abortado: sin sesión, `writeConcern` majority.
 - Nunca `collection.insertOne` para auditoría. Las relecturas sí son nativas.
+- Tipos persistibles, antes de construir el documento: solo null, string, boolean,
+  número finito, Date válido, ObjectId y objetos/arrays planos. Funciones, símbolos,
+  BigInt, NaN/Infinity, Date inválidos y objetos no planos (`String`, `Map`, `RegExp`…)
+  se rechazan con `StrictModeError` en cualquier nivel, también dentro de Mixed, donde
+  Mongoose los conservaría pero Mongo los descartaría o cambiaría al guardar.
 - Comparación anidada entrada/documento: cada hoja de la entrada debe sobrevivir con el
   mismo tipo y valor en el documento construido. La única conversión admitida es string
   hex → ObjectId (`destino_id`/`requisito_id`, como en el 1.0). Se rechazan con
   `StrictModeError` las claves descartadas en cualquier nivel, ISO → Date,
-  ObjectId → String, número ↔ string, BigInt → Number y valores función que
-  desaparecerían. Date, ObjectId, objetos vacíos y claves con punto dentro de Mixed se
-  conservan.
+  ObjectId → String y número ↔ string. Date, ObjectId, objetos vacíos y claves con punto
+  dentro de Mixed se conservan con su tipo BSON.
+- `undefined` distingue ruta presente de ruta ausente: solo se admite en un campo
+  opcional declarado por el esquema (no una subruta de Mixed ni una clave desconocida) y
+  que siga ausente en el documento (sin que un default lo complete). El servicio no
+  produce `undefined`: omite los campos opcionales.
 
 ### strict 'throw' en subdocumentos
 

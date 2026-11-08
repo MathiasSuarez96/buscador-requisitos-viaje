@@ -453,11 +453,12 @@ function validarV2(doc) {
     if (doc.revalidaciones !== undefined) falla2('el rechazo de etapa 0 no admite revalidaciones.');
   } else {
     if (!Array.isArray(doc.revalidaciones) || doc.revalidaciones.length === 0) falla2('revalidaciones es obligatoria y no vacía.');
+    if (doc.revalidaciones.some((r) => r == null)) falla2('revalidaciones[] no admite elementos vacíos.');
     const urls = doc.revalidaciones.map((r) => r.url);
     if (new Set(urls).size !== urls.length) falla2('revalidaciones con URL repetida.');
     for (const r of doc.revalidaciones) {
       if (!urlHttpsSinCredenciales(r.url)) falla2('revalidaciones[].url debe ser https canónica sin credenciales.');
-      if (r.fuente_nombre.trim() === '' || r.fuente_nombre.length > 200) falla2('revalidaciones[].fuente_nombre inválido.');
+      if (typeof r.fuente_nombre !== 'string' || r.fuente_nombre.trim() === '' || r.fuente_nombre.length > 200) falla2('revalidaciones[].fuente_nombre inválido.');
     }
   }
 
