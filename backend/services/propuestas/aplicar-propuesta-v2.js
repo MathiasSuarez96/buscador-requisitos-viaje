@@ -201,7 +201,24 @@ function inicioDesdeCtx(ctx) {
   };
 }
 
-const coincideInicio = (leido, esperado) => canonico(normalizarBson(sinMetadatos(leido))) === canonico(normalizarBson(esperado));
+// Pura. Firma que conserva el tipo BSON de cada hoja: un Date no equivale a su texto ISO, un
+// ObjectId no equivale a su hex y un número no equivale a su texto. Claves ordenadas (el orden
+// de Mongo no importa); undefined no es representable y se rechaza, como en canonico.
+function firmaBson(v) {
+  if (v === undefined) throw new TypeError('firmaBson: undefined no es un valor BSON.');
+  if (v === null || typeof v === 'string' || typeof v === 'boolean') return JSON.stringify(v);
+  if (typeof v === 'number') return `Number(${String(v)})`;
+  if (typeof v !== 'object') return `${typeof v}(${String(v)})`;
+  if (v instanceof Date) return `Date(${v.getTime()})`;
+  if (esObjectId(v)) return `ObjectId(${v.toHexString()})`;
+  if (typeof v._bsontype === 'string') return `${v._bsontype}(${typeof v.toJSON === 'function' ? JSON.stringify(v.toJSON()) : String(v)})`;
+  if (Array.isArray(v)) return `[${v.map(firmaBson).join(',')}]`;
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return `${v.constructor?.name ?? 'Objeto'}(${String(v)})`;
+  return `{${Object.keys(v).sort().map(k => `${JSON.stringify(k)}:${firmaBson(v[k])}`).join(',')}}`;
+}
+// Registro, verificación previa a escrituras y confirmación del cierre usan esta misma comparación.
+const coincideInicio = (leido, esperado) => firmaBson(sinMetadatos(leido)) === firmaBson(esperado);
 
 // Antes de CUALQUIER escritura (con la sesión de la transacción dentro de ella).
 async function verificarInicioV2(ctx, session, deps) {
@@ -274,7 +291,10 @@ function diferenciasConfirmadaV2(esperado, leido, ids) {
     if (real !== ideal) diffs.push(`propuesta.${campo}=${JSON.stringify(real)} (esperado ${JSON.stringify(ideal)})`);
   }
   // H3.1: la confirmación exige también el inicio exacto del mismo intento.
-  if (esperado.inicio !== undefined) compararDocumento(diffs, 'inicio', leido.inicio, esperado.inicio);
+  if (esperado.inicio !== undefined) {
+    if (!leido.inicio) diffs.push('inicio no existe');
+    else if (!coincideInicio(leido.inicio, esperado.inicio)) diffs.push('inicio distinto del esperado');
+  }
   compararDocumento(diffs, 'evento', leido.evento, esperado.evento);
   compararDocumento(diffs, 'intento', leido.intento, esperado.intento);
   compararDocumento(diffs, 'historial', leido.historial, esperado.historial);

@@ -693,7 +693,10 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
       ['version_coordinacion_esperada', d => { d.version_coordinacion_esperada = 7; }], ['decision', d => { d.decision_aprobacion_id_esperado = uuid(); }],
       ['operador', d => { d.operador.identificador = 'otro'; }], ['auditoria', d => { d.auditoria.request_id = uuid(); }],
       ['proceso_aplicador', d => { d.proceso_aplicador.version = '2'; }], ['adaptador', d => { d.adaptador.version = '9'; }],
-      ['iniciado_en', d => { d.iniciado_en = new Date(T.getTime() + 1); }], ['clave extra', d => { d.proceso = { host: 'h', pid: 1 }; }]
+      ['iniciado_en', d => { d.iniciado_en = new Date(T.getTime() + 1); }], ['clave extra', d => { d.proceso = { host: 'h', pid: 1 }; }],
+      // Mismo valor, otro tipo BSON: el inicio guardado como texto no es el inicio esperado.
+      ['iniciado_en como texto ISO', d => { d.iniciado_en = d.iniciado_en.toISOString(); }],
+      ['version_coordinacion_esperada como texto', d => { d.version_coordinacion_esperada = String(d.version_coordinacion_esperada); }]
     ]) {
       const c = await sembrar(), antes = await huella(c), ctx = contexto(c.entrada);
       const doc = structuredClone(V2.construirInicioV2(c.entrada, ctx)); alterar(doc);
@@ -782,6 +785,38 @@ const CAMBIOS = [{ campo: 'obligatorio', propuesto: valor('no') }, { campo: 'des
         leerInicio: (id, s) => (tras ? null : b.leerInicio(id, s))
       })));
       assert.equal(r2.resultado, 'rechazo:ErrorInconsistencia', `sin inicio la escritura no se confirma: ${JSON.stringify(r2)}`);
+      // La relectura de confirmación encuentra el inicio con iniciado_en como texto (mismo instante): no confirma.
+      const c3 = await sembrar(), ctx3 = contexto(c3.entrada); await iniciar(c3.entrada, ctx3); let tras3 = false;
+      const r3 = await aplicar(c3.entrada, ctx3, crearDeps(b => ({
+        ejecutarTransaccion: async fn => { await b.ejecutarTransaccion(fn); tras3 = true; throw new MongoNetworkError('respuesta perdida'); },
+        leerInicio: async (id, s) => { const d = await b.leerInicio(id, s); return tras3 && d ? { ...d, iniciado_en: d.iniciado_en.toISOString() } : d; }
+      })));
+      assert.equal(r3.resultado, 'rechazo:ErrorInconsistencia', `inicio con fecha como texto no confirma el cierre: ${JSON.stringify(r3)}`);
+    }
+
+    // i) Inicio duplicado con la fecha guardada como texto (Mongo efímero): registrarInicioV2 no lo confirma
+    // y, si el llamador siguiera igual, el núcleo no escribe nada. Con el inicio válido, el flujo sigue.
+    {
+      const c = await sembrar(), antes = await huella(c), ctx = contexto(c.entrada);
+      const inicio = V2.construirInicioV2(c.entrada, ctx);
+      await col('inicios_intento_aplicacion').insertOne({ ...structuredClone(inicio), iniciado_en: inicio.iniciado_en.toISOString() });
+      await assert.rejects(V2.registrarInicioV2(structuredClone(inicio), P2), A1.ErrorInconsistencia, 'duplicado con fecha como texto');
+      let e = null;
+      try { await V2.aplicarPropuestaV2(c.entrada, ctx, crearDeps()); } catch (x) { e = x; }
+      assert.ok(e instanceof V2.ErrorInicioV2 && e.codigo === 'inicio_discrepante', `fecha como texto: ${e}`);
+      await sinNada(c, antes, 'inicio con fecha como texto');
+      // Discrepante solo en la transacción de cierre: el callback lo detecta y no queda nada.
+      const c2 = await sembrar(), antes2 = await huella(c2), ctx2 = contexto(c2.entrada); await iniciar(c2.entrada, ctx2);
+      const deps2 = crearDeps(b => ({ leerInicio: async (id, s) => { const d = await b.leerInicio(id, s); return s && d ? { ...d, iniciado_en: d.iniciado_en.toISOString() } : d; } }));
+      let e2 = null;
+      try { await V2.aplicarPropuestaV2(c2.entrada, ctx2, deps2); } catch (x) { e2 = x; }
+      assert.ok(e2 instanceof V2.ErrorInicioV2 && e2.codigo === 'inicio_discrepante', `fecha como texto en la transacción: ${e2}`);
+      await sinNada(c2, antes2, 'inicio con fecha como texto en la transacción');
+      // Inicio válido (BSON Date): éxito con los mismos ids.
+      const c3 = await sembrar(), ctx3 = contexto(c3.entrada);
+      const r3 = await aplicar(c3.entrada, ctx3, crearDeps());
+      assert.equal(r3.resultado, 'exito', JSON.stringify(r3));
+      assert.ok((await mismosIds(c3, r3, 'inicio válido')).iniciado_en instanceof Date, 'inicio válido con BSON Date');
     }
 
     // h) Contexto intento inválido: rechazo antes de cualquier lectura o escritura.

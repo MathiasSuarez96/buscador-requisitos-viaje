@@ -101,8 +101,14 @@ function crearPersistenciaV2() {
     insertarInicio: async (doc) => { await nuevo(InicioIntentoAplicacion, doc).save({ writeConcern: { w: 'majority' } }); },
     leerIntento: (intentoId) => IntentoAplicacion.collection.findOne({ intento_id: intentoId }),
     leerHistorial: (historialId) => HistorialCambio.collection.findOne({ historial_id: historialId }),
-    // Con la sesión de la transacción cuando se verifica el inicio dentro de ella.
-    leerInicio: (intentoId, session) => InicioIntentoAplicacion.collection.findOne({ intento_id: intentoId }, session ? { session } : {})
+    // Fuera de transacción, readConcern majority: tras un insert incierto solo cuenta un inicio
+    // confirmado por la mayoría. Dentro de una transacción, solo su sesión: rige el nivel de
+    // lectura de la transacción (el driver no admite otro por operación). Una sesión sin
+    // transacción activa se rechaza: no leería por mayoría ni dentro del snapshot.
+    leerInicio: async (intentoId, session) => {
+      if (session) { exigirSesion(session); return InicioIntentoAplicacion.collection.findOne({ intento_id: intentoId }, { session }); }
+      return InicioIntentoAplicacion.collection.findOne({ intento_id: intentoId }, { readConcern: { level: 'majority' } });
+    }
   });
 }
 

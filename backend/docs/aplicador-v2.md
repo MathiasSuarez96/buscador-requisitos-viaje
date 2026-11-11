@@ -160,8 +160,10 @@ inicio no reemplaza la autenticación ni el permiso del operador (pendientes del
 ### Persistencia
 
 - `validarInicio`, `insertarInicio` (independiente, `writeConcern` majority, nunca en una
-  transacción) y `leerInicio(intento_id, session?)` (nativo; con la sesión dentro de una
-  transacción). Mismas garantías que H2.1: instancia nueva, modelo y hooks reales, strict,
+  transacción) y `leerInicio(intento_id, session?)` (nativo). Sin sesión lee con
+  `readConcern: majority`: tras un insert incierto solo confirma un inicio ya confirmado por la
+  mayoría. Con sesión exige una transacción activa y solo pasa esa sesión: rige el nivel de
+  lectura de la transacción (snapshot). Mismas garantías que H2.1: instancia nueva, modelo y hooks reales, strict,
   comparación tipada, tipos no persistibles rechazados.
 - `construirInicioV2(entrada, contexto)` (pura) produce el inicio exacto que el núcleo espera.
 - `registrarInicioV2(inicio, deps)`:
@@ -180,7 +182,10 @@ inicio no reemplaza la autenticación ni el permiso del operador (pendientes del
   válido, copiados antes del primer `await`. El núcleo ya no genera ids (`deps.uuid` no se usa).
 - El inicio persistido se compara completo (versión, ids, propuesta, hash, versión de
   coordinación, decisión, operador, auditoría, proceso, adaptador, `iniciado_en`) contra el
-  esperado:
+  esperado con una firma que conserva el tipo BSON (`firmaBson`): un `iniciado_en` guardado
+  como texto ISO no equivale al `Date` del mismo instante, ni un número a su texto. La misma
+  comparación rige el registro (`registrarInicioV2`), las verificaciones previas a escribir y la
+  relectura de confirmación del cierre:
   - temprano, antes de las precondiciones (también antes del rechazo temprano);
   - dentro de cada transacción (éxito y conflicto) con su sesión, en cada vuelta del callback;
   - antes de cada registro independiente (rechazo, CAS perdido, escritura abortada,
@@ -197,8 +202,12 @@ inicio no reemplaza la autenticación ni el permiso del operador (pendientes del
 
 ### Límites
 
-- `writeConcern` majority del inicio no se puede probar con un solo nodo: las pruebas
-  comprueban el insert independiente y fuera de la transacción, no la replicación.
+- `writeConcern` y `readConcern` majority del inicio no se pueden probar con un solo nodo: las
+  pruebas comprueban la opción enviada al driver (monitoreo de comandos) y el insert
+  independiente, no la replicación ni un rollback entre réplicas.
+- `firmaBson` distingue los tipos que el driver entrega al leer (`Date`, `ObjectId`, número,
+  texto, booleano, null y los tipos BSON no promovidos por `_bsontype`); Int32 y Double llegan
+  ambos como número de JS y no se distinguen.
 - Leer el inicio sin la sesión dentro de la transacción es equivalente en comportamiento (el
   inicio es inmutable y anterior); la prueba lo cubre por estructura (registro de lecturas).
 - Para bloques posteriores (no implementados): una revalidación vencida no vuelve obsoleta una

@@ -49,7 +49,11 @@ const transitorio = () => new MongoServerError({ message: 'transitorio', errmsg:
   try {
     rs = await MongoMemoryReplSet.create({ binary: { version: '8.0.32' }, replSet: { count: 1 } });
     // autoIndex por defecto de la conexión: los esquemas de auditoría (autoIndex: false) no deben crear índices.
-    await mongoose.connect(rs.getUri('buscador_requisitos'));
+    // monitorCommands: la prueba del inicio inspecciona el readConcern que llega al driver.
+    await mongoose.connect(rs.getUri('buscador_requisitos'), { monitorCommands: true });
+    const comandos = [];
+    mongoose.connection.getClient().on('commandStarted', ev => { if (ev.commandName === 'find' && ev.command.find === 'inicios_intento_aplicacion') comandos.push(ev.command); });
+    const findsInicio = id => comandos.filter(c => c.filter?.intento_id === id);
     const db = mongoose.connection.db, col = n => db.collection(n);
     for (const s of [...INDICES_APLICACION, INDICE_TRANSVERSAL]) {
       await col(s.coleccion).createIndex(s.clave, { name: s.nombre, unique: true, ...(s.partialFilterExpression ? { partialFilterExpression: s.partialFilterExpression } : {}) });
@@ -249,6 +253,44 @@ const transitorio = () => new MongoServerError({ message: 'transitorio', errmsg:
         assert.equal(e instanceof A1.ErrorResultadoIncierto, false, `${n}: incertidumbre del inicio, distinta de la del intento terminado`);
         sinSecreto(e, n);
         assert.deepEqual([veces, (await leerIni(i3.intento_id)).length], [1, 0], `${n}: un solo intento de insert y nada escrito`);
+        // La relectura real que no confirma se pidió por mayoría.
+        // (el primer find es la relectura del servicio; el segundo, el de leerIni de esta prueba).
+        if (leerInicio === P.leerInicio) assert.deepEqual(findsInicio(i3.intento_id).map(c => c.readConcern?.level), ['majority', undefined], `${n}: relectura con readConcern majority`);
+      }
+      // Opción enviada al driver: fuera de transacción, majority y sin transacción; dentro, la
+      // sesión y el nivel de la transacción (snapshot), sin un readConcern propio de la operación.
+      {
+        const [g] = await leerIni(inicio.intento_id), antes = comandos.length;
+        assert.deepEqual(await P.leerInicio(inicio.intento_id, null), g, 'lectura sin sesión');
+        const fuera = comandos.slice(antes);
+        assert.equal(fuera.length, 1);
+        assert.deepEqual({ ...fuera[0].readConcern }, { level: 'majority' }, 'fuera de transacción: readConcern majority');
+        assert.equal(fuera[0].txnNumber, undefined, 'fuera de transacción: sin txnNumber');
+        let idSesion = null; const k = comandos.length;
+        await mongoose.connection.transaction(async s => {
+          idSesion = s.id.id.toString('hex');
+          assert.deepEqual(await P.leerInicio(inicio.intento_id, s), g, 'lectura en la transacción');
+        }, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } });
+        const dentro = comandos.slice(k);
+        assert.equal(dentro.length, 1);
+        assert.ok(dentro[0].txnNumber !== undefined && dentro[0].lsid.id.toString('hex') === idSesion, 'dentro: misma sesión y transacción');
+        assert.deepEqual([dentro[0].readConcern?.level, dentro[0].readConcern && Object.keys(dentro[0].readConcern).filter(c => c !== 'level' && c !== 'afterClusterTime')], ['snapshot', []], 'dentro: nivel de la transacción, no majority');
+        // Una sesión sin transacción activa no lee: ni por mayoría ni dentro del snapshot.
+        const suelta = mongoose.connection.getClient().startSession();
+        try { await assert.rejects(P.leerInicio(inicio.intento_id, suelta), TypeError, 'sesión sin transacción'); } finally { await suelta.endSession(); }
+      }
+      // Duplicado con la fecha guardada como TEXTO (dato ajeno, sin el modelo): mismo instante,
+      // otro tipo BSON. No confirma: inconsistencia, el documento ajeno queda tal cual.
+      {
+        const i4 = V2.construirInicioV2(entrada, ctxDe());
+        await col('inicios_intento_aplicacion').insertOne({ ...structuredClone(i4), iniciado_en: i4.iniciado_en.toISOString() });
+        await assert.rejects(V2.registrarInicioV2(structuredClone(i4), P), e => e instanceof A1.ErrorInconsistencia, 'fecha guardada como texto no confirma');
+        const guardados = await leerIni(i4.intento_id);
+        assert.deepEqual([guardados.length, typeof guardados[0].iniciado_en], [1, 'string'], 'documento con texto intacto, sin segundo inicio');
+        // Mismo caso con un número guardado como texto.
+        const i5 = V2.construirInicioV2(entrada, ctxDe());
+        await col('inicios_intento_aplicacion').insertOne({ ...structuredClone(i5), version_coordinacion_esperada: String(i5.version_coordinacion_esperada) });
+        await assert.rejects(V2.registrarInicioV2(structuredClone(i5), P), e => e instanceof A1.ErrorInconsistencia, 'número guardado como texto no confirma');
       }
       // Inválido para el modelo: rechazo antes de escribir.
       const malo = { ...V2.construirInicioV2(entrada, ctxDe()), adaptador: { nombre: 'Adaptador libre', version: '1' } };

@@ -83,6 +83,11 @@ const mutaciones = [
   ["registrarInicioV2: incertidumbre tomada como confirmación", V, PERSIST, "  throw new ErrorInicioInciertoV2(inicio, errInsertar);\n}", "  return { confirmado: true, causa_relectura: 'supuesto' };\n}"],
   ["registrarInicioV2: relectura fallida tomada como confirmación", V, PERSIST, "  catch (errRelectura) { throw new ErrorInicioInciertoV2(inicio, errInsertar, { error_relectura: errRelectura }); }", "  catch (errRelectura) { return { confirmado: true, causa_relectura: 'supuesto' }; }"],
   ["registrarInicioV2: sin validar con el modelo", V, PERSIST, "  try { await deps.validarInicio(inicio); }\n", "  try { }\n"],
+  ["registrarInicioV2: duplicado comparado sin tipos BSON (restaura el defecto)", V, PERSIST, "const coincideInicio = (leido, esperado) => firmaBson(sinMetadatos(leido)) === firmaBson(esperado);",
+    "const coincideInicio = (leido, esperado) => canonico(normalizarBson(sinMetadatos(leido))) === canonico(normalizarBson(esperado));"],
+  ["persistencia: inicio leído sin readConcern majority (restaura el defecto)", P, PERSIST, "{ intento_id: intentoId }, { readConcern: { level: 'majority' } });", "{ intento_id: intentoId }, {});"],
+  ["persistencia: inicio en la transacción sin su sesión", P, PERSIST, "findOne({ intento_id: intentoId }, { session }); }", "findOne({ intento_id: intentoId }, {}); }"],
+  ["persistencia: inicio con una sesión sin transacción", P, PERSIST, "if (session) { exigirSesion(session); return", "if (session) { return"],
   ["persistencia: inicio sin el modelo de inicio", P, ESQUEMA, "    validarInicio: (doc) => nuevo(InicioIntentoAplicacion, doc).validate(),", "    validarInicio: async () => {},"],
   ["lector: expone identidad_operador del evento", L, PERSIST, "    metodo_identidad: METODOS_CONOCIDOS.includes(metodo) ? metodo : null,", "    metodo_identidad: METODOS_CONOCIDOS.includes(metodo) ? metodo : null, identidad_operador: e.detalle?.identidad_operador,"],
 ];
