@@ -36,12 +36,13 @@ const valores = r => Object.fromEntries(Object.entries(r.campos).map(([k, c]) =>
   });
   assert.notEqual(r2.fuente.contenido_sha256, r1.fuente.contenido_sha256);
 
-  // 3. Ambigua: obligatoriedad contradictoria, sin «Dirigido a:» y sin horas → ambiguo por campo.
+  // 3. Ambigua: «de uso no obligatorio» más «El registro es obligatorio…» (no atribuible al
+  // prerregistro), sin «Dirigido a:» y sin horas → ambiguo por campo.
   const r3 = extraer(fixture('ambigua.html'), FUENTE);
   assert.equal(r3.estado, 'ambiguo');
   assert.deepEqual(Object.values(r3.campos).map(c => [c.estado, c.valor]), [['ambiguo', null], ['ambiguo', null], ['ambiguo', null]]);
-  assert.match(r3.campos.obligatoriedad.motivo, /^contradiccion/);
-  assert.equal(r3.campos.obligatoriedad.evidencia.length, 2, 'ambas evidencias contradictorias');
+  assert.match(r3.campos.obligatoriedad.motivo, /^no_atribuible/);
+  assert.equal(r3.campos.obligatoriedad.evidencia.length, 2, 'la afirmación admitida y la no atribuible');
   assert.match(r3.campos.alcance.motivo, /^sin_evidencia/);
   assert.match(r3.campos.ventana_horas_antes.motivo, /^sin_evidencia/);
 
@@ -51,7 +52,8 @@ const valores = r => Object.fromEntries(Object.entries(r.campos).map(([k, c]) =>
   const casos = [
     ['ventanas contradictorias', conMain('<p>Puede registrarse hasta con 48 horas de anticipación.</p>'), 'ventana_horas_antes', /^contradiccion/],
     ['dos «Dirigido a:» distintos', conMain('<p><strong>Dirigido a:</strong> Viajeros extranjeros que ingresen a Colombia.</p>'), 'alcance', /^contradiccion/],
-    ['obligatoriedad contradictoria', conMain('<p>El registro es obligatorio.</p>'), 'obligatoriedad', /^contradiccion/],
+    ['obligatoriedad contradictoria', conMain('<p>CheckMig es obligatorio.</p>'), 'obligatoriedad', /^contradiccion/],
+    ['mención no atribuible al prerregistro', conMain('<p>El registro es obligatorio.</p>'), 'obligatoriedad', /^no_atribuible/],
     ['mínimo no menor que el máximo', v.replace('hasta una hora antes', 'hasta 72 horas antes'), 'ventana_horas_antes', /^contradiccion/],
     ['entidad desconocida en la palabra clave', v.replace('de uso no obligatorio', 'de uso no obligatori&oacutx;o'), 'obligatoriedad', /^sin_evidencia/]
   ];
@@ -93,6 +95,44 @@ const valores = r => Object.fromEntries(Object.entries(r.campos).map(([k, c]) =>
   const conPasaporte = extraer(conMain('<p>Es obligatorio presentar el pasaporte.</p>'), FUENTE);
   assert.equal(conPasaporte.campos.obligatoriedad.valor, 'no_obligatorio', JSON.stringify(conPasaporte.campos.obligatoriedad));
   assert.equal(conPasaporte.campos.obligatoriedad.evidencia.length, 1);
+
+  // 5c. Regresiones de la revisión de 4636bef: la obligación debe atribuirse al prerregistro.
+  const solo = frase => sinObligatoriedad.replace('</div>\n</main>', `<p>${frase}</p>\n  </div>\n</main>`);
+  const PASAPORTE = ['El pasaporte es obligatorio para usar CheckMig.', 'Para usar CheckMig es obligatorio el pasaporte.'];
+  const OTRO_TRAMITE = 'Para solicitar la visa de turismo, el formulario es obligatorio.';
+  const atribucion = [
+    ...PASAPORTE.map(f => [`pasaporte (sola): ${f}`, solo(f), /^sin_evidencia/]),
+    [`formulario de otro trámite (sola)`, solo(OTRO_TRAMITE), /^no_atribuible/],
+    [`formulario de otro trámite (junto a la ficha)`, conMain(`<p>${OTRO_TRAMITE}</p>`), /^no_atribuible/],
+    ['formulario sin sujeto (sola)', solo('El formulario es obligatorio.'), /^no_atribuible/],
+    // La redacción cambia y ya no es la admitida: no se atribuye al prerregistro.
+    ['redacción nueva («cuyo uso no es obligatorio»)', v.replace('de uso no obligatorio', 'cuyo uso no es obligatorio'), /^no_atribuible/],
+    // «de uso no obligatorio» solo cuenta en la ficha de CheckMig (primer <h1> del <main>).
+    ['«de uso» fuera de la ficha de CheckMig', v.replace('<span>CheckMig</span>', '<span>Visas</span>'), /^no_atribuible/]
+  ];
+  for (const [nombre, html, motivo] of atribucion) {
+    const c = extraer(html, FUENTE).campos.obligatoriedad;
+    assert.deepEqual([c.estado, c.valor], ['ambiguo', null], `${nombre}: ${JSON.stringify(c)}`);
+    assert.match(c.motivo, motivo, nombre);
+  }
+  for (const f of PASAPORTE) {
+    const c = extraer(conMain(`<p>${f}</p>`), FUENTE).campos.obligatoriedad;
+    assert.deepEqual([c.estado, c.valor, c.evidencia.length], ['ok', 'no_obligatorio', 1], `pasaporte junto a la ficha: ${f}: ${JSON.stringify(c)}`);
+  }
+  // Cambio real a obligatorio con las redacciones admitidas (A en cambio.html, B y C).
+  for (const [nombre, html] of [
+    ['A: «de uso obligatorio» (cambio.html)', fixture('cambio.html')],
+    ['B: «CheckMig es obligatorio»', solo('CheckMig es obligatorio.')],
+    ['B: «El uso de CheckMig es obligatorio»', solo('El uso de CheckMig es obligatorio.')],
+    ['C: «Es obligatorio diligenciar el formulario de CheckMig»', solo('Es obligatorio diligenciar el formulario de CheckMig.')]
+  ]) {
+    const c = extraer(html, FUENTE).campos.obligatoriedad;
+    assert.deepEqual([c.estado, c.valor, c.evidencia.length], ['ok', 'obligatorio', 1], `${nombre}: ${JSON.stringify(c)}`);
+  }
+  for (const [nombre, frase] of [['B negativa', 'El prerregistro en CheckMig no es obligatorio.'], ['B opcional', 'CheckMig es opcional.']]) {
+    const c = extraer(solo(frase), FUENTE).campos.obligatoriedad;
+    assert.deepEqual([c.estado, c.valor], ['ok', 'no_obligatorio'], `${nombre}: ${JSON.stringify(c)}`);
+  }
 
   // 5. consultar() con fetch simulado: éxito y cada fallo como no_disponible, sin lanzar.
   const respuesta = ({ status = 200, url = URL_FICHA, tipo = 'text/html; charset=utf-8', cuerpo = v } = {}) => ({

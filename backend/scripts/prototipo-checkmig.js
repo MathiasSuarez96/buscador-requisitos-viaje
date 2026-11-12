@@ -50,8 +50,8 @@ function decodificar(t) {
 
 const BLOQUE = /<\/?(p|li|ul|ol|h[1-6]|div|section|article|header|footer|table|tr|td|th|br|hr|dd|dt)\b[^>]*>/gi;
 
-// Pura. Bloques de texto del único <main>; null si no hay exactamente uno.
-function bloquesPrincipales(html) {
+// Pura. Marcado del único <main>, sin comentarios ni scripts; null si no hay exactamente uno.
+function marcadoPrincipal(html) {
   const sinRuido = String(html)
     .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/<(script|style|noscript|template|svg)\b[\s\S]*?<\/\1\s*>/gi, ' ');
@@ -59,10 +59,25 @@ function bloquesPrincipales(html) {
   if (aperturas.length !== 1) return null;
   const inicio = sinRuido.search(/<main\b/i), fin = sinRuido.search(/<\/main\s*>/i);
   if (fin < inicio) return null;
-  return decodificar(sinRuido.slice(inicio, fin).replace(BLOQUE, '\n').replace(/<[^>]*>/g, ' '))
+  return sinRuido.slice(inicio, fin);
+}
+const texto = marcado => decodificar(marcado.replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+
+// Pura. Bloques de texto del único <main>; null si no hay exactamente uno.
+function bloquesPrincipales(html) {
+  const main = marcadoPrincipal(html);
+  if (main === null) return null;
+  return decodificar(main.replace(BLOQUE, '\n').replace(/<[^>]*>/g, ' '))
     .split('\n')
     .map(l => l.replace(/\s+/g, ' ').trim())
     .filter(Boolean);
+}
+
+// Pura. Texto del primer <h1> del <main> (el título de la ficha); null si no hay.
+function tituloPrincipal(html) {
+  const main = marcadoPrincipal(html);
+  const h1 = main === null ? null : main.match(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i);
+  return h1 ? texto(h1[1]) : null;
 }
 
 // Oraciones de cada bloque (un bloque puede tener varias; la evidencia es la oración).
@@ -76,47 +91,73 @@ const definido = (valor, ev) => ({ estado: 'ok', valor, evidencia: ev.map(eviden
 // Campos
 // ------------------------------------------------------------------
 
-// Obligatoriedad: un único valor global, 'no_obligatorio' u 'obligatorio'. Cada mención cuenta
-// solo si se refiere a CheckMig; ambas polaridades, una condición por grupo o ninguna → ambiguo.
-// Mención: grupo 1 = negación explícita; grupo 2 = forma negativa (opcional/voluntario).
-const MENCION = /\b(?:(no\s+(?:es\s+|son\s+|sera\s+|resulta\s+)?obligatori[oa]s?)|(uso\s+opcional|es\s+opcional|caracter\s+voluntario|es\s+voluntari[oa])|obligatori[oa]s?|requisito\s+indispensable)\b/g;
-// Palabras que designan a CheckMig (o su uso o registro) como sujeto u objeto de la obligación.
-const SUJETO = /\b(checkmig|servicio|registro|pre-?registro|uso|formulario|aplicativo|precarga|diligenciamiento)\b/;
-// Tras la mención: un infinitivo introduce otra obligación («obligatorio presentar el pasaporte»).
-const INFINITIVO = /^\s*(?:el\s+|la\s+)?(?:\p{L}+(?:ar|er|ir))\b/u;
+// Obligatoriedad: un único valor global, 'no_obligatorio' u 'obligatorio'. Solo cuenta una
+// afirmación ATRIBUIBLE al prerregistro, en una de tres redacciones admitidas:
+//  A. En la ficha de CheckMig (primer <h1> del <main> = «CheckMig»), una oración que empieza por
+//     el servicio y dice «…, de uso (no) obligatorio» («Servicio gratuito y en línea, de uso no
+//     obligatorio que permite…»).
+//  B. Sujeto explícito justo antes del verbo: «CheckMig (no) es obligatorio», «El uso de CheckMig
+//     es voluntario», «El prerregistro en CheckMig no es obligatorio».
+//  C. «(No) es obligatorio diligenciar/usar/… CheckMig | el prerregistro | el formulario de CheckMig».
+// Una mención cuyo sujeto u objeto es otro documento («El pasaporte es obligatorio para usar
+// CheckMig», «Es obligatorio presentar el pasaporte») se ignora. Cualquier otra mención no se
+// puede atribuir al prerregistro («El formulario es obligatorio», sujeto elíptico, otra
+// redacción): el campo queda ambiguo. Ambas polaridades, un grupo o una excepción → ambiguo.
+const CLAVE = /\b(obligatori[oa]s?|opcional(?:es)?|voluntari[oa]s?|requisito\s+indispensable)\b/g;
+const CORTE = /[,;:()]|\b(?:pero|sino|aunque|mientras)\b/g;
+const PRERREGISTRO = '(?:checkmig|pre-?registro|prerregistro)';
+const VERBO = '(?:es|son|sera|resulta)';
+const ADMITIDA_A = /^de\s+uso\s+(?:no\s+)?$/;
+const INICIO_A = /^(?:el\s+)?(?:servicio|checkmig|prerregistro|pre-?registro|aplicativo)\b/;
+const ADMITIDA_B = new RegExp(`^(?:el\\s+|la\\s+)?(?:(?:uso|registro|diligenciamiento)\\s+(?:de|del|en)\\s+(?:el\\s+)?)?(?:${PRERREGISTRO}|(?:formulario|aplicativo|servicio)\\s+(?:de\\s+)?checkmig)(?:\\s+en\\s+checkmig)?\\s+(?:no\\s+)?${VERBO}\\s+(?:no\\s+)?(?:de\\s+(?:uso|caracter)\\s+)?$`);
+const ADMITIDA_C_ANTES = new RegExp(`^(?:no\\s+)?${VERBO}\\s+$`);
+const ADMITIDA_C_DESPUES = new RegExp(`^\\s+(?:diligenciar|realizar|completar|hacer|usar|utilizar)\\s+(?:el\\s+|la\\s+)?(?:${PRERREGISTRO}|formulario\\s+de\\s+checkmig|registro\\s+en\\s+checkmig)\\b`);
+const AJENO = '(?:pasaporte|visa|cedula|documento|tiquete|certificado|vacuna|seguro)s?';
+const AJENO_SUELTO = new RegExp(`\\b${AJENO}\\b`);
+const AJENA_ANTES = new RegExp(`^(?:el\\s+|la\\s+|los\\s+|las\\s+|su\\s+|sus\\s+)?${AJENO}\\b.*\\b${VERBO}\\s+(?:no\\s+)?$`);
+const AJENA_DESPUES = new RegExp(`^\\s+(?:\\p{L}+(?:ar|er|ir)\\s+)?(?:el\\s+|la\\s+|los\\s+|las\\s+|un\\s+|una\\s+|su\\s+|sus\\s+)?${AJENO}\\b`, 'u');
+const NEGADA = new RegExp(`\\bno\\s+(?:${VERBO}\\s+)?(?:de\\s+(?:uso|caracter)\\s+)?$`);
 // Condición por grupo o excepción: el formato solo admite un valor global.
 const CONDICION_TRAS = /^\s*,?\s*(?:para|a)\s+(?:los\s+|las\s+)?(?:viajeros\s+|ciudadanos\s+|personas\s+)?(?:nacionales|extranjer|colombian|residentes|menores|mayores|turistas|ciertos|algunos)/;
 const EXCEPCION = /\b(salvo|excepto|excepcion|exceptuando|unicamente|solamente|solo\s+para)\b/;
-const palabras = (t, n, desdeFin) => { const p = t.split(/\s+/).filter(Boolean); return (desdeFin ? p.slice(-n) : p.slice(0, n)).join(' '); };
-function mencionesCheckmig(s) {
+
+// Pura. s: oración sin tildes y en minúsculas. Cada mención: atribuible (con polaridad), ajena o no_atribuible.
+function clasificarMenciones(s, fichaCheckmig) {
   const res = [];
-  for (const m of s.matchAll(MENCION)) {
+  for (const m of s.matchAll(CLAVE)) {
     const antes = s.slice(0, m.index), despues = s.slice(m.index + m[0].length);
-    const infinitivo = INFINITIVO.test(despues);
-    const sobreCheckmig = infinitivo
-      ? SUJETO.test(palabras(despues, 5)) && !/\b(pasaporte|visa|documento|cedula)\b/.test(palabras(despues, 5))
-      : SUJETO.test(palabras(antes, 6, true)) || SUJETO.test(palabras(despues, 3)) || /\bcheckmig\b/.test(s);
-    if (!sobreCheckmig) continue;
-    res.push({ negativa: Boolean(m[1] || m[2]), condicionada: CONDICION_TRAS.test(despues) });
+    let corte = 0;
+    for (const c of antes.matchAll(CORTE)) corte = c.index + c[0].length;
+    const clausula = antes.slice(corte).trimStart();
+    const admitida = (fichaCheckmig && ADMITIDA_A.test(clausula) && INICIO_A.test(s) && !AJENO_SUELTO.test(s.split(',')[0]))
+      || ADMITIDA_B.test(clausula)
+      || (ADMITIDA_C_ANTES.test(clausula) && ADMITIDA_C_DESPUES.test(despues));
+    if (admitida) {
+      const formaNegativa = /^(opcional|voluntari)/.test(m[1]);
+      res.push({ tipo: 'atribuible', negativa: NEGADA.test(clausula) !== formaNegativa, condicionada: CONDICION_TRAS.test(despues) });
+    } else if (AJENA_ANTES.test(clausula) || AJENA_DESPUES.test(despues)) res.push({ tipo: 'ajena' });
+    else res.push({ tipo: 'no_atribuible' });
   }
   return res;
 }
-function obligatoriedad(frases) {
-  const neg = [], pos = [], cond = [];
+function obligatoriedad(frases, fichaCheckmig) {
+  const neg = [], pos = [], cond = [], sinAtribuir = [];
   for (const f of frases) {
     const s = sinTildes(f);
-    const menciones = mencionesCheckmig(s);
-    if (!menciones.length) continue;
-    const polaridades = new Set(menciones.map(m => m.negativa));
+    const menciones = clasificarMenciones(s, fichaCheckmig);
+    if (menciones.some(m => m.tipo === 'no_atribuible')) sinAtribuir.push(f);
+    const atribuibles = menciones.filter(m => m.tipo === 'atribuible');
+    if (!atribuibles.length) continue;
     // Dos polaridades en la misma oración, o un grupo/excepción: obligatoriedad no global.
-    if (polaridades.size > 1 || menciones.some(m => m.condicionada) || EXCEPCION.test(s)) cond.push(f);
-    else (menciones[0].negativa ? neg : pos).push(f);
+    if (new Set(atribuibles.map(m => m.negativa)).size > 1 || atribuibles.some(m => m.condicionada) || EXCEPCION.test(s)) cond.push(f);
+    else (atribuibles[0].negativa ? neg : pos).push(f);
   }
   if (cond.length) return ambiguo('condicionada: la obligatoriedad depende del grupo de viajeros y el formato solo admite un valor global', cond);
   if (neg.length && pos.length) return ambiguo('contradiccion: la ficha dice obligatorio y no obligatorio', [...neg, ...pos]);
+  if (sinAtribuir.length) return ambiguo('no_atribuible: una mención de obligatoriedad no se puede atribuir al prerregistro', [...new Set([...neg, ...pos, ...sinAtribuir])]);
   if (neg.length) return definido('no_obligatorio', neg);
   if (pos.length) return definido('obligatorio', pos);
-  return ambiguo('sin_evidencia: la ficha no menciona la obligatoriedad de CheckMig');
+  return ambiguo('sin_evidencia: la ficha no afirma la obligatoriedad del prerregistro');
 }
 
 // Alcance: el bloque «Dirigido a:». Viajeros (nacionales/extranjeros) y sentidos (ingreso/salida).
@@ -177,7 +218,7 @@ function extraer(html, fuente) {
   const bloques = bloquesPrincipales(html);
   const campos = bloques === null
     ? Object.fromEntries(CAMPOS.map(c => [c, ambiguo('sin_evidencia: no hay exactamente un <main> en la ficha')]))
-    : (() => { const frases = oraciones(bloques); return { obligatoriedad: obligatoriedad(frases), alcance: alcance(bloques), ventana_horas_antes: ventana(frases) }; })();
+    : (() => { const frases = oraciones(bloques); const ficha = sinTildes(tituloPrincipal(html) ?? '') === 'checkmig'; return { obligatoriedad: obligatoriedad(frases, ficha), alcance: alcance(bloques), ventana_horas_antes: ventana(frases) }; })();
   return { estado: estadoGlobal(campos), fuente: { ...fuente, contenido_sha256: createHash('sha256').update(String(html)).digest('hex') }, campos };
 }
 
@@ -206,7 +247,7 @@ async function consultar({ fetch: f = globalThis.fetch, ahora = () => new Date()
   return extraer(html, final);
 }
 
-module.exports = { URL_FICHA, bloquesPrincipales, extraer, consultar };
+module.exports = { URL_FICHA, bloquesPrincipales, tituloPrincipal, extraer, consultar };
 
 if (require.main === module) {
   const i = process.argv.indexOf('--html');
