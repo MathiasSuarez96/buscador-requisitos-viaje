@@ -101,7 +101,8 @@ const conModelo = (M, d) => new M(d).validate();
   await inv('con precondicion (1.0)', 'exito', d => { d.precondicion = { presente: true, valor: 'x' }; });
   await inv('con valor_observado (1.0)', 'valor_actual_cambio', d => { d.valor_observado = { presente: true, valor: 'x' }; });
   await inv('con identidad_esperada_no_coincide (1.0)', 'identidad_requisito_cambio', d => { d.identidad_esperada_no_coincide = { categoria: 'requisito_id_duplicado' }; });
-  await inv('resultado no admitido en 2.0', 'abortada', d => { d.resultado = 'fuente_cambio'; d.etapa_fallo = 'revalidacion_externa'; delete d.error_externo; });
+  // H3.3: fuente_cambio existe en 2.0, pero solo con dos lecturas que confirmen los mismos hechos.
+  await inv('fuente_cambio sin lecturas_fuente', 'abortada', d => { d.resultado = 'fuente_cambio'; d.etapa_fallo = 'revalidacion_externa'; delete d.error_externo; });
   await inv('éxito sin revalidaciones', 'exito', d => { delete d.revalidaciones; });
   await inv('éxito con revalidaciones vacías', 'exito', d => { d.revalidaciones = []; });
   await inv('etapa 0 con revalidaciones', 'no_aplicable_etapa0', d => { d.revalidaciones = structuredClone(REVS); });
@@ -250,8 +251,9 @@ const conModelo = (M, d) => new M(d).validate();
   for (const c of ['resultado', 'auditoria', 'proceso_aplicador', 'adaptador', 'decision_aprobacion_id']) await invE(`sin ${c}`, e => { delete e.detalle[c]; });
   await invE('resultado incoherente', e => { e.detalle.resultado = 'valor_actual_cambio'; });
   await invE('conflicto con exito', e => { e.detalle.resultado = 'exito'; }, () => evento2('conflicto'));
-  await invE('tipo inexistente en 2.0', e => { e.tipo_evento = 'obsolescencia'; e.estado_nuevo = 'obsoleta'; e.detalle.resultado = 'fuente_cambio'; });
-  await invE('actor de otro proceso', e => { e.actor.identificador = 'aplicar-propuesta'; });
+  // H3.3: obsolescencia y entrada_revision existen en 2.0, solo con su resultado de revalidación.
+  await invE('obsolescencia con resultado incoherente', e => { e.tipo_evento = 'obsolescencia'; e.estado_nuevo = 'obsoleta'; e.motivo = 'cambio'; e.detalle.resultado = 'exito'; });
+  await invE('entrada_revision con resultado incoherente', e => { e.tipo_evento = 'entrada_revision'; e.estado_nuevo = 'revision_requerida'; e.motivo = 'ambigua'; e.detalle.resultado = 'fuente_cambio'; });  await invE('actor de otro proceso', e => { e.actor.identificador = 'aplicar-propuesta'; });
   await invE('proceso 1.0', e => { e.detalle.proceso_aplicador = { nombre: 'aplicar-propuesta', version: '1' }; });
   await invE('proceso con clave extra', e => { e.detalle.proceso_aplicador.extra = 'x'; });
   await invE('adaptador de texto libre', e => { e.detalle.adaptador.nombre = 'Adaptador libre'; });

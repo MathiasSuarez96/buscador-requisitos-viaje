@@ -87,7 +87,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const NOMBRE_TECNICO = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const PROCESO_V2 = Object.freeze({ nombre: 'aplicar-propuesta-v2', version: '1' });
 const CLAVES_DETALLE_V2 = ['adaptador', 'auditoria', 'decision_aprobacion_id', 'proceso_aplicador', 'resultado', 'version_contrato'];
-const RESULTADOS_EVENTO_V2 = { aplicacion: ['exito'], conflicto: ['valor_actual_cambio', 'identidad_requisito_cambio'] };
+const RESULTADOS_EVENTO_V2 = {
+  aplicacion: ['exito'], conflicto: ['valor_actual_cambio', 'identidad_requisito_cambio'],
+  // H3.3: transiciones por la revalidación del adaptador 2.0.
+  entrada_revision: ['extraccion_ambigua'], obsolescencia: ['fuente_cambio']
+};
 const esPlano = (v) => v !== null && typeof v === 'object' && Object.getPrototypeOf(v) === Object.prototype;
 const clavesExactas = (v, claves) => esPlano(v) && Object.keys(v).sort().join(',') === [...claves].sort().join(',');
 

@@ -56,7 +56,11 @@ const mutaciones = [
   ['persistencia: no exige sesión', P, PERSIST, "  if (!session || typeof session.inTransaction !== 'function' || !session.inTransaction()) {", '  if (false) {'],
   ["evento: detalle 2.0 nunca validado", E, ESQUEMA, "    if (esPlano(d) && d.version_contrato === '2.0') validarDetalleV2(this, d);", "    if (false) validarDetalleV2(this, d);"],
   ["evento: admite copias en el detalle", E, ESQUEMA, "  if (!clavesExactas(d, CLAVES_DETALLE_V2)) falla2(", "  if (false) falla2("],
-  ["evento: tipo sin regla 2.0", E, ESQUEMA, "  if (!resultados) falla2(", "  if (false) falla2("],
+  // H3.3: «tipo sin regla 2.0» (quitar `if (!resultados)`) quedó equivalente: todos los tipos de
+  // evento con intento tienen ahora regla 2.0, así que esa guarda ya no es alcanzable. Se reemplaza
+  // por las reglas nuevas de cada transición de revalidación.
+  ["evento: entrada_revision con cualquier resultado", E, ESQUEMA, "entrada_revision: ['extraccion_ambigua']", "entrada_revision: ['extraccion_ambigua', 'fuente_cambio']"],
+  ["evento: obsolescencia con cualquier resultado", E, ESQUEMA, "obsolescencia: ['fuente_cambio']", "obsolescencia: ['fuente_cambio', 'exito']"],
   ["evento: resultado sin coherencia", E, ESQUEMA, "  if (!resultados.includes(d.resultado)) falla2(", "  if (false) falla2("],
   ["evento: actor de cualquier proceso", E, ESQUEMA, "  if (ev.actor?.tipo !== 'sistema' || ev.actor?.identificador !== PROCESO_V2.nombre) falla2(", "  if (false) falla2("],
   ["evento: adaptador libre", E, ESQUEMA, "  if (!clavesExactas(d.adaptador, ['nombre', 'version']) || !NOMBRE_TECNICO.test(d.adaptador.nombre) || !NOMBRE_TECNICO.test(d.adaptador.version)) falla2(", "  if (false) falla2("],

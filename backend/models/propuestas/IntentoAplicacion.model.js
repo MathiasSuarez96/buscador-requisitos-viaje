@@ -110,7 +110,20 @@ const esV2 = (doc) => doc.version_contrato === '2.0';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const NOMBRE_TECNICO = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const PROCESO_V2 = Object.freeze({ nombre: 'aplicar-propuesta-v2', version: '1' });
-const RESULTADOS_V2 = ['exito', 'valor_actual_cambio', 'identidad_requisito_cambio', 'propuesta_no_aplicable', 'escritura_abortada'];
+const RESULTADOS_V2 = ['exito', 'valor_actual_cambio', 'identidad_requisito_cambio', 'propuesta_no_aplicable', 'escritura_abortada',
+  // H3.3: resultados de la revalidación externa con el adaptador 2.0.
+  'fuente_temporalmente_no_disponible', 'extraccion_ambigua', 'fuente_cambio', 'revalidacion_vencida'];
+// H3.3: lecturas de la fuente que hizo el orquestador (evidencia para revisión humana).
+// Obligatorias en los resultados efectivos que nacen de la lectura; opcionales en una revalidación
+// vencida (puede venir de un cambio que no llegó a registrarse a tiempo); prohibidas en el resto.
+const RESULTADOS_CON_LECTURAS = ['fuente_temporalmente_no_disponible', 'extraccion_ambigua', 'fuente_cambio'];
+const RESULTADOS_LECTURAS_OPCIONALES = ['revalidacion_vencida'];
+// Sin revalidación validada contra lo aprobado: la lectura no dio hechos confirmados.
+const RESULTADOS_SIN_REVALIDACIONES = ['fuente_temporalmente_no_disponible', 'extraccion_ambigua'];
+const TIPOS_LECTURA = ['hechos', 'ambiguo', 'no_disponible'];
+const CODIGOS_FALLO_LECTURA = ['red', 'tiempo_agotado', 'http', 'redireccion_fuera_del_sitio', 'redireccion_sin_destino', 'demasiadas_redirecciones', 'no_html', 'cuerpo_ilegible', 'demasiado_grande'];
+const CAMPOS_LECTURA = ['obligatoriedad', 'alcance', 'ventana_horas_antes'];
+const MOTIVOS_CAMPO_LECTURA = ['sin_evidencia', 'contradiccion', 'condicionada', 'no_atribuible', 'exclusion', 'fuera_de_dominio'];
 const CATEGORIAS_CONFLICTO_V2 = {
   identidad_requisito_cambio: ['destino_no_encontrado', 'requisito_id_no_encontrado', 'requisito_id_duplicado', 'identidad_semantica_no_coincide'],
   valor_actual_cambio: ['claves_desconocidas', 'valor_no_capturable', 'instantanea_no_coincide']
@@ -118,7 +131,7 @@ const CATEGORIAS_CONFLICTO_V2 = {
 const CODIGOS_ERROR_EXTERNO = ['red', 'clave_duplicada', 'servidor', 'inconsistencia', 'desconocido'];
 // Campos que solo existen en una versión: su presencia en la otra es una mezcla.
 const CAMPOS_SOLO_V1 = ['evidencia_fresca', 'revalidacion', 'precondicion', 'valor_observado', 'identidad_esperada_no_coincide'];
-const CAMPOS_SOLO_V2 = ['identidad_operador', 'aprobacion', 'revalidaciones', 'conflicto', 'precondiciones', 'fecha_verificacion', 'error_externo'];
+const CAMPOS_SOLO_V2 = ['identidad_operador', 'aprobacion', 'revalidaciones', 'conflicto', 'precondiciones', 'fecha_verificacion', 'error_externo', 'lecturas_fuente'];
 const canonico = (v) => JSON.stringify(canonicalizarValor(v ?? null));
 const presenteEn = (doc, campo) => doc.get(campo) !== undefined;
 
@@ -189,6 +202,34 @@ const revalidacionV2Schema = new mongoose.Schema(
     revalidada_en: { type: Date, required: true }
   },
   { _id: false }
+);
+
+// H3.3: una lectura de la fuente. Solo códigos cerrados, hashes, fechas y evidencia breve
+// (oraciones de la ficha, ≤ 240 caracteres); nunca el HTML ni el error crudo.
+const campoSinConfirmarSchema = new mongoose.Schema(
+  {
+    campo: { type: String, required: true },
+    motivo: { type: String, required: true }
+  },
+  { _id: false }
+);
+const lecturaFuenteV2Schema = new mongoose.Schema(
+  {
+    orden: { type: Number, required: true },
+    tipo: { type: String, required: true },
+    url: { type: String, required: true },
+    fuente_nombre: { type: String, required: true },
+    consultado_en: { type: Date, required: true },
+    revalidada_en: { type: Date },
+    hechos_hash: { type: String },
+    codigo_fallo: { type: String },
+    http_status: { type: Number },
+    campos_sin_confirmar: { type: [campoSinConfirmarSchema], default: undefined },
+    evidencia: { type: mongoose.Schema.Types.Mixed },
+    // Diagnóstico: hash del HTML recibido. Nunca se compara ni decide nada.
+    contenido_sha256: { type: String }
+  },
+  { _id: false, minimize: false }
 );
 
 const aprobacionV2Schema = new mongoose.Schema(
@@ -350,7 +391,8 @@ const intentoAplicacionSchema = new mongoose.Schema(
     precondiciones: { type: [precondicionV2Schema], default: undefined, immutable: true },
     // Mixed: un path String convertiría un Date a texto local; se valida como string.
     fecha_verificacion: { type: mongoose.Schema.Types.Mixed, immutable: true },
-    error_externo: { type: String, enum: CODIGOS_ERROR_EXTERNO, immutable: true }
+    error_externo: { type: String, enum: CODIGOS_ERROR_EXTERNO, immutable: true },
+    lecturas_fuente: { type: [lecturaFuenteV2Schema], default: undefined, immutable: true }
   },
   {
     collection: 'intentos_aplicacion',
@@ -451,6 +493,8 @@ function validarV2(doc) {
   // Revalidaciones: solo ya validadas; el rechazo temprano no lleva el campo.
   if (doc.etapa_fallo === 'precondiciones_propuesta') {
     if (doc.revalidaciones !== undefined) falla2('el rechazo de etapa 0 no admite revalidaciones.');
+  } else if (RESULTADOS_SIN_REVALIDACIONES.includes(efectivo)) {
+    if (doc.revalidaciones !== undefined) falla2(`resultado efectivo "${efectivo}" no admite revalidaciones: la lectura no confirmó hechos.`);
   } else {
     if (!Array.isArray(doc.revalidaciones) || doc.revalidaciones.length === 0) falla2('revalidaciones es obligatoria y no vacía.');
     if (doc.revalidaciones.some((r) => r == null)) falla2('revalidaciones[] no admite elementos vacíos.');
@@ -484,6 +528,63 @@ function validarV2(doc) {
   if (doc.resultado === 'escritura_abortada') {
     if (doc.error_externo == null) falla2('escritura_abortada exige error_externo.');
   } else if (presenteEn(doc, 'error_externo')) falla2(`resultado "${doc.resultado}" no admite error_externo.`);
+
+  validarLecturasV2(doc, efectivo);
+}
+
+// H3.3: lecturas de la fuente, coherentes con el resultado efectivo.
+function validarLecturasV2(doc, efectivo) {
+  const lecturas = doc.lecturas_fuente;
+  if (RESULTADOS_CON_LECTURAS.includes(efectivo)) {
+    if (!Array.isArray(lecturas) || lecturas.length === 0) falla2(`resultado efectivo "${efectivo}" exige lecturas_fuente.`);
+  } else if (!RESULTADOS_LECTURAS_OPCIONALES.includes(efectivo)) {
+    if (lecturas !== undefined) falla2(`resultado efectivo "${efectivo}" no admite lecturas_fuente.`);
+    return;
+  }
+  if (lecturas === undefined) return;
+  if (!Array.isArray(lecturas) || lecturas.length === 0 || lecturas.length > 2) falla2('lecturas_fuente admite una o dos lecturas.');
+  lecturas.forEach((l, i) => {
+    if (l == null) falla2(`lecturas_fuente[${i}] vacía.`);
+    if (l.orden !== i + 1) falla2(`lecturas_fuente[${i}].orden debe ser ${i + 1}.`);
+    if (!TIPOS_LECTURA.includes(l.tipo)) falla2(`lecturas_fuente[${i}].tipo inválido.`);
+    if (!urlHttpsSinCredenciales(l.url)) falla2(`lecturas_fuente[${i}].url debe ser https canónica sin credenciales.`);
+    if (typeof l.fuente_nombre !== 'string' || l.fuente_nombre.trim() === '' || l.fuente_nombre.length > 200) falla2(`lecturas_fuente[${i}].fuente_nombre inválido.`);
+    if (!(l.consultado_en instanceof Date) || Number.isNaN(l.consultado_en.getTime())) falla2(`lecturas_fuente[${i}].consultado_en inválido.`);
+    if (l.contenido_sha256 != null && !SHA256_HEX.test(l.contenido_sha256)) falla2(`lecturas_fuente[${i}].contenido_sha256 inválido.`);
+    const conRespuesta = l.tipo !== 'no_disponible';
+    if (conRespuesta !== (l.revalidada_en instanceof Date)) falla2(`lecturas_fuente[${i}]: revalidada_en solo y siempre con respuesta de la fuente.`);
+    if ((l.tipo === 'hechos') !== (typeof l.hechos_hash === 'string')) falla2(`lecturas_fuente[${i}]: hechos_hash solo y siempre en una lectura con hechos.`);
+    if (l.hechos_hash != null && !SHA256_HEX.test(l.hechos_hash)) falla2(`lecturas_fuente[${i}].hechos_hash inválido.`);
+    if (l.tipo === 'no_disponible') {
+      if (!CODIGOS_FALLO_LECTURA.includes(l.codigo_fallo)) falla2(`lecturas_fuente[${i}].codigo_fallo debe ser un código cerrado.`);
+      if (l.http_status != null && !(Number.isInteger(l.http_status) && l.http_status >= 100 && l.http_status <= 599)) falla2(`lecturas_fuente[${i}].http_status inválido.`);
+      if (l.evidencia !== undefined || l.campos_sin_confirmar !== undefined) falla2(`lecturas_fuente[${i}]: un fallo de la fuente no tiene evidencia.`);
+    } else {
+      if (l.codigo_fallo != null || l.http_status != null) falla2(`lecturas_fuente[${i}]: codigo_fallo solo en un fallo de la fuente.`);
+      const ev = l.evidencia;
+      if (ev === null || typeof ev !== 'object' || Array.isArray(ev) || !Object.keys(ev).every(k => CAMPOS_LECTURA.includes(k))) falla2(`lecturas_fuente[${i}].evidencia debe ser un objeto por campo.`);
+      for (const k of Object.keys(ev)) {
+        if (!Array.isArray(ev[k]) || ev[k].length > 10 || !ev[k].every(t => typeof t === 'string' && t.length > 0 && t.length <= 240)) falla2(`lecturas_fuente[${i}].evidencia.${k} debe ser una lista breve de textos.`);
+      }
+    }
+    if (l.tipo === 'ambiguo') {
+      const c = l.campos_sin_confirmar;
+      if (!Array.isArray(c) || c.length === 0) falla2(`lecturas_fuente[${i}]: una lectura ambigua indica qué campo quedó sin confirmar.`);
+      if (c.some(x => x == null || !CAMPOS_LECTURA.includes(x.campo) || !MOTIVOS_CAMPO_LECTURA.includes(x.motivo))) falla2(`lecturas_fuente[${i}].campos_sin_confirmar con campo o motivo fuera de la lista cerrada.`);
+      if (new Set(c.map(x => x.campo)).size !== c.length) falla2(`lecturas_fuente[${i}].campos_sin_confirmar repite un campo.`);
+    } else if (l.campos_sin_confirmar !== undefined) falla2(`lecturas_fuente[${i}]: campos_sin_confirmar solo en una lectura ambigua.`);
+  });
+  const ultima = lecturas[lecturas.length - 1];
+  if (efectivo === 'fuente_temporalmente_no_disponible' && ultima.tipo !== 'no_disponible') falla2('la última lectura debe ser el fallo de la fuente.');
+  if (efectivo === 'extraccion_ambigua') {
+    const cambioNoConfirmado = lecturas.length === 2 && lecturas.every(l => l.tipo === 'hechos') && lecturas[0].hechos_hash !== lecturas[1].hechos_hash;
+    if (ultima.tipo !== 'ambiguo' && !cambioNoConfirmado) falla2('extraccion_ambigua exige una lectura ambigua o dos lecturas con hechos distintos.');
+  }
+  if (efectivo === 'fuente_cambio') {
+    // Solo un cambio confirmado por dos lecturas con los mismos hechos nuevos.
+    if (lecturas.length !== 2 || !lecturas.every(l => l.tipo === 'hechos') || lecturas[0].hechos_hash !== lecturas[1].hechos_hash) falla2('fuente_cambio exige dos lecturas con los mismos hechos.');
+    if (!Array.isArray(doc.revalidaciones) || doc.revalidaciones.length !== 1 || doc.revalidaciones[0].hechos_hash !== lecturas[0].hechos_hash) falla2('fuente_cambio: revalidaciones debe resumir los hechos nuevos confirmados.');
+  }
 }
 
 // Integridad: a lo sumo un intento exitoso por propuesta.

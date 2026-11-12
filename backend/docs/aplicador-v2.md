@@ -216,6 +216,134 @@ inicio no reemplaza la autenticación ni el permiso del operador (pendientes del
   motivos de red y límites de respuesta se definirán con el prototipo de solo lectura de
   Colombia, antes de cerrar el contrato del adaptador (H3.2).
 
+## H3.3 — Flujo interno con la lectura de CheckMig
+
+Alcance: **flujo interno**, sin contrato HTTP, CLI, panel ni frontend. Lo prueban Mongo
+efímero y la ficha simulada (`scripts/test-orquestar-aplicacion-v2.js`). No hay escrituras
+en Atlas.
+
+Archivos:
+
+- `services/propuestas/orquestar-aplicacion-v2.js`: el orquestador (`aplicarConRevalidacionV2`).
+- `services/propuestas/registrar-revalidacion-v2.js`: el cierre de los resultados de
+  revalidación (`registrarRevalidacionV2`).
+- Modelos: `IntentoAplicacion` y `EventoPropuesta`, extendidos para 2.0.
+
+### Piezas reutilizadas
+
+- **Permiso:**
+  - panel: el operador ya resuelto (`resolverOperadorPanel`), con el permiso `aplicar` (igual
+    que `services/panel/aplicaciones-propuestas.js`) y un `request_id`;
+  - comando: `connectionStatus` contra la allowlist (`resolverActor`), igual que el 1.0.
+  - Las dos auditorías pasan por `validarAuditoria`.
+- **Adaptador:** `elegirAdaptadorV2` (registro 2.0) elige en el servidor.
+- **Aprobación vigente:** `verificarPrecondicionesV2` y el sobre 2.0 validado.
+- **Inicio durable:** `construirInicioV2` y `registrarInicioV2`. El mismo `intento` (ids e
+  `iniciado_en`) se usa hasta el cierre.
+- **Escritura y cierre:**
+  - el núcleo `aplicarPropuestaV2`, sin cambios, para el éxito, los conflictos y el no aplicable;
+  - para los resultados de revalidación, sus piezas internas, exportadas como `interno`: CAS,
+    inicio exacto en cada escritura, `escribirConConfirmacionV2` (transacción y relectura) y
+    `registrarIndependiente`.
+- **Detección del cambio:** `verificarRevalidaciones` sigue siendo el único punto que lo detecta.
+
+### Orden y resultados
+
+1. **Permiso.** Sin permiso no se lee ni se escribe nada (`ErrorPermisoAplicacionV2` o
+   `ErrorActorNoAutorizado`).
+2. **Índices, propuesta y adaptador.** Si la propuesta es incompatible, se devuelve
+   `{ resultado: 'adaptador_incompatible', codigo }` con el código cerrado del adaptador (por
+   ejemplo `varias_fuentes` o `fuente_no_soportada`). No hay inicio, consulta ni escritura.
+3. **Inicio confirmado ANTES de la primera consulta.** Si no se puede confirmar
+   (`ErrorInicioInciertoV2`), no se consulta. Si la aprobación no está vigente, el núcleo cierra
+   el intento como `propuesta_no_aplicable` sin consultar la fuente.
+4. **Primera lectura** (una invocación del adaptador hace una sola consulta):
+   - `no_disponible` → `fuente_temporalmente_no_disponible`: intento independiente, la propuesta
+     sigue `aprobada` y se puede reintentar;
+   - `ambiguo` → `extraccion_ambigua`: transacción con CAS `aprobada → revision_requerida` y
+     evento `entrada_revision`;
+   - hechos iguales a los aprobados → el núcleo existente aplica, con CAS, transacción y
+     relectura. Si la revalidación vence antes de escribir, se registra `revalidacion_vencida` y la
+     propuesta sigue `aprobada`;
+   - hechos distintos → segunda lectura.
+5. **Segunda lectura:**
+   - los mismos hechos nuevos, con las dos lecturas vigentes al registrar (0 ≤ t − revalidada_en
+     ≤ 15 min) → `fuente_cambio`: CAS `aprobada → obsoleta` y evento `obsolescencia`;
+   - confirmada pero alguna lectura ya no vigente → `revalidacion_vencida` (sigue `aprobada`);
+   - falla → `fuente_temporalmente_no_disponible` (sigue `aprobada`);
+   - ambigua, u otros hechos (incluidos los aprobados) → `extraccion_ambigua`, con
+     `cambio_no_confirmado` en el motivo (`revision_requerida`).
+
+   `registrarRevalidacionV2` vuelve a exigir las dos lecturas iguales, distintas de lo aprobado y
+   vigentes: no se puede marcar obsoleta una propuesta con una sola lectura.
+
+Ningún resultado de revalidación escribe en destinos ni en el historial.
+
+### Lecturas en el intento (`lecturas_fuente`, solo 2.0)
+
+- Una o dos lecturas `{ orden, tipo, url, fuente_nombre, consultado_en, … }`:
+  - con hechos: `revalidada_en`, `hechos_hash`, `evidencia` y `contenido_sha256`;
+  - ambigua: `revalidada_en`, `campos_sin_confirmar: [{campo, motivo}]`, con campo y motivo de
+    listas cerradas, más `evidencia` y `contenido_sha256`;
+  - fallo: `codigo_fallo` (lista cerrada: `red`, `tiempo_agotado`, `http`, redirecciones,
+    `no_html`, `cuerpo_ilegible`, `demasiado_grande`) y `http_status` si lo hubo. No lleva
+    evidencia ni `revalidada_en`.
+- La evidencia son oraciones de la ficha de 240 caracteres como máximo, hasta 10 por campo.
+  Nunca se guarda el HTML ni el error crudo. `contenido_sha256` es solo diagnóstico.
+- **Cuándo van:**
+  - obligatorias en `extraccion_ambigua`, `fuente_temporalmente_no_disponible` y
+    `fuente_cambio`, también en su `escritura_abortada` por transición;
+  - opcionales en `revalidacion_vencida`;
+  - prohibidas en el resto.
+- `revalidaciones[]`:
+  - prohibidas en `extraccion_ambigua` y `fuente_temporalmente_no_disponible`, porque no hubo
+    hechos confirmados;
+  - en `fuente_cambio`, resumen los hechos nuevos confirmados (el hash nuevo y la lectura más
+    antigua).
+- Eventos 2.0: `entrada_revision` solo con `extraccion_ambigua` y `obsolescencia` solo con
+  `fuente_cambio`. Siempre llevan `motivo`.
+
+### Cómo se revisa un caso ambiguo
+
+1. Buscar la propuesta en `revision_requerida` y su evento `entrada_revision`. El evento lleva
+   `intento_aplicacion_id`.
+2. Abrir el intento (`intentos_aplicacion`, mismo `intento_id`) y leer `lecturas_fuente`:
+   - `campos_sin_confirmar` dice qué campo no se pudo confirmar y por qué (`no_atribuible`,
+     `condicionada`, `exclusion`, `sin_evidencia`, `contradiccion` o `fuera_de_dominio`);
+   - `evidencia.<campo>` trae las oraciones que leyó el parser;
+   - con dos lecturas de hechos distintos, el motivo es `cambio_no_confirmado`: comparar los
+     `hechos_hash` y la evidencia de cada una.
+3. Revisar la ficha oficial en la `url` de la lectura. Si el HTML cambió, `contenido_sha256`
+   lo muestra, pero no prueba que cambiaran los datos.
+4. Decidir con una persona: preparar otra propuesta, o cancelar esta (`revision_requerida`
+   admite `cancelacion`). En H3.3 no hay un flujo para volver a `aprobada`.
+
+### Piloto y fuente
+
+- La propuesta piloto de las pruebas es **sintética**. Se arma con `crearSobreRequisitoV2` y la
+  aprobación real de `decidir-propuesta`, sin datos de Atlas.
+- Su única fuente es la **URL exacta de la ficha informativa**
+  (`https://www.migracioncolombia.gov.co/tramites-y-servicios/aplicativos/checkmig`). Es la que
+  lee el adaptador.
+- El `link` del requisito puede seguir siendo el **enlace al formulario** que abre el viajero
+  (`https://apps.migracioncolombia.gov.co/check-mig/`). El éxito no lo cambia. Una propuesta
+  cuya fuente fuera el formulario es `fuente_no_soportada`.
+
+### Límites de H3.3
+
+- **Inicio que queda sin cierre:**
+  - si el adaptador devolviera algo fuera de contrato (`ErrorInconsistencia`);
+  - si el núcleo lanzara otro código de revalidación (revalidaciones incompletas o inválidas).
+  Con el adaptador real no ocurre: la proyección sale del mismo adaptador. Queda como
+  incertidumbre explícita, igual que `ErrorResultadoIncierto`.
+- **Segunda lectura:** el cambio usa dos consultas en el mismo intento. Un `fuente_cambio`
+  exige que las dos estén dentro de la ventana de 15 minutos.
+- **Panel:** la lectura del panel de los resultados nuevos (`lecturas_fuente`, eventos
+  `entrada_revision` y `obsolescencia` 2.0) no se cambió ni se verificó. Queda para el contrato
+  HTTP y el frontend.
+- **Entregas separadas:** el contrato HTTP, el frontend, la auditoría general del runner y
+  `.gitattributes`.
+
 ## Errores y datos del llamador
 
 - Los mensajes públicos de error pasan por `sanearMensaje`, pero `cause` (y los extras

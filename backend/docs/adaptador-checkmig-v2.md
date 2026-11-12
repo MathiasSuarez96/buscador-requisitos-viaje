@@ -1,6 +1,7 @@
 # Adaptador 2.0 de CheckMig (H3.2, solo lectura)
 
-Estado: implementado y **sin integrar**. Ningún servicio, ruta, CLI ni el aplicador 2.0 lo llama.
+Estado: implementado. Desde H3.3 lo usa el flujo interno `services/propuestas/orquestar-aplicacion-v2.js`
+(ver `docs/aplicador-v2.md`, sección H3.3). No hay ruta, CLI ni panel que lo llame.
 No escribe nada, no usa Mongo ni modelos y hace una sola lectura de la ficha por invocación.
 
 Archivos:
@@ -118,14 +119,14 @@ hechos_hash = hashHechos(hechos)   // sha256-toc-hechos-v1, sin cambios
   nunca produce `fuente_cambio`.
 - **Cambio detectado:** un resultado `hechos` cuyo `hechos_hash` difiere del guardado en la
   propuesta. `verificarRevalidaciones` lanza `fuente_cambio`.
-- **Pendiente obligatorio para la orquestación posterior** (no implementado en H3.2):
+- **Orquestación** (implementada en H3.3, `orquestar-aplicacion-v2.js` y `registrar-revalidacion-v2.js`):
   - antes de registrar `fuente_cambio`, lo que deja la propuesta en `obsoleta`, se pide una
     **segunda lectura válida**, en otra invocación de `revalidar()`;
   - esa segunda lectura debe devolver `hechos` con **el mismo `hechos_hash` cambiado**;
   - si la segunda lectura es `ambiguo` o `no_disponible`, o da otros hechos, no se marca la
     propuesta como obsoleta;
   - cada invocación del adaptador hace una sola lectura; la orquestación decide cuándo repetir;
-  - en este bloque solo se prueba la detección del cambio.
+  - H3.2 probaba solo la detección; H3.3 prueba el flujo completo con Mongo efímero.
 
 ## 6. Lectura de la ficha
 
@@ -271,9 +272,8 @@ La consulta real va por separado: `node scripts/prototipo-checkmig.js` (exit 0 `
 
 ## 10. Fuera de alcance y límites
 
-- **Fuera de alcance:** la orquestación (registrar `extraccion_ambigua`,
-  `fuente_temporalmente_no_disponible`, `fuente_cambio` y la segunda lectura), la integración con
-  el aplicador 2.0, las propuestas con varias fuentes, Atlas, el frontend y el push.
+- **Fuera de alcance:** las propuestas con varias fuentes, Atlas, el contrato HTTP, el frontend y
+  el push. La orquestación y la integración con el aplicador 2.0 son de H3.3.
 - `fuente_cambio` deja la propuesta en `obsoleta`, que es terminal. Por eso se exige la segunda
   lectura de §5.
 - `AbortSignal.timeout` no mantiene vivo el proceso: con red real lo mantiene el socket. Una

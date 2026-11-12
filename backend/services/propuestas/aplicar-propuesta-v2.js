@@ -236,7 +236,7 @@ function construirIntentoV2(ctx, r) {
     // Solo existe tras validar las revalidaciones; un rechazo temprano no persiste datos del llamador.
     ...(ctx.revalidaciones_resumen ? { revalidaciones: ctx.revalidaciones_resumen } : {})
   };
-  for (const campo of ['etapa_fallo', 'resultado_no_registrado', 'historial_id', 'conflicto', 'precondiciones', 'fecha_verificacion', 'error_externo']) if (r[campo] !== undefined) doc[campo] = r[campo];
+  for (const campo of ['etapa_fallo', 'resultado_no_registrado', 'historial_id', 'conflicto', 'precondiciones', 'fecha_verificacion', 'error_externo', 'lecturas_fuente']) if (r[campo] !== undefined) doc[campo] = r[campo];
   if (r.error_mensaje !== undefined) doc.error_mensaje = sanearMensaje(r.error_mensaje);
   return doc;
 }
@@ -611,5 +611,9 @@ module.exports = {
   construirInicioV2, registrarInicioV2,
   verificarIndicesV2, verificarPrecondicionesV2, clasificarRequisitoV2, resultadoEsperado, diferenciasConfirmadaV2,
   construirIntentoV2, construirHistorialV2, construirEventoV2, dependenciasDestino, aplicarPropuestaV2,
-  INDICE_TRANSVERSAL
+  INDICE_TRANSVERSAL,
+  // H3.3: piezas internas que reutiliza registrar-revalidacion-v2.js (mismo inicio, CAS,
+  // confirmación por relectura y registro independiente). No son API pública.
+  interno: Object.freeze({ MENSAJE_ABORTADA, validarContextoV2, inicioDesdeCtx, verificarInicioV2, sobreGuardado, casPropuesta,
+    esperadoPropuesta, escribirConConfirmacionV2, registrarIndependiente, registrarNoAplicable, validarDocumentos, resultado })
 };
