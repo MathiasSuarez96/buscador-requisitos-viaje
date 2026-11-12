@@ -1,0 +1,19 @@
+{
+  "descripcion": "Registro de PRUEBA para el modo simulación: copia local del requisito Check-Mig publicado, tomada del respaldo backups/destinos_2026-10-21_210827788.json. No se lee Atlas.",
+  "origen": "backups/destinos_2026-10-21_210827788.json",
+  "destino": {
+    "pais": "Colombia",
+    "codigo_iso": "CO"
+  },
+  "requisito_id": "6aaddd0e9f54309f9d82727b",
+  "requisito": {
+    "tipo": "formulario_digital",
+    "nombre": "Check-Mig",
+    "obligatorio": "si",
+    "descripcion": "Formulario migratorio digital obligatorio antes de cada vuelo de entrada y salida.",
+    "fuente": "https://apps.migracioncolombia.gov.co/check-mig/",
+    "link": "https://apps.migracioncolombia.gov.co/check-mig/",
+    "fecha_verificacion": "2026-08-18",
+    "estado": "confirmado"
+  }
+}

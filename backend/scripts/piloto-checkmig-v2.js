@@ -8,19 +8,13 @@
  * con la ficha SIMULADA (fixtures de scripts/fixtures/checkmig). No acepta URI, no lee .env y no
  * consulta la red: nunca toca Atlas.
  *
- * Un ciclo (ejecutarCiclo):
- *  1. Lee el destino y el requisito CheckMig guardado. Si ya hay una propuesta activa para ese
- *     requisito, no crea otra (y no consulta la fuente).
- *  2. Lee la ficha con el adaptador 2.0 (adaptador.leer: una consulta). Ambigua o fallida → no se
- *     propone nada; el resultado dice qué quedó pendiente.
- *  3. Compara los hechos confirmados con el requisito guardado. Sin diferencia → sin_cambio.
- *  4. POLÍTICA DEL PILOTO (POLITICA_PILOTO, explícita y solo local): autoriza ÚNICAMENTE corregir
- *     `obligatorio` del requisito «Check-Mig» (formulario_digital) desde una lectura con hechos y
- *     evidencia de obligatoriedad. Cualquier otro caso → cambio_no_autorizado.
- *  5. Genera la propuesta 2.0 (crearSobreRequisitoV2 + modelo PropuestaCambio), registra la
- *     aprobación con decidirPropuesta (identidad de la política) y aplica con H3.3
- *     (aplicarConRevalidacionV2): permiso, inicio durable, segunda lectura de la ficha, CAS,
- *     transacción, auditoría y confirmación son los de H3.3.
+ * Un ciclo es el CICLO COMPARTIDO (services/propuestas/ciclo/ciclo-revalidacion-v2.js) con el perfil
+ * checkmig-colombia, la política habilitada y las identidades locales del piloto:
+ *  1. Una propuesta activa para el requisito se informa y no se crea otra (sin consultar la fuente).
+ *  2. Lee la ficha con el adaptador 2.0 (adaptador.leer: una consulta) y clasifica la lectura:
+ *     sin_cambio, cambio_aplicable, revision_humana o fuente_no_disponible.
+ *  3. Solo un cambio aplicable genera la propuesta 2.0, registra la aprobación con
+ *     decidirPropuesta y aplica con H3.3 (aplicarConRevalidacionV2).
  *
  * La demostración corre seis ciclos sobre dos destinos de prueba e imprime GET /api/destinos
  * antes y después. Identidades del piloto: solo válidas en este Mongo efímero, que no tiene
@@ -32,32 +26,21 @@ const { readFileSync } = require('node:fs');
 const mongoose = require('../config/mongoose');
 const { ObjectId } = require('mongodb');
 const { crearApp } = require('../app');
-const Destino = require('../models/Destino.model');
-const PropuestaCambio = require('../models/propuestas/PropuestaCambio.model');
-const D = require('../services/propuestas/decidir-propuesta');
 const V2 = require('../services/propuestas/aplicar-propuesta-v2');
-const { aplicarConRevalidacionV2 } = require('../services/propuestas/orquestar-aplicacion-v2');
-const { crearPersistenciaV2 } = require('../services/propuestas/persistencia-aplicacion-v2');
-const adaptador = require('../services/propuestas/adaptadores/v2/migracion-colombia-checkmig');
-const { crearSobreRequisitoV2, advertenciasRequeridas } = require('../services/propuestas/payload-requisito-v2');
-const { capturarIdentidadEInstantanea, aplicarCambiosAInstantanea } = require('../services/propuestas/contrato-requisito-v2');
 const { INDICES_DECISION, INDICES_APLICACION } = require('../services/propuestas/indices-propuestas');
-const { ESTADOS_ACTIVOS } = require('../services/propuestas/contrato-propuestas');
+const { ejecutarCicloV2, crearDepsAplicacion } = require('../services/propuestas/ciclo/ciclo-revalidacion-v2');
+const perfilCheckmig = require('../services/propuestas/ciclo/perfil-checkmig-colombia');
 
 // ------------------------------------------------------------------
-// Política explícita del piloto
+// Perfil e identidades del piloto (solo Mongo efímero)
 // ------------------------------------------------------------------
 
-const POLITICA_PILOTO = Object.freeze({
-  nombre: 'piloto-checkmig-obligatoriedad', version: '1',
-  requisito: Object.freeze({ tipo: 'formulario_digital', nombre: 'Check-Mig' }),
-  campo: 'obligatorio',
-  fuente: adaptador.FUENTE_NOMBRE
-});
+// El piloto usa el MISMO perfil y el MISMO ciclo que la ejecución real (services/propuestas/ciclo).
+const PERFIL = perfilCheckmig;
 // Aprobador: la persona que corre el piloto, bajo la política (identidad solo local).
 const IDENTIDAD_POLITICA = Object.freeze({
   actor: { tipo: 'humano', identificador: 'piloto.local' },
-  identidad_operador: { metodo: 'politica_piloto_local', politica: `${POLITICA_PILOTO.nombre}-v${POLITICA_PILOTO.version}` },
+  identidad_operador: { metodo: 'politica_piloto_local', politica: 'piloto-checkmig-obligatoriedad-v1' },
   comando: { nombre: 'piloto-checkmig-v2', version: '1' }
 });
 // Aplicador: credencial de comando de H3.3 con una allowlist propia del piloto.
@@ -66,97 +49,12 @@ const CREDENCIAL_PILOTO = Object.freeze({
   usuarios_autenticados: [{ user: 'piloto-local', db: 'admin' }],
   operadores_autorizados: Object.freeze([Object.freeze({ usuario_atlas: 'piloto-local', db: 'admin', identificador: 'piloto.local' })])
 });
-const valor = v => ({ presente: true, bson_tipo: 'string', valor: v });
 
-// Pura. ¿La lectura confirma un valor distinto del guardado y la política lo autoriza?
-function evaluarPolitica(requisito, lectura) {
-  if (requisito?.tipo !== POLITICA_PILOTO.requisito.tipo || requisito?.nombre !== POLITICA_PILOTO.requisito.nombre) {
-    return { cambio: false, autoriza: false, motivo: 'requisito_fuera_de_politica' };
-  }
-  if (lectura?.tipo !== 'hechos' || lectura.fuente_nombre !== POLITICA_PILOTO.fuente || !(lectura.evidencia?.obligatoriedad?.length > 0)) {
-    return { cambio: false, autoriza: false, motivo: 'sin_evidencia_confirmada' };
-  }
-  const esperado = lectura.hechos.obligatoriedad === 'obligatorio' ? 'si' : 'no';
-  if (requisito.obligatorio === esperado) return { cambio: false, autoriza: true, esperado };
-  // El contrato no admite un obligatorio recomendado: ese cambio excede la política.
-  if (esperado === 'si' && ['si', 'verificar'].includes(requisito.recomendado)) return { cambio: true, autoriza: false, motivo: 'requiere_cambiar_recomendado', esperado };
-  return { cambio: true, autoriza: true, esperado, cambios: [{ campo: POLITICA_PILOTO.campo, propuesto: valor(esperado) }] };
-}
-
-const camposPendientes = lectura => Object.entries(lectura.campos).filter(([, c]) => c.estado !== 'ok')
-  .map(([campo, c]) => ({ campo, motivo: String(c.motivo).split(':')[0], evidencia: [...c.evidencia] }));
-
-// ------------------------------------------------------------------
-// Un ciclo del piloto
-// ------------------------------------------------------------------
-
-async function ejecutarCiclo({ destinoId, requisitoId }, e) {
-  const col = n => e.conexion.db.collection(n);
-  const destino = await col('destinos').findOne({ _id: destinoId });
-  const requisito = (destino?.requisitos ?? []).find(r => r?._id instanceof ObjectId && r._id.equals(requisitoId));
-  if (!requisito) return { resultado: 'requisito_no_encontrado' };
-
-  // 1. Sin duplicar: una propuesta activa para este requisito se informa y no se crea otra.
-  const activa = await col('propuestas_cambio').findOne({ destino_id: destinoId, requisito_id: requisitoId, estado: { $in: ESTADOS_ACTIVOS } });
-  if (activa) {
-    return { resultado: 'propuesta_activa_existente', propuesta_id: activa.propuesta_id, estado_propuesta: activa.estado, lecturas: 0,
-      pendiente: activa.estado === 'revision_requerida' ? { tipo: 'revision_humana', propuesta_id: activa.propuesta_id } : null };
-  }
-
-  // 2. Lectura de la ficha con el adaptador.
-  const lectura = await adaptador.leer({ fetch: e.fetch, ahora: e.ahora });
-  if (lectura.tipo === 'no_disponible') {
-    return { resultado: 'lectura_no_disponible', lecturas: 1, pendiente: { tipo: 'reintentar', motivo: lectura.motivo } };
-  }
-  if (lectura.tipo === 'ambiguo') {
-    return { resultado: 'lectura_ambigua', lecturas: 1, pendiente: { tipo: 'revision_humana', url: lectura.url, campos: camposPendientes(lectura) } };
-  }
-
-  // 3–4. Comparación con el requisito guardado y política.
-  const politica = evaluarPolitica(requisito, lectura);
-  if (!politica.cambio) return { resultado: politica.autoriza ? 'sin_cambio' : 'cambio_no_autorizado', motivo: politica.motivo ?? null, lecturas: 1, hechos_hash: lectura.hechos_hash };
-  if (!politica.autoriza) return { resultado: 'cambio_no_autorizado', motivo: politica.motivo, lecturas: 1 };
-
-  // 5a. Propuesta 2.0 desde la lectura confirmada.
-  const captura = capturarIdentidadEInstantanea(requisito);
-  const advertencias = advertenciasRequeridas(captura.instantanea_anterior, aplicarCambiosAInstantanea(captura.instantanea_anterior, politica.cambios));
-  const propuestaId = e.uuid(), runId = e.uuid();
-  const sobre = crearSobreRequisitoV2({
-    fecha_propuesta: e.ahora().toISOString(), destino_id: destinoId.toHexString(), requisito_id: requisitoId.toHexString(),
-    run_id_origen: runId, propuesta_id: propuestaId, ...captura, cambios: politica.cambios,
-    fuentes: [{ nombre: lectura.fuente_nombre, url: lectura.url, capturado_en: lectura.revalidada_en.toISOString(),
-      hechos: lectura.hechos, algoritmo_hechos_hash: lectura.algoritmo_hechos_hash, hechos_hash: lectura.hechos_hash }],
-    advertencias
-  });
-  try {
-    await new PropuestaCambio({ propuesta_id: propuestaId, destino_id: destinoId, requisito_id: requisitoId, campo: 'requisito', run_id_origen: runId,
-      algoritmo_canonicalizacion: sobre.algoritmo_canonicalizacion, algoritmo_hash: sobre.algoritmo_hash, payload: sobre.payload, payload_hash: sobre.payload_hash }).save();
-  } catch (err) {
-    // Otra propuesta activa ganó la carrera (índice único de propuesta activa): no se duplica.
-    if (err?.code === 11000) return { resultado: 'propuesta_activa_existente', lecturas: 1, pendiente: null };
-    throw err;
-  }
-
-  // 5b. Decisión registrada bajo la política (evento de aprobación real).
-  const decision = await D.decidirPropuesta({ tipo_evento: 'aprobacion', propuesta_id: propuestaId, estado_esperado: 'pendiente_aprobacion',
-    payload_hash_esperado: sobre.payload_hash, version_coordinacion_esperada: 0, decision_aprobacion_id_esperado: null,
-    version_contrato_esperada: '2.0', advertencias_aceptadas: [...sobre.payload.advertencias] },
-  { ...D.crearDependenciasMongoose(e.conexion), uuid: e.uuid, ahora: e.ahora, resolverIdentidad: async () => structuredClone(IDENTIDAD_POLITICA) });
-  if (decision?.resultado !== 'decision_registrada') return { resultado: 'decision_no_registrada', propuesta_id: propuestaId, detalle: decision?.resultado ?? null, lecturas: 1 };
-
-  // 5c. Aplicación con H3.3 (revalida la ficha y escribe solo si los hechos siguen confirmados).
-  const entrada = { propuesta_id: propuestaId, estado_esperado: 'aprobada', payload_hash_esperado: sobre.payload_hash,
-    version_coordinacion_esperada: decision.version_coordinacion_nueva, decision_aprobacion_id_esperado: decision.evento_id };
-  const r = await aplicarConRevalidacionV2(entrada, CREDENCIAL_PILOTO, e.depsAplicacion());
-  const propuesta = await col('propuestas_cambio').findOne({ propuesta_id: propuestaId });
-  const intento = r.intento_id ? await col('intentos_aplicacion').findOne({ intento_id: r.intento_id }) : null;
-  const ultima = intento?.lecturas_fuente?.at(-1);
-  const pendiente = propuesta.estado === 'revision_requerida'
-    ? { tipo: 'revision_humana', propuesta_id: propuestaId, intento_id: r.intento_id, campos: (ultima?.campos_sin_confirmar ?? []).map(c => ({ ...c })) }
-    : propuesta.estado === 'aprobada' && r.resultado !== 'exito' ? { tipo: 'reintentar', propuesta_id: propuestaId, intento_id: r.intento_id, codigo: ultima?.codigo_fallo ?? r.resultado } : null;
-  return { resultado: r.resultado, propuesta_id: propuestaId, decision_evento_id: decision.evento_id, intento_id: r.intento_id,
-    estado_propuesta: propuesta.estado, lecturas: 1 + (r.lecturas ?? 0), valor_aplicado: r.resultado === 'exito' ? politica.esperado : null, pendiente };
-}
+// Un ciclo del piloto: el ciclo compartido con las identidades locales y la política habilitada.
+const ejecutarCiclo = (objetivo, e) => ejecutarCicloV2(objetivo, PERFIL, {
+  conexion: e.conexion, fetch: e.fetch, ahora: e.ahora, uuid: e.uuid, depsAplicacion: e.depsAplicacion,
+  politicaHabilitada: true, identidadDecision: IDENTIDAD_POLITICA, credencialAplicacion: CREDENCIAL_PILOTO
+});
 
 // ------------------------------------------------------------------
 // Entorno efímero: Mongo, índices, API pública y ficha simulada
@@ -196,17 +94,8 @@ async function crearEntorno({ ahora = () => new Date(), uuid = () => crypto.rand
     if (!siguiente) throw new Error('piloto: consulta a la ficha no programada.');
     return siguiente();
   };
-  const P = crearPersistenciaV2();
-  const depsAplicacion = () => ({
-    ahora, uuid, fetch,
-    verificarIndices: async () => V2.verificarIndicesV2(await listados()),
-    ejecutarTransaccion: fn => conexion.transaction(fn, { readConcern: { level: 'snapshot' }, writeConcern: { w: 'majority' } }),
-    leerPropuesta: (id, s) => conexion.db.collection('propuestas_cambio').findOne({ propuesta_id: id }, s ? { session: s } : {}),
-    leerEvento: (id, s) => conexion.db.collection('eventos_propuesta').findOne({ evento_id: id }, s ? { session: s } : {}),
-    ...P,
-    ...V2.dependenciasDestino(Destino.collection),
-    actualizarPropuestaCas: (f, upd, s) => conexion.db.collection('propuestas_cambio').updateOne(f, upd, { session: s })
-  });
+  const depsAplicacion = crearDepsAplicacion(conexion, { fetch, ahora, uuid, listados });
+
   return {
     conexion, ahora, uuid, fetch, depsAplicacion, consultas,
     programar: respuestas => { if (cola.length) throw new Error('piloto: quedaron respuestas sin consumir.'); cola = [...respuestas]; },
@@ -295,7 +184,7 @@ function imprimirApi(titulo, v, log) {
 }
 function imprimirCiclo(c, i, log) {
   log(`[${i + 1}] ${c.nombre} (${c.codigo_iso}; ficha simulada: ${c.ficha.join(', ') || 'sin consultas'})`);
-  log(`    resultado=${c.resultado}  lecturas=${c.lecturas}  destino_escrito=${c.destino_escrito ? 'sí' : 'no'}  propuestas_nuevas=${c.propuestas_nuevas}  historial_nuevo=${c.historial_nuevo}`);
+  log(`    resultado=${c.resultado}${c.motivo ? ` (${c.motivo})` : ''}  lecturas=${c.lecturas}  destino_escrito=${c.destino_escrito ? 'sí' : 'no'}  propuestas_nuevas=${c.propuestas_nuevas}  historial_nuevo=${c.historial_nuevo}`);
   if (c.propuesta_id) log(`    propuesta=${c.propuesta_id}  estado=${c.estado_propuesta}${c.decision_evento_id ? `  decisión=${c.decision_evento_id}` : ''}${c.intento_id ? `  intento=${c.intento_id}` : ''}`);
   if (c.valor_aplicado) log(`    aplicado: obligatorio=${JSON.stringify(c.valor_aplicado)}`);
   if (c.pendiente) {
@@ -305,7 +194,7 @@ function imprimirCiclo(c, i, log) {
   }
 }
 function imprimir(salida, log = console.log) {
-  log(`Piloto CheckMig 2.0 (Mongo efímero, ficha simulada, política ${POLITICA_PILOTO.nombre} v${POLITICA_PILOTO.version})`);
+  log(`Piloto CheckMig 2.0 (Mongo efímero, ficha simulada, perfil ${PERFIL.nombre} v${PERFIL.version}, política ${PERFIL.politica.nombre} v${PERFIL.politica.version})`);
   imprimirApi('antes', salida.api_antes, log);
   salida.ciclos.slice(0, 2).forEach((c, i) => imprimirCiclo(c, i, log));
   imprimirApi('tras las lecturas pendientes', salida.api_tras_pendientes, log);
@@ -315,7 +204,7 @@ function imprimir(salida, log = console.log) {
   imprimirApi('después', salida.api_despues, log);
 }
 
-module.exports = { POLITICA_PILOTO, IDENTIDAD_POLITICA, CREDENCIAL_PILOTO, evaluarPolitica, ejecutarCiclo, crearEntorno, demostrar, imprimir };
+module.exports = { PERFIL, IDENTIDAD_POLITICA, CREDENCIAL_PILOTO, ejecutarCiclo, crearEntorno, demostrar, imprimir };
 
 if (require.main === module) {
   (async () => {

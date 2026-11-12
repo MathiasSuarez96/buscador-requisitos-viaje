@@ -11,16 +11,8 @@ const { URL_FICHA } = require('../services/propuestas/fuentes/migracion-colombia
 (async () => {
   let e;
   try {
-    // ---- Política: pura y explícita ----
-    const lecturaHechos = (obligatoriedad, evidencia = ['de uso no obligatorio']) => ({ tipo: 'hechos', fuente_nombre: 'Migración Colombia', evidencia: { obligatoriedad: evidencia },
-      hechos: { obligatoriedad } });
-    const cm = (extra = {}) => ({ tipo: 'formulario_digital', nombre: 'Check-Mig', obligatorio: 'si', ...extra });
-    assert.deepEqual(piloto.evaluarPolitica(cm(), lecturaHechos('no_obligatorio')).cambios, [{ campo: 'obligatorio', propuesto: { presente: true, bson_tipo: 'string', valor: 'no' } }]);
-    assert.deepEqual(piloto.evaluarPolitica(cm({ obligatorio: 'no' }), lecturaHechos('no_obligatorio')), { cambio: false, autoriza: true, esperado: 'no' });
-    assert.equal(piloto.evaluarPolitica({ ...cm(), nombre: 'Visa de turismo' }, lecturaHechos('no_obligatorio')).motivo, 'requisito_fuera_de_politica');
-    assert.equal(piloto.evaluarPolitica(cm(), lecturaHechos('no_obligatorio', [])).motivo, 'sin_evidencia_confirmada');
-    assert.equal(piloto.evaluarPolitica(cm(), { tipo: 'ambiguo' }).motivo, 'sin_evidencia_confirmada');
-    assert.equal(piloto.evaluarPolitica(cm({ obligatorio: 'no', recomendado: 'si' }), lecturaHechos('obligatorio')).motivo, 'requiere_cambiar_recomendado');
+    // La política es la del perfil compartido (sus casos están en test-ciclo-checkmig-v2.js).
+    assert.equal(piloto.PERFIL.politica.nombre, 'checkmig-colombia-obligatoriedad');
 
     // ---- Recorrido completo, igual que el comando ----
     e = await piloto.crearEntorno();
@@ -35,10 +27,11 @@ const { URL_FICHA } = require('../services/propuestas/fuentes/migracion-colombia
     assert.deepEqual([api(s.api_antes, 'CO').obligatorio, api(s.api_antes, 'CX').obligatorio], ['si', 'si'], 'antes: CheckMig guardado como obligatorio');
 
     // Lectura ambigua o fallida: destino intacto, sin propuesta y con el pendiente indicado.
-    assert.deepEqual([ambigua.resultado, ambigua.destino_escrito, ambigua.propuestas_nuevas, ambigua.pendiente.tipo], ['lectura_ambigua', false, 0, 'revision_humana']);
+    assert.equal(ambigua.motivo, 'lectura_ambigua');
+    assert.deepEqual([ambigua.resultado, ambigua.destino_escrito, ambigua.propuestas_nuevas, ambigua.pendiente.tipo], ['revision_humana', false, 0, 'revision_humana']);
     assert.deepEqual(ambigua.pendiente.campos.map(c => [c.campo, c.motivo]), [['obligatoriedad', 'no_atribuible'], ['alcance', 'sin_evidencia'], ['ventana_horas_antes', 'sin_evidencia']]);
     assert.equal(ambigua.pendiente.campos[0].evidencia.length, 2, 'evidencia para revisar la ficha');
-    assert.deepEqual([fallida.resultado, fallida.destino_escrito, fallida.propuestas_nuevas, fallida.pendiente], ['lectura_no_disponible', false, 0, { tipo: 'reintentar', motivo: 'http_503' }]);
+    assert.deepEqual([fallida.resultado, fallida.destino_escrito, fallida.propuestas_nuevas, fallida.pendiente], ['fuente_no_disponible', false, 0, { tipo: 'reintentar', motivo: 'http_503' }]);
     assert.equal(api(s.api_tras_pendientes, 'CO').obligatorio, 'si', 'tras las lecturas pendientes: sin cambio en la API');
 
     // Cambio confirmado: propuesta, decisión, aplicación H3.3 y dato nuevo en /api/destinos.
@@ -82,12 +75,12 @@ const { URL_FICHA } = require('../services/propuestas/fuentes/migracion-colombia
     e.programar([() => new Response(require('node:fs').readFileSync(require('node:path').join(__dirname, 'fixtures', 'checkmig', 'valida.html'), 'utf8'),
       { status: 200, headers: { 'content-type': 'text/html' } })]);
     const fuera = await piloto.ejecutarCiclo({ destinoId, requisitoId }, e);
-    assert.deepEqual([fuera.resultado, fuera.motivo], ['cambio_no_autorizado', 'requisito_fuera_de_politica']);
+    assert.deepEqual([fuera.resultado, fuera.motivo], ['revision_humana', 'requisito_fuera_de_perfil']);
     assert.equal(await col('propuestas_cambio').countDocuments({ destino_id: destinoId }), 0);
 
     // Salida de texto del comando.
     const texto = lineas.join('\n');
-    for (const esperado of ['CO  Colombia (piloto local)  Check-Mig.obligatorio="si"', 'resultado=lectura_ambigua', 'pendiente: reintentar (http_503)',
+    for (const esperado of ['CO  Colombia (piloto local)  Check-Mig.obligatorio="si"', 'resultado=revision_humana (lectura_ambigua)', 'pendiente: reintentar (http_503)',
       'resultado=exito  lecturas=2  destino_escrito=sí', 'CO  Colombia (piloto local)  Check-Mig.obligatorio="no"', 'resultado=sin_cambio  lecturas=1  destino_escrito=no  propuestas_nuevas=0',
       'resultado=propuesta_activa_existente  lecturas=0']) assert.ok(texto.includes(esperado), `salida: ${esperado}`);
 

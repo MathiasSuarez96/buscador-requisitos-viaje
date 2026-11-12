@@ -16,6 +16,17 @@ node scripts/piloto-checkmig-v2.js
 
 ## Ciclo
 
+Desde el commit siguiente a a41ebad, el piloto usa el **ciclo compartido**
+(`services/propuestas/ciclo/ciclo-revalidacion-v2.js`) con el perfil `checkmig-colombia`. La
+ejecución real (`docs/ciclo-colombia-real.md`) usa ese mismo ciclo. Los resultados sin escritura
+se llaman como las acciones del ciclo:
+
+- `revision_humana`, con el motivo `lectura_ambigua` u otro;
+- `fuente_no_disponible`;
+- `sin_cambio`.
+
+Detalle:
+
 1. **Requisito guardado:** lee el destino y el requisito CheckMig. Si ya hay una propuesta
    activa para ese requisito (`pendiente_aprobacion`, `aprobada` o `revision_requerida`), la
    informa y no crea otra, sin consultar la fuente.
