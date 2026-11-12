@@ -69,6 +69,12 @@ const codigoMotivo = m => String(m).split(':')[0];
 async function revalidar(propuesta, { fetch, ahora = () => new Date(), timeoutMs } = {}) {
   const c = compatibilidad(propuesta);
   if (!c.compatible) return { tipo: 'incompatible', codigo: c.codigo };
+  return leer({ fetch, ahora, timeoutMs });
+}
+
+// Una lectura de la ficha sin propuesta: mismos resultados que revalidar() salvo 'incompatible'.
+// La usa el piloto para comparar los hechos con el requisito guardado ANTES de proponer.
+async function leer({ fetch, ahora = () => new Date(), timeoutMs } = {}) {
   const fuente = { url: URL_FICHA, fuente_nombre: FUENTE_NOMBRE };
 
   const lectura = await leerFicha({ fetch, ahora, ...(timeoutMs === undefined ? {} : { timeoutMs }) });
@@ -115,5 +121,6 @@ module.exports = Object.freeze({
   compatibilidad,
   soporta,
   revalidar,
+  leer,
   proyectarRevalidacion
 });
