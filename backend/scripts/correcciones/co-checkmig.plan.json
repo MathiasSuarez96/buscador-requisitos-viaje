@@ -1,0 +1,104 @@
+{
+  "version": "correccion-requisito-v1",
+  "id": "co-checkmig-2026-11",
+  "descripcion": "Corrección puntual de CO / Check-Mig: la ficha oficial dice «de uso no obligatorio»; la fuente pasa a ser la ficha y el enlace del viajero, el prerregistro vigente.",
+  "creado_en": "2026-11-12T03:59:54.461Z",
+  "vence_en": "2026-11-15T03:59:54.461Z",
+  "base_datos": "buscador_requisitos",
+  "operador_esperado": {
+    "user": "mathias-operador",
+    "db": "admin"
+  },
+  "destino": {
+    "_id": "6a87828da8282a4aa6ddfbd4",
+    "codigo_iso": "CO",
+    "pais": "Colombia"
+  },
+  "requisito": {
+    "_id": "6aaddd0e9f54309f9d82727b",
+    "tipo": "formulario_digital",
+    "nombre": "Check-Mig"
+  },
+  "antes": {
+    "tipo": "formulario_digital",
+    "nombre": "Check-Mig",
+    "obligatorio": "si",
+    "descripcion": "Formulario migratorio digital obligatorio antes de cada vuelo de entrada y salida.",
+    "fuente": "https://apps.migracioncolombia.gov.co/check-mig/",
+    "link": "https://apps.migracioncolombia.gov.co/check-mig/",
+    "fecha_verificacion": "2026-08-18",
+    "estado": "confirmado"
+  },
+  "despues": {
+    "tipo": "formulario_digital",
+    "nombre": "Check-Mig",
+    "obligatorio": "no",
+    "descripcion": "Prerregistro migratorio en línea para el ingreso y la salida de Colombia. Se puede completar entre 72 horas y una hora antes del viaje.",
+    "fuente": "https://www.migracioncolombia.gov.co/tramites-y-servicios/aplicativos/checkmig",
+    "link": "https://apps.migracioncolombia.gov.co/pre-registro/",
+    "fecha_verificacion": "2026-11-12",
+    "estado": "confirmado"
+  },
+  "campos_cambiados": [
+    "descripcion",
+    "fecha_verificacion",
+    "fuente",
+    "link",
+    "obligatorio"
+  ],
+  "fecha_verificacion": {
+    "antes": "2026-08-18",
+    "despues": "2026-11-12",
+    "renovada": true,
+    "motivo": "Todos los campos del registro corregido tienen evidencia del día (ficha leída y enlace verificado)."
+  },
+  "evidencia": {
+    "api": {
+      "url": "https://buscador-requisitos-viaje.onrender.com/api/destinos/CO",
+      "consultado_en": "2026-11-12T03:59:54.461Z",
+      "http_status": 200,
+      "sha256": "e861f6849b7f9cc0fed0f7ace2bfeb6f027d00fd3581e722e6ce51189397a62e",
+      "destino_updatedAt": "2026-09-11T02:07:44.986Z"
+    },
+    "ficha": {
+      "url": "https://www.migracioncolombia.gov.co/tramites-y-servicios/aplicativos/checkmig",
+      "consultado_en": "2026-11-12T03:59:55.712Z",
+      "http_status": 200,
+      "hechos_hash": "f7becb92dcc9ba36dd6ca53a0218bab24e4a450eac17f7abcef931035c055321",
+      "contenido_sha256": "35aa8d4b6b6531bacfe12b1850f218b6cc99af6a28cd95b34d57c89d289102c6",
+      "hechos": {
+        "esquema": "checkmig-hechos-v1",
+        "obligatoriedad": "no_obligatorio",
+        "alcance": {
+          "viajeros": [
+            "extranjeros",
+            "nacionales"
+          ],
+          "sentidos": [
+            "ingreso",
+            "salida"
+          ]
+        },
+        "ventana_horas_antes": {
+          "maximo_horas_antes": 72,
+          "minimo_horas_antes": 1
+        }
+      },
+      "evidencia_obligatoriedad": "Servicio gratuito y en línea, de uso no obligatorio que permite a los viajeros precargar la información relacionada con su viaje hasta con 72 horas de anticipación, o hasta una hora antes del mismo."
+    },
+    "enlace_nuevo": {
+      "url": "https://apps.migracioncolombia.gov.co/pre-registro/",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "titulo": "P&#xE1;gina de inicio | CheckMig"
+    },
+    "enlace_anterior": {
+      "url": "https://apps.migracioncolombia.gov.co/check-mig/",
+      "http_status": 404,
+      "content_type": "text/html; charset=iso-8859-1",
+      "titulo": "404 Not Found"
+    }
+  },
+  "hash": "b045a23db9385520204448a085f8e772c46a2b407d16e0f723d1f8618a349bc2",
+  "hash_reversion": "463513d82b3d898346d85e5d947c94b01a86ecf4211a26c7dac30f9a3b095617"
+}

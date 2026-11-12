@@ -1,0 +1,22 @@
+{
+  "id": "co-checkmig-2026-11",
+  "descripcion": "Corrección puntual de CO / Check-Mig: la ficha oficial dice «de uso no obligatorio»; la fuente pasa a ser la ficha y el enlace del viajero, el prerregistro vigente.",
+  "api": "https://buscador-requisitos-viaje.onrender.com/api/destinos/CO",
+  "base_datos": "buscador_requisitos",
+  "operador_esperado": { "user": "mathias-operador", "db": "admin" },
+  "destino": { "_id": "6a87828da8282a4aa6ddfbd4", "codigo_iso": "CO" },
+  "requisito": { "_id": "6aaddd0e9f54309f9d82727b", "tipo": "formulario_digital", "nombre": "Check-Mig" },
+  "cambios": {
+    "obligatorio": "no",
+    "descripcion": "Prerregistro migratorio en línea para el ingreso y la salida de Colombia. Se puede completar entre 72 horas y una hora antes del viaje.",
+    "fuente": "https://www.migracioncolombia.gov.co/tramites-y-servicios/aplicativos/checkmig",
+    "link": "https://apps.migracioncolombia.gov.co/pre-registro/"
+  },
+  "respaldo_de_la_descripcion": {
+    "obligatoriedad": "no_obligatorio",
+    "sentidos": ["ingreso", "salida"],
+    "maximo_horas_antes": 72,
+    "minimo_horas_antes": 1
+  },
+  "fecha_verificacion": "renovar_si_la_evidencia_del_dia_cubre_todos_los_campos"
+}
