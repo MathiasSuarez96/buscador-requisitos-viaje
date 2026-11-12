@@ -1,6 +1,9 @@
 // Prototipo CheckMig (solo lectura): extracción con fixtures y consulta con fetch simulado. Sin red.
 const assert = require('node:assert/strict');
 if (!globalThis.__SOLO_LOOPBACK__) throw new Error('Se requiere preload-solo-loopback');
+// Falla por defecto: si una promesa quedara colgada sin temporizadores, el proceso saldría solo
+// antes de la última aserción; así no da exit 0. Solo se pone en 0 después de la última aserción.
+process.exitCode = 1;
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { URL_FICHA, extraer, consultar } = require('./prototipo-checkmig');
@@ -135,6 +138,40 @@ const valores = r => Object.fromEntries(Object.entries(r.campos).map(([k, c]) =>
     assert.deepEqual([c.estado, c.valor], ['ok', 'no_obligatorio'], `${nombre}: ${JSON.stringify(c)}`);
   }
 
+  // 5d. Regresiones de la revisión de 3235202: se valida la afirmación ENTERA. Una condición, una
+  // fecha de vigencia u otro detalle antes o después de la redacción admitida → condicionada. El
+  // esquema no representa condiciones ni vigencias.
+  const condicionadas = [
+    ['B + condición (Codex)', solo('CheckMig es obligatorio si el viaje es por vía aérea.')],
+    ['B negativa + vigencia (Codex)', solo('CheckMig no es obligatorio desde el 1 de diciembre.')],
+    ['B + vigencia antes', solo('Desde el 1 de diciembre, CheckMig es obligatorio.')],
+    ['B + «cuando»', solo('CheckMig es obligatorio cuando el viajero ingresa por vía terrestre.')],
+    ['B + fecha de fin', solo('CheckMig es obligatorio hasta el 31 de enero de 2027.')],
+    ['B voluntario + temporada', solo('El uso de CheckMig es voluntario en temporada baja.')],
+    ['C + condición antes', solo('Si el viaje es por vía aérea, es obligatorio diligenciar el formulario de CheckMig.')],
+    ['C + vigencia después', solo('Es obligatorio diligenciar el formulario de CheckMig a partir de 2027.')],
+    ['A + vigencia al final de la oración de la ficha', v.replace('hasta una hora antes del mismo.', 'hasta una hora antes del mismo, desde el 1 de diciembre.')],
+    ['A + condición en medio de la oración de la ficha', v.replace('de uso no obligatorio que permite', 'de uso no obligatorio si se viaja por vía aérea, que permite')]
+  ];
+  for (const [nombre, html] of condicionadas) {
+    const r = extraer(html, FUENTE);
+    const c = r.campos.obligatoriedad;
+    assert.deepEqual([c.estado, c.valor], ['ambiguo', null], `${nombre}: ${JSON.stringify(c)}`);
+    assert.match(c.motivo, /^condicionada/, nombre);
+    assert.equal(c.evidencia.length, 1, `${nombre}: la evidencia es la oración condicionada`);
+    assert.equal(r.estado, 'ambiguo', nombre);
+    for (const otro of ['alcance', 'ventana_horas_antes']) assert.equal(r.campos[otro].estado, 'ok', `${nombre}: ${otro} sigue ok`);
+  }
+  // Siguen siendo globales: la ficha observada (A), «para todos los viajeros» y la variante «de su viaje».
+  for (const [nombre, html, valorEsperado] of [
+    ['ficha observada (valida.html)', v, 'no_obligatorio'],
+    ['B global «para todos los viajeros»', solo('CheckMig es obligatorio para todos los viajeros.'), 'obligatorio'],
+    ['A «precargar la información de su viaje»', v.replace('relacionada con su viaje', 'de su viaje'), 'no_obligatorio']
+  ]) {
+    const c = extraer(html, FUENTE).campos.obligatoriedad;
+    assert.deepEqual([c.estado, c.valor], ['ok', valorEsperado], `${nombre}: ${JSON.stringify(c)}`);
+  }
+
   // 5. consultar() con fetch simulado: éxito y cada fallo como no_disponible, sin lanzar.
   // Respuestas reales (Response) para que el cuerpo se lea por partes como en producción.
   const respuesta = ({ status = 200, tipo = 'text/html; charset=utf-8', cuerpo = v, location } = {}) =>
@@ -160,5 +197,6 @@ const valores = r => Object.fromEntries(Object.entries(r.campos).map(([k, c]) =>
     assert.equal(r.fuente.contenido_sha256, undefined, `${nombre}: sin contenido`);
   }
   assert.equal(globalThis.__SOLO_LOOPBACK__.bloqueados.length, 0, 'ninguna conexión real');
+  process.exitCode = 0;
   console.log('Prototipo CheckMig: válida, cambio de valor, ambiguos por campo, aislamiento del <main> y no_disponible: OK');
 })().catch(e => { console.error(e); process.exitCode = 1; });

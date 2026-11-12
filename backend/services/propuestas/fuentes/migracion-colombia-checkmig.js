@@ -89,36 +89,48 @@ const definido = (valor, ev) => ({ estado: 'ok', valor, evidencia: ev.map(eviden
 // ------------------------------------------------------------------
 
 // Obligatoriedad: un único valor global, 'no_obligatorio' u 'obligatorio'. Solo cuenta una
-// afirmación ATRIBUIBLE al prerregistro, en una de tres redacciones admitidas:
-//  A. En la ficha de CheckMig (primer <h1> del <main> = «CheckMig»), una oración que empieza por
-//     el servicio y dice «…, de uso (no) obligatorio» («Servicio gratuito y en línea, de uso no
-//     obligatorio que permite…»).
-//  B. Sujeto explícito justo antes del verbo: «CheckMig (no) es obligatorio», «El uso de CheckMig
-//     es voluntario», «El prerregistro en CheckMig no es obligatorio».
-//  C. «(No) es obligatorio diligenciar/usar/… CheckMig | el prerregistro | el formulario de CheckMig».
+// afirmación ATRIBUIBLE al prerregistro y COMPLETA: se valida la oración entera, incluida su
+// continuación, contra tres redacciones admitidas:
+//  A. En la ficha de CheckMig (primer <h1> del <main> = «CheckMig»), la oración del servicio tal
+//     como la publica la ficha: «Servicio gratuito y en línea, de uso (no) obligatorio que permite
+//     a los viajeros precargar la información relacionada con su viaje [hasta con N horas de
+//     anticipación[, o hasta N hora(s) antes del mismo]].»
+//  B. La oración entera es «<CheckMig | El uso de CheckMig | El prerregistro…> (no) es
+//     obligatorio | opcional | voluntario[ para todos los viajeros].»
+//  C. La oración entera es «(No) es obligatorio diligenciar/usar/… <CheckMig | el prerregistro |
+//     el formulario de CheckMig>[ para todos los viajeros].»
+// Si la afirmación atribuible tiene algo antes o después que no forma parte de la redacción
+// admitida (una condición, una fecha de vigencia, un grupo, una excepción…), queda 'condicionada':
+// el esquema solo representa un valor global, sin condiciones ni vigencia. No hay una lista de
+// palabras prohibidas: lo que no está admitido no se interpreta.
 // Una mención cuyo sujeto u objeto es otro documento («El pasaporte es obligatorio para usar
 // CheckMig», «Es obligatorio presentar el pasaporte») se ignora. Cualquier otra mención no se
 // puede atribuir al prerregistro («El formulario es obligatorio», sujeto elíptico, otra
-// redacción): el campo queda ambiguo. Ambas polaridades, un grupo o una excepción → ambiguo.
+// redacción): el campo queda ambiguo.
 const CLAVE = /\b(obligatori[oa]s?|opcional(?:es)?|voluntari[oa]s?|requisito\s+indispensable)\b/g;
 const CORTE = /[,;:()]|\b(?:pero|sino|aunque|mientras)\b/g;
 const PRERREGISTRO = '(?:checkmig|pre-?registro|prerregistro)';
 const VERBO = '(?:es|son|sera|resulta)';
+const NUMERO_TEXTO = '(?:\\d{1,3}|[a-z]+(?:\\s+y\\s+[a-z]+)?)';
 const ADMITIDA_A = /^de\s+uso\s+(?:no\s+)?$/;
 const INICIO_A = /^(?:el\s+)?(?:servicio|checkmig|prerregistro|pre-?registro|aplicativo)\b/;
+const A_COMPLETA = new RegExp('^(?:el\\s+)?(?:servicio|checkmig|prerregistro|pre-?registro|aplicativo)'
+  + '(?:\\s+(?:de\\s+checkmig|gratuito|gratis|y|en\\s+linea|virtual|digital))*\\s*,\\s*de\\s+uso\\s+(?:no\\s+)?obligatorio'
+  + '\\s+que\\s+permite\\s+a\\s+los\\s+viajeros\\s+precargar\\s+la\\s+informacion(?:\\s+(?:relacionada\\s+con|de)\\s+su\\s+viaje)?'
+  + `(?:\\s+hasta\\s+con\\s+${NUMERO_TEXTO}\\s+horas?\\s+de\\s+anticipacion(?:\\s*,\\s*o\\s+hasta\\s+${NUMERO_TEXTO}\\s+horas?\\s+antes\\s+del\\s+mismo)?)?`
+  + '\\s*\\.?$');
+// Única continuación admitida para B y C: el fin de la oración, con o sin «para todos los viajeros».
+const FIN_GLOBAL = /^\s*(?:,?\s*para\s+todos\s+los\s+viajeros)?\s*[.!]?\s*$/;
 const ADMITIDA_B = new RegExp(`^(?:el\\s+|la\\s+)?(?:(?:uso|registro|diligenciamiento)\\s+(?:de|del|en)\\s+(?:el\\s+)?)?(?:${PRERREGISTRO}|(?:formulario|aplicativo|servicio)\\s+(?:de\\s+)?checkmig)(?:\\s+en\\s+checkmig)?\\s+(?:no\\s+)?${VERBO}\\s+(?:no\\s+)?(?:de\\s+(?:uso|caracter)\\s+)?$`);
 const ADMITIDA_C_ANTES = new RegExp(`^(?:no\\s+)?${VERBO}\\s+$`);
-const ADMITIDA_C_DESPUES = new RegExp(`^\\s+(?:diligenciar|realizar|completar|hacer|usar|utilizar)\\s+(?:el\\s+|la\\s+)?(?:${PRERREGISTRO}|formulario\\s+de\\s+checkmig|registro\\s+en\\s+checkmig)\\b`);
+const ADMITIDA_C_DESPUES = new RegExp(`^\\s+(?:diligenciar|realizar|completar|hacer|usar|utilizar)\\s+(?:el\\s+|la\\s+)?(?:${PRERREGISTRO}|formulario\\s+de\\s+checkmig|registro\\s+en\\s+checkmig)(?:\\s+(?:en|de)\\s+checkmig)?\\b`);
 const AJENO = '(?:pasaporte|visa|cedula|documento|tiquete|certificado|vacuna|seguro)s?';
-const AJENO_SUELTO = new RegExp(`\\b${AJENO}\\b`);
 const AJENA_ANTES = new RegExp(`^(?:el\\s+|la\\s+|los\\s+|las\\s+|su\\s+|sus\\s+)?${AJENO}\\b.*\\b${VERBO}\\s+(?:no\\s+)?$`);
 const AJENA_DESPUES = new RegExp(`^\\s+(?:\\p{L}+(?:ar|er|ir)\\s+)?(?:el\\s+|la\\s+|los\\s+|las\\s+|un\\s+|una\\s+|su\\s+|sus\\s+)?${AJENO}\\b`, 'u');
 const NEGADA = new RegExp(`\\bno\\s+(?:${VERBO}\\s+)?(?:de\\s+(?:uso|caracter)\\s+)?$`);
-// Condición por grupo o excepción: el formato solo admite un valor global.
-const CONDICION_TRAS = /^\s*,?\s*(?:para|a)\s+(?:los\s+|las\s+)?(?:viajeros\s+|ciudadanos\s+|personas\s+)?(?:nacionales|extranjer|colombian|residentes|menores|mayores|turistas|ciertos|algunos)/;
-const EXCEPCION = /\b(salvo|excepto|excepcion|exceptuando|unicamente|solamente|solo\s+para)\b/;
 
-// Pura. s: oración sin tildes y en minúsculas. Cada mención: atribuible (con polaridad), ajena o no_atribuible.
+// Pura. s: oración sin tildes y en minúsculas. Cada mención: atribuible (con polaridad y si la
+// oración entera es una redacción admitida), ajena o no_atribuible.
 function clasificarMenciones(s, fichaCheckmig) {
   const res = [];
   for (const m of s.matchAll(CLAVE)) {
@@ -126,12 +138,15 @@ function clasificarMenciones(s, fichaCheckmig) {
     let corte = 0;
     for (const c of antes.matchAll(CORTE)) corte = c.index + c[0].length;
     const clausula = antes.slice(corte).trimStart();
-    const admitida = (fichaCheckmig && ADMITIDA_A.test(clausula) && INICIO_A.test(s) && !AJENO_SUELTO.test(s.split(',')[0]))
-      || ADMITIDA_B.test(clausula)
-      || (ADMITIDA_C_ANTES.test(clausula) && ADMITIDA_C_DESPUES.test(despues));
-    if (admitida) {
+    const objetoC = ADMITIDA_C_ANTES.test(clausula) ? despues.match(ADMITIDA_C_DESPUES) : null;
+    // completa: null = no atribuible; true/false = atribuible, con o sin redacción admitida entera.
+    let completa = null;
+    if (fichaCheckmig && ADMITIDA_A.test(clausula) && INICIO_A.test(s)) completa = A_COMPLETA.test(s);
+    else if (ADMITIDA_B.test(clausula)) completa = corte === 0 && FIN_GLOBAL.test(despues);
+    else if (objetoC) completa = corte === 0 && FIN_GLOBAL.test(despues.slice(objetoC[0].length));
+    if (completa !== null) {
       const formaNegativa = /^(opcional|voluntari)/.test(m[1]);
-      res.push({ tipo: 'atribuible', negativa: NEGADA.test(clausula) !== formaNegativa, condicionada: CONDICION_TRAS.test(despues) });
+      res.push({ tipo: 'atribuible', negativa: NEGADA.test(clausula) !== formaNegativa, condicionada: !completa });
     } else if (AJENA_ANTES.test(clausula) || AJENA_DESPUES.test(despues)) res.push({ tipo: 'ajena' });
     else res.push({ tipo: 'no_atribuible' });
   }
@@ -145,11 +160,11 @@ function obligatoriedad(frases, fichaCheckmig) {
     if (menciones.some(m => m.tipo === 'no_atribuible')) sinAtribuir.push(f);
     const atribuibles = menciones.filter(m => m.tipo === 'atribuible');
     if (!atribuibles.length) continue;
-    // Dos polaridades en la misma oración, o un grupo/excepción: obligatoriedad no global.
-    if (new Set(atribuibles.map(m => m.negativa)).size > 1 || atribuibles.some(m => m.condicionada) || EXCEPCION.test(s)) cond.push(f);
+    // Una afirmación con condición o vigencia, o dos polaridades en la misma oración: no es global.
+    if (new Set(atribuibles.map(m => m.negativa)).size > 1 || atribuibles.some(m => m.condicionada)) cond.push(f);
     else (atribuibles[0].negativa ? neg : pos).push(f);
   }
-  if (cond.length) return ambiguo('condicionada: la obligatoriedad depende del grupo de viajeros y el formato solo admite un valor global', cond);
+  if (cond.length) return ambiguo('condicionada: la afirmación sigue con una condición, vigencia, grupo u otro detalle y el formato solo admite un valor global', cond);
   if (neg.length && pos.length) return ambiguo('contradiccion: la ficha dice obligatorio y no obligatorio', [...neg, ...pos]);
   if (sinAtribuir.length) return ambiguo('no_atribuible: una mención de obligatoriedad no se puede atribuir al prerregistro', [...new Set([...neg, ...pos, ...sinAtribuir])]);
   if (neg.length) return definido('no_obligatorio', neg);

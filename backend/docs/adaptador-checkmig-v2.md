@@ -45,8 +45,16 @@ Fixtures existentes revisados (11/11/2026):
   `fuente_no_soportada`.
 - **Payload:** la base de `test-payload-requisito-v2.js` tiene dos fuentes (`/pagina-a` y
   `/pagina-b`). Es `varias_fuentes`.
-- Las dos quedan como pruebas de incompatibilidad. La propuesta piloto del adaptador es nueva y
-  tiene una sola fuente: la ficha real.
+- Las dos quedan como pruebas de incompatibilidad.
+- **Piloto:** la propuesta piloto de `test-adaptador-v2-checkmig.js` es **sintética**. Se arma con
+  `crearSobreRequisitoV2` dentro de la prueba y usa los ids de Colombia y CheckMig, pero no sale de
+  Atlas ni de una corrida. Tiene una sola fuente, con la URL **exacta** de la ficha informativa
+  (§1).
+- **URL exacta:** la compatibilidad compara la URL por igualdad estricta. El enlace al formulario
+  (`https://apps.migracioncolombia.gov.co/check-mig/`, que es el `link` del requisito en los
+  respaldos) y `https://apps.migracioncolombia.gov.co/pre-registro/` cumplen otra función: llevan al
+  trámite, no son la fuente que se revalida. Dan `fuente_no_soportada`, igual que la ficha con
+  barra final, con query, con otra capitalización o por http.
 
 ## 3. Resultados de `revalidar(propuesta, {fetch, ahora, timeoutMs})`
 
@@ -143,22 +151,31 @@ La decisión de generalizarlo queda para el segundo adaptador.
 
 - **Contenido:** solo se lee el único `<main>`, sin comentarios ni scripts. Sin `<main>`, o con
   dos, los tres campos quedan `ambiguo`.
-- **Obligatoriedad:** solo cuenta una afirmación **atribuible al prerregistro**, en una de tres
-  redacciones admitidas:
+- **Obligatoriedad:** solo cuenta una afirmación **atribuible al prerregistro y completa**. Se
+  valida la **oración entera**, incluida su continuación, contra una de tres redacciones admitidas:
   - **A.** En la ficha de CheckMig (el primer `<h1>` del `<main>` es «CheckMig»), la oración del
-    servicio con «…, de uso (no) obligatorio». Es la redacción de la ficha actual: «Servicio
-    gratuito y en línea, de uso no obligatorio…».
-  - **B.** Sujeto explícito justo antes del verbo: «CheckMig (no) es obligatorio», «El uso de
-    CheckMig es voluntario», «El prerregistro en CheckMig no es obligatorio».
-  - **C.** «(No) es obligatorio diligenciar / usar / … CheckMig | el prerregistro | el formulario
-    de CheckMig».
+    servicio tal como la publica la ficha: «Servicio gratuito y en línea, de uso (no)
+    obligatorio que permite a los viajeros precargar la información relacionada con (o: de) su
+    viaje [hasta con N horas de anticipación[, o hasta N hora(s) antes del mismo]].»
+  - **B.** La oración entera es «CheckMig | El uso de CheckMig | El prerregistro… (no) es
+    obligatorio | opcional | voluntario[ para todos los viajeros].»
+  - **C.** La oración entera es «(No) es obligatorio diligenciar / usar / … CheckMig | el
+    prerregistro | el formulario de CheckMig[ para todos los viajeros].»
+
+  El esquema no representa condiciones ni fechas de vigencia. Si la afirmación tiene algo antes o
+  después de la redacción admitida, queda `condicionada`. Ejemplos: «CheckMig es obligatorio si el
+  viaje es por vía aérea», «CheckMig no es obligatorio desde el 1 de diciembre», «Desde el 1 de
+  diciembre, CheckMig es obligatorio», «…a partir de 2027», o una condición agregada a la oración
+  de la ficha. **No hay una lista de palabras prohibidas**: lo que no está admitido no se
+  interpreta.
 - **Menciones que se ignoran:** las que tienen como sujeto u objeto otro documento, como
   «El pasaporte es obligatorio para usar CheckMig», «Para usar CheckMig es obligatorio el
   pasaporte» o «Es obligatorio presentar el pasaporte».
 - **Motivos de ambigüedad de la obligatoriedad:**
   - `no_atribuible`: cualquier otra mención, por ejemplo «El formulario es obligatorio» (también
     referido a otro trámite), una redacción distinta o «de uso» fuera de la ficha.
-  - `condicionada`: ambas polaridades en una oración, una condición por grupo o una excepción.
+  - `condicionada`: la afirmación atribuible no es una redacción admitida entera (condición,
+    vigencia, grupo, excepción u otro agregado), o la oración tiene ambas polaridades.
   - `contradiccion`: afirmaciones atribuibles de polaridad opuesta.
   - `sin_evidencia`: ninguna afirmación atribuible.
 - **Alcance:**
@@ -195,7 +212,18 @@ Archivos: `scripts/fixtures/checkmig/oficial-muestra.html`, con sus metadatos en
 
 ## 9. Pruebas
 
-Las dos suites corren sin red (`preload-solo-loopback`) y forman parte de `npm test`.
+Las tres suites corren sin red (`preload-solo-loopback`) y forman parte de `npm test`:
+`test-adaptador-v2-checkmig.js`, `test-prototipo-checkmig.js` y `test-mutaciones-checkmig.js`.
+
+- **Terminación:** las dos suites funcionales arrancan con `process.exitCode = 1` y lo ponen en 0
+  solo después de la última aserción. Sin esa guarda, una promesa colgada sin temporizadores deja
+  salir el proceso con exit 0 sin terminar las aserciones. Ese verde falso se reprodujo en
+  `test-prototipo-checkmig.js` con un cuelgue inyectado en la lectura, antes de agregarle la guarda.
+- **Plazo con `fetch` simulado:**
+  - `test-adaptador-v2-checkmig.js` lo prueba de dos maneras: un `TimeoutError` lanzado y un plazo
+    real (`timeoutMs: 20`, con un `fetch` que espera el abort). En el segundo caso la prueba
+    sostiene el event loop con un temporizador propio, porque `AbortSignal.timeout` no lo hace.
+  - `test-prototipo-checkmig.js` solo prueba el `TimeoutError` lanzado.
 
 - **Hechos:** `valida.html`, la muestra oficial y `cambio.html` dan hechos y `hechos_hash` fijados,
   con URL, fecha, evidencia por campo y el hash del HTML solo en el diagnóstico.
@@ -206,7 +234,9 @@ Las dos suites corren sin red (`preload-solo-loopback`) y forman parte de `npm t
   lanza `fuente_cambio`. El mismo cambio con una exclusión en «Dirigido a:» da `ambiguo`, sin
   hechos, y no llega al verificador.
 - **Ambigüedad:** `ambiguo` por campo, con las dos frases del pasaporte, el formulario de otro
-  trámite, un valor fuera de dominio y la ficha sin `<main>`.
+  trámite, las dos frases con condición y con vigencia, un valor fuera de dominio y la ficha sin
+  `<main>`. En todos los casos se comprueba que no hay ninguna clave `hechos`, `hechos_hash` ni
+  `valor` a ninguna profundidad, y que `proyectarRevalidacion` rechaza el resultado.
 - **Incompatibilidad:** un caso por código cerrado, sin ninguna llamada a `fetch`. Incluye las dos
   propuestas de §2.
 - **Lectura:**
@@ -218,14 +248,23 @@ Las dos suites corren sin red (`preload-solo-loopback`) y forman parte de `npm t
   - HTTP 404, 410, 429, 500 y 503; respuesta que no es HTML; red; tiempo agotado (también con un
     plazo real); cuerpo ilegible;
   - tamaño: por `content-length`, cortado durante la lectura y exactamente en el límite.
-- **Parser:** las regresiones de obligatoriedad y el cambio real a obligatorio con las redacciones
-  A, B y C.
-- **Mutaciones**, comprobadas al implementar: meter el texto de «Dirigido a:» o el hash del HTML en
-  `hechos`, no ordenar las listas, devolver hechos en `ambiguo`, seguir redirecciones sin
-  validarlas, no limitar el tamaño, volver a aceptar menciones porque la oración nombra CheckMig,
-  quitar el chequeo de varias fuentes, consultar aunque la propuesta sea incompatible, aceptar
-  «de uso» fuera de la ficha y tratar un 404 como respuesta. Cada mutación hace caer al menos una
-  suite.
+- **Parser:**
+  - las regresiones de obligatoriedad;
+  - diez afirmaciones con condición o vigencia en las redacciones A, B y C, antes o después de la
+    afirmación;
+  - el cambio real a obligatorio con las redacciones A, B y C;
+  - los globales que siguen `ok`: la ficha observada, «para todos los viajeros» y «de su viaje».
+- **Mutaciones** (`test-mutaciones-checkmig.js`):
+  - Cada mutación se compila en memoria, en un proceso hijo, sin modificar archivos, y debe hacer
+    caer al menos una suite por una aserción.
+  - Como control del mecanismo, la base y una mutación identidad en cada archivo deben pasar.
+  - M1 a M16 cubren: el texto de «Dirigido a:» o el hash del HTML dentro de `hechos`, listas sin
+    ordenar, hechos en `ambiguo`, redirección sin validar, sin límite de tamaño, el respaldo «la
+    oración nombra CheckMig», sin chequeo de varias fuentes, consultar aunque la propuesta sea
+    incompatible, «de uso» fuera de la ficha, un 404 como respuesta, continuación o prefijo de B
+    sin validar, continuación de C sin validar, la oración A sin validar entera y la URL por
+    prefijo.
+  - M17 es un cuelgue sin temporizadores: las dos suites deben salir con exit 1 sin su línea final.
 
 La consulta real va por separado: `node scripts/prototipo-checkmig.js` (exit 0 `ok`, 2 `ambiguo`,
 3 `no_disponible`). Nunca corre dentro de `npm test`.
@@ -238,4 +277,6 @@ La consulta real va por separado: `node scripts/prototipo-checkmig.js` (exit 0 `
 - `fuente_cambio` deja la propuesta en `obsoleta`, que es terminal. Por eso se exige la segunda
   lectura de §5.
 - `AbortSignal.timeout` no mantiene vivo el proceso: con red real lo mantiene el socket. Una
-  prueba con un `fetch` simulado que espera el abort tiene que sostener el event loop.
+  prueba con un `fetch` simulado que espera el abort tiene que sostener el event loop (§9).
+- Quedan para entregas separadas: el cambio general de `.gitattributes` y la auditoría del runner,
+  es decir, si las demás suites tienen la misma guarda de terminación.

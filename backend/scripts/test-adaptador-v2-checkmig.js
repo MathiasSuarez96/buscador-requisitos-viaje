@@ -143,12 +143,17 @@ async function revalidarCon(respuestas, propuesta = PILOTO, opciones = {}) {
     [solo('El pasaporte es obligatorio para usar CheckMig.'), 'obligatoriedad:sin_evidencia'],
     [solo('Para usar CheckMig es obligatorio el pasaporte.'), 'obligatoriedad:sin_evidencia'],
     [solo('Para solicitar la visa de turismo, el formulario es obligatorio.'), 'obligatoriedad:no_atribuible'],
+    // Revisión de 3235202: condición y vigencia → ambiguo, sin hechos ni hechos_hash.
+    [solo('CheckMig es obligatorio si el viaje es por vía aérea.'), 'obligatoriedad:condicionada'],
+    [solo('CheckMig no es obligatorio desde el 1 de diciembre.'), 'obligatoriedad:condicionada'],
     [v.replace('hasta con 72 horas', 'hasta con 800 horas'), 'ventana_horas_antes:fuera_de_dominio'],
     [v.replace(/<\/?main[^>]*>/g, ''), 'obligatoriedad:sin_evidencia,alcance:sin_evidencia,ventana_horas_antes:sin_evidencia']
   ]) {
     const r = (await revalidarCon([html200(html)])).r;
     assert.deepEqual([r.tipo, r.motivo], ['ambiguo', motivo], JSON.stringify(r));
-    assert.ok(!('hechos' in r));
+    const claves = o => (o && typeof o === 'object' ? Object.entries(o).flatMap(([k, x]) => [k, ...claves(x)]) : []);
+    assert.ok(!claves(r).some(k => k === 'hechos' || k === 'hechos_hash' || k === 'valor'), `${motivo}: una lectura ambigua no emite hechos, hechos_hash ni valores`);
+    assert.throws(() => adaptador.proyectarRevalidacion(r), /solo un resultado 'hechos'/);
   }
 
   // ---- 6. normalizarHechos: dominio exacto y listas ordenadas ----
@@ -182,6 +187,16 @@ async function revalidarCon(respuestas, propuesta = PILOTO, opciones = {}) {
     // La propuesta de test-aplicar-propuesta-v2 (URL /checkmig y hechos ad hoc).
     ['URL /checkmig del fixture del aplicador', propuestaCon([{ ...fuenteDe({ obligatorio: false, formulario: 'Check-Mig' }), url: 'https://www.migracioncolombia.gov.co/checkmig' }]), 'fuente_no_soportada'],
     ['otro nombre de fuente', propuestaCon([fuenteDe(HECHOS_FICHA, { nombre: 'Cancillería' })]), 'fuente_no_soportada'],
+    // URL EXACTA de la ficha informativa: el enlace al formulario cumple otra función (es el
+    // link del requisito, no la fuente que se revalida), y tampoco valen variantes de la ficha.
+    ...[
+      'https://apps.migracioncolombia.gov.co/check-mig/',
+      'https://apps.migracioncolombia.gov.co/pre-registro/',
+      `${URL_FICHA}/`,
+      `${URL_FICHA}?origen=panel`,
+      'https://www.migracioncolombia.gov.co/tramites-y-servicios/aplicativos/CheckMig'
+    ].map(url => [`URL no exacta: ${url}`, propuestaCon([fuenteDe(HECHOS_FICHA, { url })]), 'fuente_no_soportada']),
+    ['URL http (payload deserializado)', conPayload(p => { p.fuentes[0].url = URL_FICHA.replace('https:', 'http:'); }), 'fuente_no_soportada'],
     ['otro esquema', propuestaCon([fuenteDe({ ...HECHOS_FICHA, esquema: 'checkmig-hechos-v2' })]), 'esquema_hechos_no_soportado'],
     ['hechos sin esquema', propuestaCon([fuenteDe({ obligatorio: false })]), 'esquema_hechos_no_soportado'],
     ['listas sin ordenar', propuestaCon([fuenteDe({ ...HECHOS_FICHA, alcance: { viajeros: ['nacionales', 'extranjeros'], sentidos: ['ingreso', 'salida'] } })]), 'hechos_guardados_no_canonicos'],
@@ -272,7 +287,13 @@ async function revalidarCon(respuestas, propuesta = PILOTO, opciones = {}) {
   assert.ok(lecturas <= 1, `content-length excesivo: no se lee el cuerpo (${lecturas})`);
   let partes = 0, cancelado = false;
   const PARTE = 64 * 1024;
-  const infinito = new ReadableStream({ pull(c) { partes++; c.enqueue(new Uint8Array(PARTE)); }, cancel() { cancelado = true; } });
+  // Finito pero mayor que el máximo: sin el corte, la lectura terminaría y fallaría una aserción
+  // (no un tiempo agotado ni la memoria).
+  const TOTAL_PARTES = Math.ceil(BYTES_MAXIMOS / PARTE) + 8;
+  const infinito = new ReadableStream({
+    pull(c) { partes++; if (partes > TOTAL_PARTES) c.close(); else c.enqueue(new Uint8Array(PARTE)); },
+    cancel() { cancelado = true; }
+  });
   const grande = await revalidarCon([html200(infinito)]);
   assert.deepEqual([grande.r.tipo, grande.r.motivo], ['no_disponible', 'demasiado_grande']);
   assert.ok(cancelado, 'se cancela el cuerpo');
