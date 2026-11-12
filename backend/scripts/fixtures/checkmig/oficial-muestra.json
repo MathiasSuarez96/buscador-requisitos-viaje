@@ -1,0 +1,26 @@
+{
+  "descripcion": "Muestra mínima del marcado observado en la ficha oficial de CheckMig, para pruebas sin red.",
+  "url": "https://www.migracioncolombia.gov.co/tramites-y-servicios/aplicativos/checkmig",
+  "capturado_en": "2026-11-12T01:37:02.406Z",
+  "http_status": 200,
+  "content_type": "text/html; charset=utf-8",
+  "redirecciones": 0,
+  "pagina": {
+    "bytes": 272782,
+    "sha256": "35aa8d4b6b6531bacfe12b1850f218b6cc99af6a28cd95b34d57c89d289102c6",
+    "cubre": "cuerpo completo de la respuesta, decodificado como UTF-8 por fetch().text()"
+  },
+  "main": {
+    "bytes": 21977,
+    "sha256": "1c051265e8df0c3ec258572eb2568a8f4d41f596cbf68ef4affe181c5483d092",
+    "cubre": "desde <main hasta </main> inclusive, sin normalizar"
+  },
+  "muestra": {
+    "archivo": "oficial-muestra.html",
+    "bytes": 3105,
+    "sha256": "4b6db5255080c7862885f219454d7bfa415bff4194c0112c4f6e6b2e33b7bfeb",
+    "cubre": "bytes del fixture en UTF-8 tras normalizar CRLF a LF (con core.autocrlf=true el checkout puede dejar CRLF); incluye el comentario de procedencia",
+    "contenido": "líneas copiadas sin cambios del único <main id=\"main-content\">: marco c1969 (h1 «CheckMig», «Dirigido a:», «Servicio gratuito…»), marco c5605 («Requisitos y documentación», «Costos», «Aspectos importantes»); se omitieron medios, paso a paso y encuesta, y se cerraron los div abiertos"
+  },
+  "hechos_hash_no_cubre": "el hash de la página, del <main> y de la muestra son diagnóstico; ninguno entra en hechos ni en hechos_hash"
+}

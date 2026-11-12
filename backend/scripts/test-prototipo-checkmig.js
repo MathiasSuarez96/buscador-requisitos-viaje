@@ -5,7 +5,8 @@ const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { URL_FICHA, extraer, consultar } = require('./prototipo-checkmig');
 
-const fixture = n => readFileSync(path.join(__dirname, 'fixtures', 'checkmig', n), 'utf8');
+// Fin de línea normalizado: con core.autocrlf=true el checkout puede dejar CRLF.
+const fixture = n => readFileSync(path.join(__dirname, 'fixtures', 'checkmig', n), 'utf8').replace(/\r\n/g, '\n');
 const FUENTE = { url: URL_FICHA, consultado_en: '2026-11-10T12:00:00.000Z' };
 const valores = r => Object.fromEntries(Object.entries(r.campos).map(([k, c]) => [k, c.estado === 'ok' ? (k === 'alcance' ? { viajeros: c.valor.viajeros, sentidos: c.valor.sentidos } : c.valor) : c.estado]));
 
@@ -135,22 +136,22 @@ const valores = r => Object.fromEntries(Object.entries(r.campos).map(([k, c]) =>
   }
 
   // 5. consultar() con fetch simulado: éxito y cada fallo como no_disponible, sin lanzar.
-  const respuesta = ({ status = 200, url = URL_FICHA, tipo = 'text/html; charset=utf-8', cuerpo = v } = {}) => ({
-    status, url, headers: new Headers({ 'content-type': tipo }), text: async () => cuerpo
-  });
+  // Respuestas reales (Response) para que el cuerpo se lea por partes como en producción.
+  const respuesta = ({ status = 200, tipo = 'text/html; charset=utf-8', cuerpo = v, location } = {}) =>
+    new Response(cuerpo, { status, headers: { 'content-type': tipo, ...(location ? { location } : {}) } });
   const ahora = () => new Date('2026-11-10T12:00:00.000Z');
   const llamadas = [];
   const ok = await consultar({ ahora, fetch: async (u, o) => { llamadas.push([u, o.redirect, o.headers['user-agent']]); return respuesta(); } });
   assert.equal(ok.estado, 'ok');
   assert.deepEqual([ok.fuente.url, ok.fuente.url_final, ok.fuente.http_status, ok.fuente.consultado_en], [URL_FICHA, URL_FICHA, 200, '2026-11-10T12:00:00.000Z']);
-  assert.deepEqual(llamadas, [[URL_FICHA, 'follow', 'buscador-requisitos-viaje/prototipo-checkmig']], 'una sola consulta, sin datos del usuario');
+  assert.deepEqual(llamadas, [[URL_FICHA, 'manual', 'buscador-requisitos-viaje/adaptador-checkmig']], 'una sola consulta, sin datos del usuario');
   const fallos = [
-    ['red', async () => { throw new TypeError('fetch failed', { cause: { code: 'ENOTFOUND' } }); }, /ENOTFOUND/],
-    ['tiempo agotado', async () => { throw new DOMException('timeout', 'TimeoutError'); }, /tiempo agotado/],
-    ['HTTP 503', async () => respuesta({ status: 503 }), /HTTP 503/],
-    ['redirección a otro sitio', async () => respuesta({ url: 'https://ejemplo.invalid/checkmig' }), /fuera del sitio oficial/],
-    ['no es HTML', async () => respuesta({ tipo: 'application/json', cuerpo: '{}' }), /no es HTML/],
-    ['cuerpo ilegible', async () => ({ ...respuesta(), text: async () => { throw new TypeError('terminated'); } }), /lectura del cuerpo/]
+    ['red', async () => { throw new TypeError('fetch failed', { cause: { code: 'ENOTFOUND' } }); }, /red:ENOTFOUND/],
+    ['tiempo agotado', async () => { throw new DOMException('timeout', 'TimeoutError'); }, /tiempo_agotado/],
+    ['HTTP 503', async () => respuesta({ status: 503 }), /http_503/],
+    ['redirección a otro sitio', async () => respuesta({ status: 302, cuerpo: null, location: 'https://ejemplo.invalid/checkmig' }), /redireccion_fuera_del_sitio/],
+    ['no es HTML', async () => respuesta({ tipo: 'application/json', cuerpo: '{}' }), /no_html/],
+    ['cuerpo ilegible', async () => new Response(new ReadableStream({ pull(c) { c.error(new TypeError('terminated')); } }), { status: 200, headers: { 'content-type': 'text/html' } }), /cuerpo_ilegible/]
   ];
   for (const [nombre, f, motivo] of fallos) {
     const r = await consultar({ ahora, fetch: f });
