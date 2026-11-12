@@ -68,6 +68,32 @@ const valores = r => Object.fromEntries(Object.entries(r.campos).map(([k, c]) =>
     assert.deepEqual(Object.values(r.campos).map(c => c.estado), ['ambiguo', 'ambiguo', 'ambiguo']);
   }
 
+  // 5b. Regresiones de la revisión de dc57067 (falsos positivos de extraer()).
+  const sinObligatoriedad = v.replace('l&iacute;nea, de uso no obligatorio que permite', 'l&iacute;nea que permite');
+  assert.notEqual(sinObligatoriedad, v);
+  const dirigido = texto => v.replace(/(<strong>Dirigido a:<\/strong>)[^<]*/, `$1 ${texto}`);
+  const regresiones = [
+    // 6.1 Obligatoriedad distinta por grupo de viajeros: el formato solo admite un valor global.
+    ['obligatoriedad por grupo (sola)', sinObligatoriedad.replace('</div>\n</main>', '<p>CheckMig no es obligatorio para nacionales, pero es obligatorio para extranjeros.</p>\n  </div>\n</main>'), 'obligatoriedad', /^condicionada/],
+    ['obligatoriedad por grupo (junto a la ficha)', conMain('<p>CheckMig no es obligatorio para nacionales, pero es obligatorio para extranjeros.</p>'), 'obligatoriedad', /^condicionada/],
+    // 6.2 «Dirigido a:» con una exclusión: nunca se infiere «salida».
+    ['alcance con exclusión', dirigido('viajeros extranjeros que ingresen a Colombia, no para los que salgan.'), 'alcance', /^exclusion/],
+    // 6.3 Obligatoriedad de otro documento: no es evidencia sobre CheckMig.
+    ['obligatoriedad de otro documento', sinObligatoriedad.replace('</div>\n</main>', '<p>Es obligatorio presentar el pasaporte.</p>\n  </div>\n</main>'), 'obligatoriedad', /^sin_evidencia/]
+  ];
+  for (const [nombre, html, campo, motivo] of regresiones) {
+    const r = extraer(html, FUENTE);
+    assert.equal(r.campos[campo].estado, 'ambiguo', `${nombre}: ${JSON.stringify(r.campos[campo])}`);
+    assert.equal(r.campos[campo].valor, null, nombre);
+    assert.match(r.campos[campo].motivo, motivo, nombre);
+    assert.equal(r.estado, 'ambiguo', nombre);
+    for (const otro of Object.keys(r.campos).filter(k => k !== campo)) assert.equal(r.campos[otro].estado, 'ok', `${nombre}: ${otro} sigue ok`);
+  }
+  // La mención de otro documento se ignora: junto a la ficha no crea una contradicción.
+  const conPasaporte = extraer(conMain('<p>Es obligatorio presentar el pasaporte.</p>'), FUENTE);
+  assert.equal(conPasaporte.campos.obligatoriedad.valor, 'no_obligatorio', JSON.stringify(conPasaporte.campos.obligatoriedad));
+  assert.equal(conPasaporte.campos.obligatoriedad.evidencia.length, 1);
+
   // 5. consultar() con fetch simulado: éxito y cada fallo como no_disponible, sin lanzar.
   const respuesta = ({ status = 200, url = URL_FICHA, tipo = 'text/html; charset=utf-8', cuerpo = v } = {}) => ({
     status, url, headers: new Headers({ 'content-type': tipo }), text: async () => cuerpo

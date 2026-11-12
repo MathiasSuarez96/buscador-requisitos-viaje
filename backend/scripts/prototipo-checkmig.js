@@ -76,27 +76,58 @@ const definido = (valor, ev) => ({ estado: 'ok', valor, evidencia: ev.map(eviden
 // Campos
 // ------------------------------------------------------------------
 
-// Obligatoriedad: 'no_obligatorio' u 'obligatorio' según el texto; ambas o ninguna → ambiguo.
-const NEGATIVA = /\b(no\s+(es\s+|son\s+|sera\s+|resulta\s+)?obligatori[oa]s?|uso\s+opcional|es\s+opcional|caracter\s+voluntario|es\s+voluntari[oa])\b/;
-const POSITIVA = /\b(obligatori[oa]s?|de\s+caracter\s+obligatorio|es\s+requisito\s+indispensable)\b/;
+// Obligatoriedad: un único valor global, 'no_obligatorio' u 'obligatorio'. Cada mención cuenta
+// solo si se refiere a CheckMig; ambas polaridades, una condición por grupo o ninguna → ambiguo.
+// Mención: grupo 1 = negación explícita; grupo 2 = forma negativa (opcional/voluntario).
+const MENCION = /\b(?:(no\s+(?:es\s+|son\s+|sera\s+|resulta\s+)?obligatori[oa]s?)|(uso\s+opcional|es\s+opcional|caracter\s+voluntario|es\s+voluntari[oa])|obligatori[oa]s?|requisito\s+indispensable)\b/g;
+// Palabras que designan a CheckMig (o su uso o registro) como sujeto u objeto de la obligación.
+const SUJETO = /\b(checkmig|servicio|registro|pre-?registro|uso|formulario|aplicativo|precarga|diligenciamiento)\b/;
+// Tras la mención: un infinitivo introduce otra obligación («obligatorio presentar el pasaporte»).
+const INFINITIVO = /^\s*(?:el\s+|la\s+)?(?:\p{L}+(?:ar|er|ir))\b/u;
+// Condición por grupo o excepción: el formato solo admite un valor global.
+const CONDICION_TRAS = /^\s*,?\s*(?:para|a)\s+(?:los\s+|las\s+)?(?:viajeros\s+|ciudadanos\s+|personas\s+)?(?:nacionales|extranjer|colombian|residentes|menores|mayores|turistas|ciertos|algunos)/;
+const EXCEPCION = /\b(salvo|excepto|excepcion|exceptuando|unicamente|solamente|solo\s+para)\b/;
+const palabras = (t, n, desdeFin) => { const p = t.split(/\s+/).filter(Boolean); return (desdeFin ? p.slice(-n) : p.slice(0, n)).join(' '); };
+function mencionesCheckmig(s) {
+  const res = [];
+  for (const m of s.matchAll(MENCION)) {
+    const antes = s.slice(0, m.index), despues = s.slice(m.index + m[0].length);
+    const infinitivo = INFINITIVO.test(despues);
+    const sobreCheckmig = infinitivo
+      ? SUJETO.test(palabras(despues, 5)) && !/\b(pasaporte|visa|documento|cedula)\b/.test(palabras(despues, 5))
+      : SUJETO.test(palabras(antes, 6, true)) || SUJETO.test(palabras(despues, 3)) || /\bcheckmig\b/.test(s);
+    if (!sobreCheckmig) continue;
+    res.push({ negativa: Boolean(m[1] || m[2]), condicionada: CONDICION_TRAS.test(despues) });
+  }
+  return res;
+}
 function obligatoriedad(frases) {
-  const neg = [], pos = [];
+  const neg = [], pos = [], cond = [];
   for (const f of frases) {
     const s = sinTildes(f);
-    if (NEGATIVA.test(s)) neg.push(f);
-    // Positiva solo si queda una mención de obligatoriedad fuera de las negaciones.
-    else if (POSITIVA.test(s.replace(new RegExp(NEGATIVA.source, 'g'), ' '))) pos.push(f);
+    const menciones = mencionesCheckmig(s);
+    if (!menciones.length) continue;
+    const polaridades = new Set(menciones.map(m => m.negativa));
+    // Dos polaridades en la misma oración, o un grupo/excepción: obligatoriedad no global.
+    if (polaridades.size > 1 || menciones.some(m => m.condicionada) || EXCEPCION.test(s)) cond.push(f);
+    else (menciones[0].negativa ? neg : pos).push(f);
   }
+  if (cond.length) return ambiguo('condicionada: la obligatoriedad depende del grupo de viajeros y el formato solo admite un valor global', cond);
   if (neg.length && pos.length) return ambiguo('contradiccion: la ficha dice obligatorio y no obligatorio', [...neg, ...pos]);
   if (neg.length) return definido('no_obligatorio', neg);
   if (pos.length) return definido('obligatorio', pos);
-  return ambiguo('sin_evidencia: la ficha no menciona la obligatoriedad');
+  return ambiguo('sin_evidencia: la ficha no menciona la obligatoriedad de CheckMig');
 }
 
 // Alcance: el bloque «Dirigido a:». Viajeros (nacionales/extranjeros) y sentidos (ingreso/salida).
 function alcance(bloques) {
   const dirigidos = bloques.filter(b => /^dirigido\s+a\s*:/i.test(b));
   if (!dirigidos.length) return ambiguo('sin_evidencia: no hay bloque «Dirigido a:»');
+  // Una negación o exclusión («no para los que salgan») no se interpreta: nunca se deduce un
+  // viajero o un sentido de una palabra negada, así que el alcance queda ambiguo.
+  const EXCLUSION = /\b(no|ni|sin|salvo|excepto|excepcion|exceptuando|excluid[oa]s?|excluye\w*|tampoco|menos)\b/;
+  const excluyentes = dirigidos.filter(b => EXCLUSION.test(sinTildes(b)));
+  if (excluyentes.length) return ambiguo('exclusion: «Dirigido a:» con una negación o exclusión que el prototipo no interpreta', excluyentes);
   const leer = b => {
     const s = sinTildes(b.replace(/^dirigido\s+a\s*:\s*/i, ''));
     const viajeros = [/\b(nacionales|colombian[oa]s)\b/.test(s) && 'nacionales', /\bextranjer[oa]s\b/.test(s) && 'extranjeros'].filter(Boolean);
