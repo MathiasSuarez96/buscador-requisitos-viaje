@@ -189,20 +189,27 @@ async function aplicarPlan(plan, modo, deps) {
 
     if (deps.antesDeEscribir) await deps.antesDeEscribir();
 
-    // CAS: el elemento debe seguir exactamente en el estado leído (cada campo, como texto) y ser único.
-    const condicion = Object.fromEntries(Object.entries(desde).map(([k, v]) => [k, { $eq: v, $type: 'string' }]));
+    // CAS sobre el requisito COMPLETO: el elemento con ese _id debe ser único y seguir siendo, como
+    // documento BSON, idéntico al leído (mismas claves, en el mismo orden, mismos valores y tipos).
+    // La lectura ya comprobó que ese elemento es exactamente `desde` (todas las claves, solo texto).
+    // Comparar campo por campo no alcanza: una clave agregada pasaría, y { $eq: 'si', $type: 'string' }
+    // también coincide con ['si']. $literal evita que un valor que empiece con '$' se lea como ruta.
+    const elementoLeido = mismos[0];
     const t = deps.ahora();
     const set = { updatedAt: t };
     for (const [k, v] of Object.entries(hacia)) if (desde[k] !== v) set[`requisitos.$[r].${k}`] = v;
     const unset = {};
     for (const k of Object.keys(desde)) if (!(k in hacia)) unset[`requisitos.$[r].${k}`] = '';
+    const cuantos = cond => ({ $size: { $filter: { input: { $ifNull: ['$requisitos', []] }, as: 'x', cond } } });
     const filtro = {
       _id: destinoId,
-      requisitos: { $elemMatch: { _id: requisitoId, ...condicion } },
-      $expr: { $eq: [{ $size: { $filter: { input: '$requisitos', as: 'x', cond: { $eq: ['$$x._id', requisitoId] } } } }, 1] }
+      $expr: { $and: [
+        { $eq: [cuantos({ $eq: ['$$x._id', requisitoId] }), 1] },
+        { $eq: [cuantos({ $eq: ['$$x', { $literal: elementoLeido }] }), 1] }
+      ] }
     };
     const res = await col.updateOne(filtro, { $set: set, ...(Object.keys(unset).length ? { $unset: unset } : {}) },
-      { arrayFilters: [{ 'r._id': requisitoId, ...Object.fromEntries(Object.entries(condicion).map(([k, v]) => [`r.${k}`, v])) }] });
+      { arrayFilters: [{ r: { $eq: elementoLeido } }] });
     if (res.matchedCount === 0) throw new ErrorEstadoDistinto('cambio concurrente: el requisito cambió entre la lectura y la escritura; no se escribió nada.', []);
     if (res.matchedCount !== 1 || res.modifiedCount !== 1) throw new Error(`update inesperado: matched=${res.matchedCount} modified=${res.modifiedCount}.`);
 

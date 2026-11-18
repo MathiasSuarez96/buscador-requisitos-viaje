@@ -2,8 +2,8 @@
   "version": "correccion-requisito-v1",
   "id": "co-checkmig-2026-11",
   "descripcion": "Corrección puntual de CO / Check-Mig: la ficha oficial dice «de uso no obligatorio»; la fuente pasa a ser la ficha y el enlace del viajero, el prerregistro vigente.",
-  "creado_en": "2026-11-12T03:59:54.461Z",
-  "vence_en": "2026-11-15T03:59:54.461Z",
+  "creado_en": "2026-11-18T01:49:24.851Z",
+  "vence_en": "2026-11-21T01:49:24.851Z",
   "base_datos": "buscador_requisitos",
   "operador_esperado": {
     "user": "mathias-operador",
@@ -36,7 +36,7 @@
     "descripcion": "Prerregistro migratorio en línea para el ingreso y la salida de Colombia. Se puede completar entre 72 horas y una hora antes del viaje.",
     "fuente": "https://www.migracioncolombia.gov.co/tramites-y-servicios/aplicativos/checkmig",
     "link": "https://apps.migracioncolombia.gov.co/pre-registro/",
-    "fecha_verificacion": "2026-11-12",
+    "fecha_verificacion": "2026-11-17",
     "estado": "confirmado"
   },
   "campos_cambiados": [
@@ -48,21 +48,21 @@
   ],
   "fecha_verificacion": {
     "antes": "2026-08-18",
-    "despues": "2026-11-12",
+    "despues": "2026-11-17",
     "renovada": true,
     "motivo": "Todos los campos del registro corregido tienen evidencia del día (ficha leída y enlace verificado)."
   },
   "evidencia": {
     "api": {
       "url": "https://buscador-requisitos-viaje.onrender.com/api/destinos/CO",
-      "consultado_en": "2026-11-12T03:59:54.461Z",
+      "consultado_en": "2026-11-18T01:49:24.851Z",
       "http_status": 200,
       "sha256": "e861f6849b7f9cc0fed0f7ace2bfeb6f027d00fd3581e722e6ce51189397a62e",
       "destino_updatedAt": "2026-09-11T02:07:44.986Z"
     },
     "ficha": {
       "url": "https://www.migracioncolombia.gov.co/tramites-y-servicios/aplicativos/checkmig",
-      "consultado_en": "2026-11-12T03:59:55.712Z",
+      "consultado_en": "2026-11-18T01:49:25.570Z",
       "http_status": 200,
       "hechos_hash": "f7becb92dcc9ba36dd6ca53a0218bab24e4a450eac17f7abcef931035c055321",
       "contenido_sha256": "35aa8d4b6b6531bacfe12b1850f218b6cc99af6a28cd95b34d57c89d289102c6",
@@ -99,6 +99,6 @@
       "titulo": "404 Not Found"
     }
   },
-  "hash": "b045a23db9385520204448a085f8e772c46a2b407d16e0f723d1f8618a349bc2",
-  "hash_reversion": "463513d82b3d898346d85e5d947c94b01a86ecf4211a26c7dac30f9a3b095617"
+  "hash": "0fb5e707a9d2d82e86fa8d70ab8394d7e0e9f613670ea5e7eb106afb111cd814",
+  "hash_reversion": "a32aa60713a3a9b7128683a97754f12096ec50d5de90759aa7a1c78968d57367"
 }

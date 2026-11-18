@@ -125,6 +125,35 @@ const ej = d => BSON.EJSON.stringify(d, { relaxed: false });
       intermedio.estado = ej(await leer());
     } })), e => e instanceof C.ErrorEstadoDistinto && /cambio concurrente/.test(e.message));
     assert.equal(ej(await leer()), intermedio.estado, 'nada escrito por la corrección');
+    // Regresión (Codex, 17/11): el filtro atómico compara el requisito completo (claves, valores y
+    // tipos), no solo los campos del plan. Cada mutación ocurre entre la lectura y el update; en la
+    // corrección y en la reversión el update no debe coincidir ni escribir.
+    const mutaciones = modo => {
+      const desde = modo === 'correccion' ? plan.antes : plan.despues;
+      return [
+        ['clave agregada (recomendado: "si")', { $set: { 'requisitos.$.recomendado': 'si' } }],
+        ['clave quitada (descripcion)', { $unset: { 'requisitos.$.descripcion': '' } }],
+        ['tipo: obligatorio como arreglo con el mismo texto', { $set: { 'requisitos.$.obligatorio': [desde.obligatorio] } }],
+        ['tipo: fecha_verificacion como Date', { $set: { 'requisitos.$.fecha_verificacion': new Date(`${desde.fecha_verificacion}T00:00:00.000Z`) } }],
+        ['valor: estado distinto', { $set: { 'requisitos.$.estado': 'verificar' } }]
+      ];
+    };
+    for (const modo of ['correccion', 'reversion']) {
+      for (const [caso, mutacion] of mutaciones(modo)) {
+        await sembrar();
+        if (modo === 'reversion') await C.aplicarPlan(plan, 'correccion', deps());
+        const previo = ej(await leer());
+        const estado = { intermedio: null };
+        const d = deps({ antesDeEscribir: async () => {
+          const u = await col.updateOne({ _id: destinoId, 'requisitos._id': reqId }, mutacion);
+          assert.equal(u.modifiedCount, 1, `${modo} / ${caso}: la mutación se aplicó`);
+          estado.intermedio = ej(await leer());
+          assert.notEqual(estado.intermedio, previo);
+        } });
+        await assert.rejects(C.aplicarPlan(plan, modo, d), e => e instanceof C.ErrorEstadoDistinto && /cambio concurrente/.test(e.message), `${modo} / ${caso}: debe abortar`);
+        assert.equal(ej(await leer()), estado.intermedio, `${modo} / ${caso}: nada escrito`);
+      }
+    }
     // Un segundo requisito con el mismo _id tampoco se acepta.
     await sembrar();
     await col.updateOne({ _id: destinoId }, { $push: { requisitos: { ...antes.requisitos.find(x => x._id.equals(reqId)) } } });
