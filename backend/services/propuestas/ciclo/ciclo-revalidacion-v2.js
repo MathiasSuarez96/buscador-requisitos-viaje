@@ -74,6 +74,13 @@ function clasificar(requisito, lectura, perfil, { hoy }) {
   return informe('cambio_aplicable')({ ...comun, cambios: ev.cambios });
 }
 
+// Cuándo y cómo se consultó la fuente en esta corrida (para el registro de ejecución).
+function resumenLectura(lectura) {
+  const d = lectura?.diagnostico ?? {};
+  return { url: lectura?.url ?? null, tipo: lectura?.tipo ?? null, consultado_en: d.consultado_en ?? null, http_status: d.http_status ?? null,
+    hechos_hash: lectura?.hechos_hash ?? null, contenido_sha256: d.contenido_sha256 ?? null, motivo: lectura?.tipo === 'no_disponible' ? lectura.motivo ?? null : null };
+}
+
 // Misma fecha de calendario que fija el núcleo al aplicar (America/Montevideo).
 const hoyMontevideo = ahora => fechaMontevideo(ahora);
 
@@ -110,12 +117,13 @@ async function ejecutarCicloV2({ destinoId, requisitoId }, perfil, c) {
 
   const lectura = await perfil.adaptador.leer({ fetch: c.fetch, ahora: c.ahora });
   const informe = clasificar(requisito, lectura, perfil, { hoy: hoyMontevideo(c.ahora()) });
+  const fuente = resumenLectura(lectura);
   if (informe.accion !== 'cambio_aplicable') {
-    return { resultado: informe.accion, motivo: informe.motivo ?? null, lecturas: 1, pendiente: informe.pendiente ?? null, informe };
+    return { resultado: informe.accion, motivo: informe.motivo ?? null, lecturas: 1, pendiente: informe.pendiente ?? null, informe, fuente };
   }
   // Sin la política habilitada explícitamente, el cambio se informa y no se escribe nada.
   if (c.politicaHabilitada !== true || !c.identidadDecision) {
-    return { resultado: 'cambio_aplicable', motivo: 'politica_no_habilitada', lecturas: 1, pendiente: { tipo: 'autorizacion', motivo: 'politica_no_habilitada' }, informe };
+    return { resultado: 'cambio_aplicable', motivo: 'politica_no_habilitada', lecturas: 1, pendiente: { tipo: 'autorizacion', motivo: 'politica_no_habilitada' }, informe, fuente };
   }
 
   // Propuesta 2.0 desde la lectura confirmada.
@@ -134,7 +142,7 @@ async function ejecutarCicloV2({ destinoId, requisitoId }, perfil, c) {
       algoritmo_canonicalizacion: sobre.algoritmo_canonicalizacion, algoritmo_hash: sobre.algoritmo_hash, payload: sobre.payload, payload_hash: sobre.payload_hash }).save();
   } catch (err) {
     // Otra propuesta activa ganó la carrera (índice único de propuesta activa): no se duplica.
-    if (err?.code === 11000) return { resultado: 'propuesta_activa_existente', lecturas: 1, pendiente: null, informe };
+    if (err?.code === 11000) return { resultado: 'propuesta_activa_existente', lecturas: 1, pendiente: null, informe, fuente };
     throw err;
   }
 
@@ -143,7 +151,7 @@ async function ejecutarCicloV2({ destinoId, requisitoId }, perfil, c) {
     payload_hash_esperado: sobre.payload_hash, version_coordinacion_esperada: 0, decision_aprobacion_id_esperado: null,
     version_contrato_esperada: '2.0', advertencias_aceptadas: [...sobre.payload.advertencias] },
   { ...D.crearDependenciasMongoose(c.conexion), uuid: c.uuid, ahora: c.ahora, resolverIdentidad: async () => structuredClone(c.identidadDecision) });
-  if (decision?.resultado !== 'decision_registrada') return { resultado: 'decision_no_registrada', propuesta_id: propuestaId, detalle: decision?.resultado ?? null, lecturas: 1, informe };
+  if (decision?.resultado !== 'decision_registrada') return { resultado: 'decision_no_registrada', propuesta_id: propuestaId, detalle: decision?.resultado ?? null, lecturas: 1, informe, fuente };
 
   // Aplicación con H3.3 (revalida la ficha y escribe solo si los hechos siguen confirmados).
   const entrada = { propuesta_id: propuestaId, estado_esperado: 'aprobada', payload_hash_esperado: sobre.payload_hash,
@@ -156,7 +164,7 @@ async function ejecutarCicloV2({ destinoId, requisitoId }, perfil, c) {
     ? { tipo: 'revision_humana', propuesta_id: propuestaId, intento_id: r.intento_id, campos: (ultima?.campos_sin_confirmar ?? []).map(x => ({ ...x })) }
     : propuesta.estado === 'aprobada' && r.resultado !== 'exito' ? { tipo: 'reintentar', propuesta_id: propuestaId, intento_id: r.intento_id, codigo: ultima?.codigo_fallo ?? r.resultado } : null;
   return { resultado: r.resultado, propuesta_id: propuestaId, decision_evento_id: decision.evento_id, intento_id: r.intento_id,
-    estado_propuesta: propuesta.estado, lecturas: 1 + (r.lecturas ?? 0), valor_aplicado: r.resultado === 'exito' ? informe.esperado : null, pendiente, informe };
+    estado_propuesta: propuesta.estado, lecturas: 1 + (r.lecturas ?? 0), valor_aplicado: r.resultado === 'exito' ? informe.esperado : null, pendiente, informe, fuente };
 }
 
-module.exports = { ACCIONES, clasificar, evaluarFecha, crearDepsAplicacion, ejecutarCicloV2, esDelPerfil };
+module.exports = { ACCIONES, clasificar, evaluarFecha, crearDepsAplicacion, ejecutarCicloV2, esDelPerfil, resumenLectura };

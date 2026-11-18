@@ -8,19 +8,23 @@
  *     ninguna base, no lee .env y no escribe nada.
  *     Salida: 0 sin cambio · 2 cambio aplicable · 3 revisión humana · 4 fuente no disponible · 1 error.
  *
- *   node scripts/ciclo-checkmig-v2.js --ejecutar
+ *   node scripts/ciclo-checkmig-v2.js --ejecutar [--registro-local RUTA_NUEVA]
  *     Ejecución REAL (tarea diaria). Requiere la configuración de config-ciclo-real.js en el
  *     entorno (MONGODB_URI_CICLO, OPERADORES_AUTORIZADOS_JSON y, para escribir,
  *     CICLO_V2_AUTORIZACION_JSON). Prechequeo de solo lectura (identidad, índices, destino) antes
- *     de leer la fuente; luego el ciclo compartido con H3.3. Sin autorización vigente solo informa.
- *     NO se ejecuta sin autorización explícita: ver docs/ciclo-colombia-real.md.
+ *     de leer la fuente; luego el ciclo compartido con H3.3.
+ *     Modo informe (sin autorización vigente): lee y compara, no escribe. Todo comando que no sea
+ *     de lectura observado en la conexión hace fallar la corrida (exit 1).
+ *     Cada corrida imprime UNA línea «REGISTRO_EJECUCION {json}»: cuándo se consultó la fuente,
+ *     el resultado, el código de salida y la fecha de verificación. --registro-local guarda el
+ *     mismo JSON en un archivo nuevo (no sobrescribe). Ver docs/ciclo-colombia-real.md.
  *     Salida: 0 sin cambio o aplicado · 2 cambio aplicable sin política · 3 revisión · 4 fuente caída · 1 error.
  */
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { readFileSync } = require('node:fs');
 
-const AYUDA = 'Uso: node scripts/ciclo-checkmig-v2.js --simular [--registro RUTA_JSON] [--html RUTA_HTML] | --ejecutar (ver docs/ciclo-colombia-real.md)';
+const AYUDA = 'Uso: node scripts/ciclo-checkmig-v2.js --simular [--registro RUTA_JSON] [--html RUTA_HTML] | --ejecutar [--registro-local RUTA_NUEVA] (ver docs/ciclo-colombia-real.md)';
 const REGISTRO_PRUEBA = path.join(__dirname, 'fixtures', 'checkmig', 'registro-publicado-2026-10-21.json');
 const SALIDA = Object.freeze({ sin_cambio: 0, cambio_aplicable: 2, revision_humana: 3, fuente_no_disponible: 4 });
 
@@ -67,26 +71,87 @@ function lineasSimulacion({ registro, lectura, informe }, origen) {
 // Ejecución real (no se corre sin autorización)
 // ------------------------------------------------------------------
 
-async function ejecutarReal(env = process.env, log = console.log) {
+// Modo informe: solo lecturas y metadatos de conexión.
+const COMANDOS_INFORME = Object.freeze(['connectionStatus', 'listIndexes', 'find', 'getMore', 'killCursors', 'endSessions', 'hello', 'isMaster', 'ping', 'saslStart', 'saslContinue', 'buildInfo']);
+const VERSION_REGISTRO = 'registro-ciclo-v1';
+const sinUri = t => String(t ?? '').replace(/mongodb(\+srv)?:\/\/\S+/g, '<uri>').slice(0, 500);
+
+function codigoSalida(r) {
+  if (r.resultado === 'exito' || r.resultado === 'sin_cambio') return 0;
+  if (r.resultado === 'cambio_aplicable') return 2;
+  if (r.resultado === 'fuente_no_disponible' || r.resultado === 'fuente_temporalmente_no_disponible') return 4;
+  return 3;
+}
+
+// Pura. Registro de una corrida: lo que permite comprobar que la tarea diaria funciona.
+function registroEjecucion({ iniciado_en, terminado_en, config, proceso, objetivo, r, error, comandos, codigo }) {
+  const f = r?.informe?.fecha_verificacion;
+  return {
+    version: VERSION_REGISTRO, comando: 'ciclo-checkmig-v2 --ejecutar', iniciado_en, terminado_en,
+    modo: config ? (config.politica_habilitada ? 'politica_automatica' : 'informe') : null,
+    politica: config?.autorizacion ? { nombre: config.autorizacion.politica, autorizada_por: config.autorizacion.autorizada_por, vence_en: config.autorizacion.vence_en } : null,
+    motivo_sin_politica: config?.motivo_sin_politica ?? null,
+    proceso: proceso ?? null,
+    objetivo: objetivo ? { codigo_iso: config.perfil.destino.codigo_iso, destino_id: objetivo.destinoId.toHexString(), requisito: config.perfil.requisito.nombre, requisito_id: objetivo.requisitoId.toHexString() } : null,
+    fuente: r?.fuente ?? null,
+    resultado: error ? 'error' : r.resultado, motivo: error ? null : r.motivo ?? null, error: error ? sinUri(error.message ?? error) : null,
+    codigo_salida: codigo,
+    propuesta_id: r?.propuesta_id ?? null, intento_id: r?.intento_id ?? null, estado_propuesta: r?.estado_propuesta ?? null, valor_aplicado: r?.valor_aplicado ?? null,
+    pendiente: r?.pendiente ?? null,
+    observaciones: (r?.informe?.observaciones ?? []).map(o => o.codigo),
+    fecha_verificacion: f ? { actual: f.actual, hoy: f.hoy, dias_desde_verificacion: f.dias_desde_verificacion, efecto: f.efecto, renovacion_soportada: f.renovacion_soportada ?? null } : null,
+    comandos: [...new Set(comandos)].sort()
+  };
+}
+
+/**
+ * deps (pruebas): { conexion (mongoose ya conectado; no se cierra), usuariosAutenticados, fetch, ahora, uuid }.
+ * Devuelve el código de salida. No lanza: los errores quedan en el registro (exit 1).
+ */
+async function ejecutarReal(env = process.env, log = console.log, deps = {}, { registroLocal = null } = {}) {
   const mongoose = require('../config/mongoose');
   const { cargarConfigCicloReal, prepararEjecucionReal } = require('../services/propuestas/ciclo/config-ciclo-real');
   const { ejecutarCicloV2 } = require('../services/propuestas/ciclo/ciclo-revalidacion-v2');
   const { usuariosAutenticadosDe } = require('../services/propuestas/decidir-propuesta');
-  const ahora = () => new Date();
-  const config = cargarConfigCicloReal(env, ahora());
-  await mongoose.connect(config.uri, { autoIndex: false, autoCreate: false });
+  const ahora = deps.ahora ?? (() => new Date());
+  const iniciado_en = ahora().toISOString();
+  const comandos = [];
+  const espia = e => comandos.push(e.commandName);
+  let config = null, p = null, r = null, error = null, cliente = null, propia = false;
   try {
-    const conexion = mongoose.connection;
-    const p = await prepararEjecucionReal(config, { conexion, usuariosAutenticados: () => usuariosAutenticadosDe(conexion),
-      fetch: globalThis.fetch, ahora, uuid: () => crypto.randomUUID() });
+    config = cargarConfigCicloReal(env, ahora());
+    let conexion = deps.conexion;
+    if (!conexion) {
+      await mongoose.connect(config.uri, { autoIndex: false, autoCreate: false, monitorCommands: true });
+      conexion = mongoose.connection;
+      propia = true;
+    }
+    cliente = conexion.getClient();
+    cliente.on('commandStarted', espia);
+    p = await prepararEjecucionReal(config, { conexion, usuariosAutenticados: deps.usuariosAutenticados ?? (() => usuariosAutenticadosDe(conexion)),
+      fetch: deps.fetch ?? globalThis.fetch, ahora, uuid: deps.uuid ?? (() => crypto.randomUUID()) });
     log(`Ciclo CheckMig 2.0 — EJECUCIÓN REAL. Proceso: ${p.proceso.identificador}. Política automática: ${config.politica_habilitada ? 'habilitada' : `no habilitada (${config.motivo_sin_politica})`}.`);
-    const r = await ejecutarCicloV2(p.objetivo, p.perfil, p.contexto);
+    r = await ejecutarCicloV2(p.objetivo, p.perfil, p.contexto);
     log(`resultado=${r.resultado}${r.motivo ? ` (${r.motivo})` : ''}  lecturas=${r.lecturas}${r.propuesta_id ? `  propuesta=${r.propuesta_id}  estado=${r.estado_propuesta}` : ''}${r.intento_id ? `  intento=${r.intento_id}` : ''}`);
     if (r.pendiente) log(`pendiente: ${r.pendiente.tipo}${r.pendiente.motivo ? ` (${r.pendiente.motivo})` : ''}`);
-    return r.resultado === 'exito' || r.resultado === 'sin_cambio' ? 0 : r.resultado === 'cambio_aplicable' ? 2 : r.resultado === 'fuente_no_disponible' || r.resultado === 'fuente_temporalmente_no_disponible' ? 4 : 3;
+  } catch (e) {
+    error = e;
   } finally {
-    await mongoose.disconnect().catch(() => {});
+    cliente?.off('commandStarted', espia);
+    if (propia) await mongoose.disconnect().catch(() => {});
   }
+  // Modo informe: cualquier comando que no sea de lectura invalida la corrida.
+  const fuera = config && !config.politica_habilitada ? [...new Set(comandos.filter(c => !COMANDOS_INFORME.includes(c)))] : [];
+  if (!error && fuera.length) error = new Error(`modo informe: comandos no permitidos observados: ${fuera.join(', ')}`);
+  const codigo = error ? 1 : codigoSalida(r);
+  const registro = registroEjecucion({ iniciado_en, terminado_en: ahora().toISOString(), config, proceso: p?.proceso, objetivo: p?.objetivo, r, error, comandos, codigo });
+  if (error) log(`ciclo: ${registro.error}`);
+  log(`REGISTRO_EJECUCION ${JSON.stringify(registro)}`);
+  if (registroLocal) {
+    try { require('node:fs').writeFileSync(registroLocal, `${JSON.stringify(registro, null, 2)}\n`, { flag: 'wx' }); }
+    catch (e) { log(`ciclo: no se pudo guardar el registro local (${e.code ?? 'error'})`); return 1; }
+  }
+  return codigo;
 }
 
 // ------------------------------------------------------------------
@@ -94,7 +159,8 @@ async function ejecutarReal(env = process.env, log = console.log) {
 // ------------------------------------------------------------------
 
 function leerOpciones(args) {
-  if (args[0] === '--ejecutar' && args.length === 1) return { modo: 'ejecutar' };
+  if (args[0] === '--ejecutar' && args.length === 1) return { modo: 'ejecutar', registroLocal: null };
+  if (args[0] === '--ejecutar' && args.length === 3 && args[1] === '--registro-local' && args[2] && !args[2].startsWith('--')) return { modo: 'ejecutar', registroLocal: path.resolve(args[2]) };
   if (args[0] !== '--simular') return null;
   const o = { modo: 'simular', registro: REGISTRO_PRUEBA, html: null };
   for (let i = 1; i < args.length; i += 2) {
@@ -105,14 +171,14 @@ function leerOpciones(args) {
   return o;
 }
 
-module.exports = { simular, lineasSimulacion, ejecutarReal, leerOpciones, SALIDA };
+module.exports = { simular, lineasSimulacion, ejecutarReal, leerOpciones, codigoSalida, registroEjecucion, SALIDA, COMANDOS_INFORME };
 
 if (require.main === module) {
   (async () => {
     const o = leerOpciones(process.argv.slice(2));
     if (!o) { console.log(AYUDA); process.exitCode = process.argv.length > 2 ? 1 : 0; return; }
     try {
-      if (o.modo === 'ejecutar') { process.exitCode = await ejecutarReal(); return; }
+      if (o.modo === 'ejecutar') { process.exitCode = await ejecutarReal(process.env, console.log, {}, { registroLocal: o.registroLocal }); return; }
       const registro = JSON.parse(readFileSync(o.registro, 'utf8'));
       const html = o.html ? readFileSync(o.html, 'utf8') : null;
       const fetch = html === null ? globalThis.fetch

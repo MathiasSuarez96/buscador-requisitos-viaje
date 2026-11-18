@@ -111,7 +111,7 @@ const leer = async fabrica => perfil.adaptador.leer({ fetch: async () => fabrica
     // ---- 4. Ejecución real contra Mongo efímero (connectionStatus inyectado) ----
     const { MongoMemoryReplSet } = require('mongodb-memory-server');
     rs = await MongoMemoryReplSet.create({ binary: { version: '8.0.32' }, replSet: { count: 1 } });
-    await mongoose.connect(rs.getUri('buscador_ciclo'), { autoIndex: false, autoCreate: false });
+    await mongoose.connect(rs.getUri('buscador_ciclo'), { autoIndex: false, autoCreate: false, monitorCommands: true });
     const conexion = mongoose.connection, col = n => conexion.db.collection(n);
     const crearIndices = async () => {
       for (const s of new Map([...INDICES_DECISION, ...INDICES_APLICACION, V2.INDICE_TRANSVERSAL].map(x => [`${x.coleccion}/${x.nombre}`, x])).values()) {
@@ -166,6 +166,74 @@ const leer = async fabrica => perfil.adaptador.leer({ fetch: async () => fabrica
     const r3 = await ciclo.ejecutarCicloV2(p3.objetivo, p3.perfil, p3.contexto);
     assert.deepEqual([r3.resultado, r3.motivo, r3.pendiente.tipo], ['revision_humana', 'descripcion_contradice', 'revision_humana']);
     assert.deepEqual([await col('propuestas_cambio').countDocuments(), JSON.stringify(await col('destinos').findOne({ _id: o3.destinoId }))], [0, antes3]);
+
+    // ---- 5. Comando --ejecutar (ejecutarReal): registro de la corrida y códigos de salida ----
+    const CLI = require('./ciclo-checkmig-v2');
+    const corregido = neutro({ obligatorio: 'no', descripcion: 'Prerregistro migratorio en línea para el ingreso y la salida de Colombia.', fuente: URL_FICHA,
+      link: 'https://apps.migracioncolombia.gov.co/pre-registro/', fecha_verificacion: '2026-11-17' });
+    const correr = async ({ e = env(), respuestas = [respuesta('valida.html')], registroLocal = null, fetch } = {}) => {
+      const lineas = [];
+      const codigo = await CLI.ejecutarReal(e, l => lineas.push(l), { conexion, usuariosAutenticados: async () => [{ user: 'ciclo-checkmig', db: 'admin' }],
+        fetch: fetch ?? fichaReal(respuestas), uuid: () => crypto.randomUUID() }, { registroLocal });
+      const reg = lineas.filter(l => l.startsWith('REGISTRO_EJECUCION '));
+      assert.equal(reg.length, 1, 'una sola línea de registro por corrida');
+      return { codigo, lineas, registro: JSON.parse(reg[0].slice('REGISTRO_EJECUCION '.length)) };
+    };
+    const huella = async () => JSON.stringify(await Promise.all(['destinos', 'propuestas_cambio', 'eventos_propuesta', 'intentos_aplicacion', 'inicios_intento_aplicacion', 'historial_cambios']
+      .map(n => col(n).find({}).sort({ _id: 1 }).toArray())));
+
+    // Informe (sin política), registro ya corregido: sin_cambio → exit 0, cero escrituras, fuente y fecha registradas.
+    await reiniciar(); await crearIndices();
+    const o5 = await sembrar(corregido);
+    const h5 = await huella();
+    const archivo = path.join(tmp, 'registro-corrida.json');
+    const e5 = await correr({ registroLocal: archivo });
+    assert.equal(e5.codigo, 0, e5.lineas.join('\n'));
+    const g = e5.registro;
+    assert.deepEqual([g.version, g.modo, g.resultado, g.codigo_salida, g.motivo_sin_politica, g.proceso.identificador, g.objetivo.requisito_id],
+      ['registro-ciclo-v1', 'informe', 'sin_cambio', 0, 'CICLO_V2_AUTORIZACION_JSON ausente', 'proceso.ciclo-checkmig', o5.requisitoId.toHexString()]);
+    assert.deepEqual([g.fuente.url, g.fuente.tipo, g.fuente.http_status, typeof g.fuente.hechos_hash, Number.isNaN(Date.parse(g.fuente.consultado_en))], [URL_FICHA, 'hechos', 200, 'string', false]);
+    assert.deepEqual([g.fecha_verificacion.actual, g.fecha_verificacion.efecto, g.fecha_verificacion.renovacion_soportada], ['2026-11-17', 'no_se_renueva', false], 'la fecha queda pendiente: la ficha no respalda todos los campos');
+    assert.ok(g.comandos.length > 0 && g.comandos.every(c => CLI.COMANDOS_INFORME.includes(c)), `comandos: ${g.comandos}`);
+    assert.equal(await huella(), h5, 'modo informe: nada escrito');
+    assert.deepEqual(JSON.parse(readFileSync(archivo, 'utf8')), g, 'el registro local es el mismo JSON');
+    assert.ok(!/SECRETO|mongodb\+srv/.test(e5.lineas.join('\n')), 'la salida no incluye la URI');
+    // El registro local no sobrescribe: archivo existente → exit 1.
+    assert.equal((await correr({ registroLocal: archivo })).codigo, 1);
+
+    // Informe con un cambio aplicable: exit 2, sin escribir.
+    await reiniciar(); await crearIndices(); await sembrar(neutro());
+    const h6 = await huella();
+    const e6 = await correr();
+    assert.deepEqual([e6.codigo, e6.registro.resultado, e6.registro.motivo, e6.registro.pendiente.tipo], [2, 'cambio_aplicable', 'politica_no_habilitada', 'autorizacion']);
+    assert.equal(await huella(), h6);
+
+    // Guarda del modo informe: si algo escribiera por la conexión durante la corrida, exit 1.
+    const fetchQueEscribe = async (...a) => { await col('destinos').updateOne({ codigo_iso: 'CO' }, { $set: { pais: 'tocado' } }); return respuesta('valida.html')(...a); };
+    const e7 = await correr({ fetch: fetchQueEscribe });
+    assert.deepEqual([e7.codigo, e7.registro.resultado], [1, 'error']);
+    assert.match(e7.registro.error, /modo informe: comandos no permitidos observados: update/);
+
+    // Fuente caída: exit 4 con el HTTP registrado. Prechequeo fallido (sin índices): exit 1 sin consultar la fuente.
+    await reiniciar(); await crearIndices(); await sembrar(corregido);
+    const e8 = await correr({ respuestas: [caida] });
+    assert.deepEqual([e8.codigo, e8.registro.resultado, e8.registro.fuente.http_status, e8.registro.fuente.motivo], [4, 'fuente_no_disponible', 503, 'http_503']);
+    await reiniciar(); await sembrar(corregido);
+    const e9 = await correr();
+    assert.deepEqual([e9.codigo, e9.registro.resultado, e9.registro.fuente, consultas], [1, 'error', null, 0]);
+    assert.match(e9.registro.error, /Índices ausentes/);
+
+    // Política vigente con un cambio aplicable: se aplica (exit 0) y el registro trae propuesta e intento.
+    await reiniciar(); await crearIndices();
+    const o10 = await sembrar(neutro());
+    const e10 = await correr({ e: env({ CICLO_V2_AUTORIZACION_JSON: JSON.stringify({ ...AUT, autorizada_en: new Date(Date.now() - 60_000).toISOString(), vence_en: new Date(Date.now() + 86_400_000).toISOString() }) }),
+      respuestas: [respuesta('valida.html'), respuesta('valida.html')] });
+    assert.deepEqual([e10.codigo, e10.registro.modo, e10.registro.resultado, e10.registro.estado_propuesta, e10.registro.valor_aplicado, e10.registro.politica.autorizada_por],
+      [0, 'politica_automatica', 'exito', 'aplicada', 'no', 'persona.autorizante'], e10.lineas.join('\n'));
+    assert.ok(e10.registro.propuesta_id && e10.registro.intento_id);
+    assert.equal((await col('destinos').findOne({ _id: o10.destinoId })).requisitos[0].obligatorio, 'no');
+    // Al día siguiente la misma corrida ya no encuentra cambios: sin_cambio, exit 0.
+    assert.deepEqual([(await correr({ e: env() })).codigo], [0]);
 
     assert.equal(globalThis.__SOLO_LOOPBACK__.bloqueados.length, 0, 'ninguna conexión externa');
     process.exitCode = 0;
