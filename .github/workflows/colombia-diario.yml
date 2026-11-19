@@ -1,0 +1,54 @@
+name: Colombia - CheckMig diario
+
+on:
+  schedule:
+    - cron: '0 11 * * *' # 08:00 America/Montevideo (puede demorarse en GitHub)
+  workflow_dispatch:
+    inputs:
+      solo_informe:
+        description: 'Solo informar, sin aplicar cambios'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checkmig-colombia-produccion
+  cancel-in-progress: false
+
+jobs:
+  ciclo:
+    # Los runners estándar son gratuitos en repositorios públicos.
+    # No ejecutar ni generar consumo en un repositorio privado o desde otra rama.
+    if: github.event.repository.private == false && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.14.1'
+      - name: Instalar dependencias de producción
+        run: npm ci --omit=dev --ignore-scripts
+      - name: Consultar y comparar CheckMig
+        env:
+          MONGODB_URI_CICLO: ${{ secrets.MONGODB_URI_CICLO }}
+          OPERADORES_AUTORIZADOS_JSON: ${{ secrets.OPERADORES_AUTORIZADOS_JSON }}
+          CICLO_V2_AUTORIZACION_JSON: ${{ secrets.CICLO_V2_AUTORIZACION_JSON }}
+          SOLO_INFORME: ${{ github.event_name == 'workflow_dispatch' && inputs.solo_informe }}
+        run: |
+          if [ -z "$MONGODB_URI_CICLO" ] || [ -z "$OPERADORES_AUTORIZADOS_JSON" ]; then
+            echo '::error::Faltan los secretos de conexión o de identidad del ciclo.'
+            exit 1
+          fi
+          if [ "$SOLO_INFORME" = 'true' ] || [ -z "$CICLO_V2_AUTORIZACION_JSON" ]; then
+            unset CICLO_V2_AUTORIZACION_JSON
+          fi
+          node scripts/ciclo-checkmig-v2.js --ejecutar
