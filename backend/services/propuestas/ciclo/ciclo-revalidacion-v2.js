@@ -69,7 +69,8 @@ function clasificar(requisito, lectura, perfil, { hoy }) {
     return informe('revision_humana')({ motivo: 'sin_evidencia_confirmada' });
   }
   const ev = perfil.evaluar(requisito, lectura.hechos);
-  const comun = { esperado: ev.esperado, guardado: requisito.obligatorio, observaciones: ev.observaciones, hechos_hash: lectura.hechos_hash };
+  const comun = { esperado: ev.esperado, guardado: requisito.obligatorio, observaciones: ev.observaciones, hechos_hash: lectura.hechos_hash,
+    ...(ev.tipo_cambio ? { tipo_cambio: ev.tipo_cambio } : {}) };
   if (ev.decision === 'revision_humana') return informe('revision_humana')({ ...comun, motivo: ev.motivo, detalle: ev.detalle, pendiente: { tipo: 'revision_humana', motivo: ev.motivo } });
   if (ev.decision === 'sin_cambio') return informe('sin_cambio')(comun);
   if (ev.cambios.some(c => !perfil.campos_autorizados.includes(c.campo))) return informe('revision_humana')({ ...comun, motivo: 'campo_no_autorizado' });

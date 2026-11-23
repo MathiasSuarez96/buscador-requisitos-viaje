@@ -1,0 +1,13 @@
+{
+  "nota": "Copia de solo lectura de la API pública (GET /api/destinos, 2026-11-23) del requisito validez_pasaporte de GB. Fecha como texto; el tipo BSON real no se verificó. Solo para pruebas.",
+  "destino": { "_id": "6a87828da8282a4aa6ddfbda", "pais": "Reino Unido", "codigo_iso": "GB" },
+  "requisito": {
+    "tipo": "validez_pasaporte",
+    "obligatorio": "si",
+    "descripcion": "El documento de viaje debe ser válido por la duración total de la estadía (no exige un mínimo de meses adicionales).",
+    "fuente": "https://www.iatatravelcentre.com/",
+    "fecha_verificacion": "2026-08-20",
+    "estado": "confirmado",
+    "_id": "6aaddd0e9f54309f9d8272de"
+  }
+}

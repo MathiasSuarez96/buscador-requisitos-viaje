@@ -9,3 +9,4 @@ Open Government Licence v3.0: https://www.nationalarchives.gov.uk/doc/open-gover
 - `resultado-co-turismo-sin-familia-2026-11-22.html`: https://www.gov.uk/check-uk-visa/y/colombia/no/tourism/no
   (resultado real «You’ll need a visa to come to the UK», con otro contexto).
 - `registro-publicado-gb-2026-11-22.json`: copia de solo lectura de los requisitos de GB en Atlas.
+- `registro-publicado-gb-pasaporte-2026-11-23.json`: copia de la API pública (2026-11-23) del requisito validez_pasaporte de GB.

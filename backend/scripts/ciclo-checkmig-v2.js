@@ -1,11 +1,11 @@
 /**
  * Ciclo de CheckMig (Colombia) 2.0. Dos modos; sin argumentos solo muestra la ayuda.
  *
- *   node scripts/ciclo-checkmig-v2.js --simular [--registro RUTA_JSON] [--html RUTA_HTML]
- *     Consulta la ficha OFICIAL con el adaptador real (o un HTML local con --html) y muestra qué
- *     haría el ciclo con un REGISTRO DE PRUEBA (por defecto, la copia local del Check-Mig
- *     publicado en scripts/fixtures/checkmig/registro-publicado-2026-10-21.json). No conecta a
- *     ninguna base, no lee .env y no escribe nada.
+ *   node scripts/ciclo-checkmig-v2.js --simular [--perfil NOMBRE --registro RUTA_JSON] [--html RUTA_HTML]
+ *     Consulta la fuente OFICIAL con el adaptador real (o un HTML local con --html) y muestra qué
+ *     haría el ciclo con un REGISTRO DE PRUEBA (por defecto, Check-Mig y la copia local publicada
+ *     en scripts/fixtures/checkmig/registro-publicado-2026-10-21.json; con --perfil, el registro
+ *     { destino, requisito } es obligatorio). No conecta a ninguna base, no lee .env y no escribe nada.
  *     Salida: 0 sin cambio · 2 cambio aplicable · 3 revisión humana · 4 fuente no disponible · 1 error.
  *
  *   node scripts/ciclo-checkmig-v2.js --ejecutar [--perfil NOMBRE] [--registro-local RUTA_NUEVA]
@@ -25,7 +25,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { readFileSync } = require('node:fs');
 
-const AYUDA = 'Uso: node scripts/ciclo-checkmig-v2.js --simular [--registro RUTA_JSON] [--html RUTA_HTML] | --ejecutar [--perfil NOMBRE] [--registro-local RUTA_NUEVA] (ver docs/ciclo-colombia-real.md)';
+const AYUDA = 'Uso: node scripts/ciclo-checkmig-v2.js --simular [--perfil NOMBRE --registro RUTA_JSON] [--html RUTA_HTML] | --ejecutar [--perfil NOMBRE] [--registro-local RUTA_NUEVA] (ver docs/ciclo-colombia-real.md)';
 const REGISTRO_PRUEBA = path.join(__dirname, 'fixtures', 'checkmig', 'registro-publicado-2026-10-21.json');
 const SALIDA = Object.freeze({ sin_cambio: 0, cambio_aplicable: 2, revision_humana: 3, fuente_no_disponible: 4 });
 
@@ -33,30 +33,35 @@ const SALIDA = Object.freeze({ sin_cambio: 0, cambio_aplicable: 2, revision_huma
 // Simulación: lectura real + registro de prueba, sin base de datos
 // ------------------------------------------------------------------
 
-async function simular({ registro, fetch, ahora = () => new Date() }) {
+async function simular({ registro, fetch, ahora = () => new Date(), perfil: nombre = null }) {
   const { clasificar } = require('../services/propuestas/ciclo/ciclo-revalidacion-v2');
-  const perfil = require('../services/propuestas/ciclo/perfil-checkmig-colombia');
+  const perfil = nombre === null ? require('../services/propuestas/ciclo/perfil-checkmig-colombia')
+    : require('../services/propuestas/ciclo/perfiles').perfilPorNombre(nombre);
   const { fechaMontevideo } = require('../services/propuestas/plan-aplicacion-requisito-v2');
   const lectura = await perfil.adaptador.leer({ fetch, ahora });
   const informe = clasificar(registro.requisito, lectura, perfil, { hoy: fechaMontevideo(ahora()) });
   return { perfil, lectura, informe };
 }
 
-function lineasSimulacion({ registro, lectura, informe }, origen) {
+function lineasSimulacion({ registro, lectura, informe, perfil = null }, origen) {
   const l = [];
   const r = registro.requisito;
-  l.push(`Ciclo CheckMig 2.0 — SIMULACIÓN (sin base de datos, sin escrituras)`);
+  const checkmig = lectura.hechos?.esquema === undefined || /checkmig/.test(lectura.hechos.esquema);
+  l.push(checkmig && !perfil ? `Ciclo CheckMig 2.0 — SIMULACIÓN (sin base de datos, sin escrituras)` : `Ciclo 2.0 (${perfil?.nombre ?? 'checkmig-colombia'}) — SIMULACIÓN (sin base de datos, sin escrituras)`);
   l.push(`Fuente: ${lectura.url} (${origen})`);
-  l.push(`Registro de prueba: ${registro.destino?.pais ?? '?'} / ${r.nombre}  obligatorio=${JSON.stringify(r.obligatorio)}  fecha_verificacion=${r.fecha_verificacion}`);
+  l.push(`Registro de prueba: ${registro.destino?.pais ?? '?'} / ${r.nombre ?? r.tipo}  obligatorio=${JSON.stringify(r.obligatorio)}  fecha_verificacion=${r.fecha_verificacion}`);
   const d = lectura.diagnostico ?? {};
   l.push(`Lectura: ${lectura.tipo}  consultado_en=${d.consultado_en ?? '-'}  http=${d.http_status ?? '-'}  contenido_sha256=${d.contenido_sha256 ?? '-'} (solo diagnóstico)`);
-  if (lectura.tipo === 'hechos') {
+  if (lectura.tipo === 'hechos' && !checkmig) {
+    l.push(`Hechos confirmados: ${JSON.stringify(lectura.hechos)}  hechos_hash=${lectura.hechos_hash}`);
+    for (const [campo, ev] of Object.entries(lectura.evidencia)) l.push(`Evidencia (${campo}): ${ev.join(' | ')}`);
+  } else if (lectura.tipo === 'hechos') {
     const h = lectura.hechos;
     l.push(`Hechos confirmados: obligatoriedad=${h.obligatoriedad}  viajeros=${h.alcance.viajeros.join('+')}  sentidos=${h.alcance.sentidos.join('+')}  ventana=${h.ventana_horas_antes.maximo_horas_antes}h→${h.ventana_horas_antes.minimo_horas_antes}h  hechos_hash=${lectura.hechos_hash}`);
     l.push(`Evidencia (obligatoriedad): ${lectura.evidencia.obligatoriedad[0]}`);
   }
-  l.push(`ACCIÓN: ${informe.accion}${informe.motivo ? ` (${informe.motivo})` : ''}`);
-  if (informe.guardado !== undefined) l.push(`  obligatorio: guardado=${JSON.stringify(informe.guardado)}  según la ficha=${JSON.stringify(informe.esperado)}`);
+  l.push(`ACCIÓN: ${informe.accion}${informe.motivo ? ` (${informe.motivo})` : ''}${informe.tipo_cambio ? `  tipo_cambio=${informe.tipo_cambio}` : ''}`);
+  if (informe.guardado !== undefined) l.push(`  obligatorio: guardado=${JSON.stringify(informe.guardado)}  según la fuente=${JSON.stringify(informe.esperado)}`);
   if (informe.detalle) l.push(`  ${informe.detalle}`);
   for (const c of informe.cambios ?? []) l.push(`  cambio que propondría: ${c.campo} → ${JSON.stringify(c.propuesto.valor)}`);
   for (const c of informe.pendiente?.campos ?? []) l.push(`  pendiente de revisión: ${c.campo} (${c.motivo})`);
@@ -98,6 +103,7 @@ function registroEjecucion({ iniciado_en, terminado_en, config, proceso, objetiv
     resultado: error ? 'error' : r.resultado, motivo: error ? null : r.motivo ?? null, error: error ? sinUri(error.message ?? error) : null,
     codigo_salida: codigo,
     propuesta_id: r?.propuesta_id ?? null, intento_id: r?.intento_id ?? null, estado_propuesta: r?.estado_propuesta ?? null, valor_aplicado: r?.valor_aplicado ?? null,
+    tipo_cambio: r?.informe?.tipo_cambio ?? null, campos_propuestos: r?.informe?.cambios ? r.informe.cambios.map(c => c.campo) : null,
     pendiente: r?.pendiente ?? null,
     observaciones: (r?.informe?.observaciones ?? []).map(o => o.codigo),
     fecha_verificacion: f ? { actual: f.actual, hoy: f.hoy, dias_desde_verificacion: f.dias_desde_verificacion, efecto: f.efecto, renovacion_soportada: f.renovacion_soportada ?? null } : null,
@@ -108,7 +114,9 @@ function registroEjecucion({ iniciado_en, terminado_en, config, proceso, objetiv
 // Pura. Una fila Markdown para el resumen del job (GITHUB_STEP_SUMMARY). Solo campos ya saneados
 // del registro: nunca la URI ni mensajes crudos de Mongo.
 function lineaResumen(g) {
-  const aplicado = g.resultado === 'exito' ? `APLICADO: obligatorio → ${JSON.stringify(g.valor_aplicado)} (propuesta ${g.propuesta_id})` : '';
+  const aplicado = g.resultado !== 'exito' ? '' : g.tipo_cambio === 'procedencia'
+    ? `APLICADO: cambio de procedencia (${(g.campos_propuestos ?? []).join(', ')}; obligatorio sigue ${JSON.stringify(g.valor_aplicado)}) (propuesta ${g.propuesta_id})`
+    : `APLICADO: obligatorio → ${JSON.stringify(g.valor_aplicado)} (propuesta ${g.propuesta_id})`;
   const pendiente = g.pendiente ? `pendiente: ${g.pendiente.tipo}${g.pendiente.motivo ? ` (${g.pendiente.motivo})` : ''}` : '';
   const celdas = [g.perfil ?? '-', g.objetivo?.codigo_iso ?? '-', g.modo ?? '-', g.resultado + (g.motivo ? ` (${g.motivo})` : ''), String(g.codigo_salida),
     g.fuente ? `HTTP ${g.fuente.http_status ?? '-'} ${g.fuente.consultado_en ?? ''}` : '-', [aplicado, pendiente].filter(Boolean).join('; ') || '-'];
@@ -184,12 +192,16 @@ function leerOpciones(args) {
     return o;
   }
   if (args[0] !== '--simular') return null;
-  const o = { modo: 'simular', registro: REGISTRO_PRUEBA, html: null };
+  const o = { modo: 'simular', registro: REGISTRO_PRUEBA, html: null, perfil: null };
+  let conRegistro = false;
   for (let i = 1; i < args.length; i += 2) {
-    if (args[i] === '--registro' && args[i + 1]) o.registro = path.resolve(args[i + 1]);
+    if (args[i] === '--registro' && args[i + 1]) { o.registro = path.resolve(args[i + 1]); conRegistro = true; }
+    else if (args[i] === '--perfil' && o.perfil === null && /^[a-z0-9-]{1,64}$/.test(args[i + 1] ?? '')) o.perfil = args[i + 1];
     else if (args[i] === '--html' && args[i + 1]) o.html = path.resolve(args[i + 1]);
     else return null;
   }
+  // Con otro perfil, el registro por defecto (Check-Mig) no corresponde: debe indicarse.
+  if (o.perfil !== null && !conRegistro) return null;
   return o;
 }
 
@@ -211,8 +223,8 @@ if (require.main === module) {
       const html = o.html ? readFileSync(o.html, 'utf8') : null;
       const fetch = html === null ? globalThis.fetch
         : async () => new Response(html, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
-      const r = await simular({ registro, fetch });
-      for (const linea of lineasSimulacion({ registro, ...r }, html === null ? 'consulta real' : `HTML local ${path.basename(o.html)}`)) console.log(linea);
+      const r = await simular({ registro, fetch, perfil: o.perfil });
+      for (const linea of lineasSimulacion({ registro, ...r, perfil: o.perfil === null ? null : r.perfil }, html === null ? 'consulta real' : `HTML local ${path.basename(o.html)}`)) console.log(linea);
       process.exitCode = SALIDA[r.informe.accion] ?? 1;
     } catch (err) {
       console.error(`ciclo: ${err?.message ?? err}`);
