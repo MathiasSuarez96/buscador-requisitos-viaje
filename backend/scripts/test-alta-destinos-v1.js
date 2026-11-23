@@ -37,6 +37,17 @@ const LISTA_JA = con('<tr><td>Uruguay</td><td>Ja</td></tr>');
 const SIN_FILA = con('');
 const okHtml = h => () => new Response(h, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
 const caida = () => new Response('x', { status: 503, headers: { 'content-type': 'text/html' } });
+// Condiciones no admitidas: nota en la celda del país (con Nein o Ja), nota con Ja, nota 1 restringida o
+// con texto agregado. Todas deben quedar ambiguas en ambos campos.
+const NOTA_BIOMETRICA = LISTA.replace('Inhaber von Nationalpässen', 'Nur Inhaber von Nationalpässen mit biometrischen Pässen');
+const FALSOS = [
+  ['nota en la celda del país (Nein)', con('<tr><td>Uruguay (5)</td><td>Nein (1)</td></tr>'), 'visa', 'condicionada'],
+  ['nota en la celda del país (Ja)', con('<tr><td>Uruguay (5)</td><td>Ja</td></tr>'), 'visa', 'condicionada'],
+  ['Ja con nota', con('<tr><td>Uruguay</td><td>Ja (5)</td></tr>'), 'visa', 'condicionada'],
+  ['Nein con otra nota además de la 1', con('<tr><td>Uruguay</td><td>Nein (1, 5)</td></tr>'), 'visa', 'condicionada'],
+  ['nota 1 restringida a pasaportes biométricos', NOTA_BIOMETRICA, 'estancia', 'no_reconocido'],
+  ['nota 1 con una condición agregada al final', LISTA.replace('in den betroffenen Staaten.', 'in den betroffenen Staaten. Dies gilt nur für Inhaber biometrischer Pässe.'), 'estancia', 'no_reconocido']
+];
 const ENTRADA = JSON.parse(readFileSync(path.join(__dirname, '..', 'config', 'altas-destinos.json'), 'utf8'));
 
 (async () => {
@@ -59,11 +70,16 @@ const ENTRADA = JSON.parse(readFileSync(path.join(__dirname, '..', 'config', 'al
       ['nota 1 sin la restricción de trabajo', LISTA.replace('keine Erwerbstätigkeit aufnehmen', 'arbeiten'), 'estancia', 'no_reconocido'],
       ['encabezado distinto', LISTA.replace('Visumpflicht für Deutschland: Ja/Nein', 'Visa: Ja/Nein'), 'visa', 'sin_evidencia'],
       ['dos tablas', LISTA.replace('</main>', '<table><tr><td>x</td></tr></table></main>'), 'visa', 'sin_evidencia'],
-      ['dos <main>', LISTA.replace('</main>', '</main><main></main>'), 'visa', 'sin_evidencia']
+      ['dos <main>', LISTA.replace('</main>', '</main><main></main>'), 'visa', 'sin_evidencia'],
+      // Regresiones (revisión de Codex): condiciones no admitidas en cualquiera de las dos celdas o en la nota.
+      ...FALSOS.map(([nombre, h, campo, motivo]) => [nombre, h, campo, motivo])
     ]) {
       const x = F.extraer(h);
       assert.equal(x.estado, 'ambiguo', nombre);
       assert.equal(x.campos[campo].motivo.split(':')[0], motivo, `${nombre}: ${x.campos[campo].motivo}`);
+      if (FALSOS.some(f => f[0] === nombre)) {
+        assert.ok(Object.values(x.campos).every(c => c.estado === 'ambiguo' && c.valor === null), `${nombre}: ningún campo queda confirmado`);
+      }
     }
     const adaptador = ADAPTADORES_V2.find(a => a.nombre === 'auswaertiges-amt-visumpflicht');
     assert.ok(adaptador, 'registrado en adaptadores 2.0');
@@ -168,6 +184,14 @@ const ENTRADA = JSON.parse(readFileSync(path.join(__dirname, '..', 'config', 'al
       const r = await alta(env([CO_AUT, DE_ALTA]), respuestas);
       assert.deepEqual([r.codigo, r.registro.resultado, r.registro.motivo], [codigo, resultado, motivo], nombre);
     }
+    // Regresión: con las condiciones no admitidas el alta no se crea (dos respuestas iguales disponibles).
+    for (const [nombre, h] of FALSOS) {
+      cola = [okHtml(h), okHtml(h)];
+      const lineas = [];
+      const codigo = await ALTA.ejecutarReal(env([CO_AUT, DE_ALTA]), l => lineas.push(l), { conexion, usuariosAutenticados: async () => [{ user: 'ciclo-proceso', db: 'admin' }], fetch: fuente, uuid: () => crypto.randomUUID() });
+      const g = JSON.parse(lineas.find(l => l.startsWith('REGISTRO_ALTA ')).slice('REGISTRO_ALTA '.length));
+      assert.deepEqual([codigo, g.resultado, g.motivo], [3, 'revision_humana', 'lectura_ambigua'], nombre);
+    }
     assert.equal(await huella(), h, 'D: cero escrituras');
     assert.ok(!(await api()).some(d => d.codigo_iso === 'DE'));
 
@@ -222,6 +246,22 @@ const ENTRADA = JSON.parse(readFileSync(path.join(__dirname, '..', 'config', 'al
     // E. Colombia con la autorización en lista que incluye políticas de alta y de DE.
     const co = await ciclo('checkmig-colombia', todas, [okHtml(FICHA_CO)]);
     assert.deepEqual([co.codigo, co.registro.modo, co.registro.resultado], [0, 'politica_automatica', 'sin_cambio']);
+
+    // Regresión de mantenimiento: visa de DE guardada como 'si' con una descripción neutra, política vigente.
+    // Las condiciones no admitidas no aplican nada; un «Nein (1)» claro sí (control positivo).
+    await col('destinos').updateOne({ codigo_iso: 'DE' }, { $set: { 'requisitos.0.obligatorio': 'si', 'requisitos.0.descripcion': 'Visado según la lista oficial del Auswärtiges Amt.' } });
+    const hm = await huella();
+    for (const [nombre, h] of FALSOS) {
+      cola = [okHtml(h), okHtml(h)];
+      const lineas = [];
+      const codigo = await CICLO.ejecutarReal(todas, l => lineas.push(l), { conexion, usuariosAutenticados: async () => [{ user: 'ciclo-proceso', db: 'admin' }], fetch: fuente, uuid: () => crypto.randomUUID() }, { perfil: 'auswaertiges-amt-de-visa' });
+      const g = JSON.parse(lineas.find(l => l.startsWith('REGISTRO_EJECUCION ')).slice('REGISTRO_EJECUCION '.length));
+      assert.deepEqual([codigo, g.resultado, g.motivo], [3, 'revision_humana', 'lectura_ambigua'], `mantenimiento: ${nombre}`);
+    }
+    assert.equal(await huella(), hm, 'mantenimiento con condiciones no admitidas: nada escrito');
+    const positivo = await ciclo('auswaertiges-amt-de-visa', todas, [okHtml(LISTA), okHtml(LISTA)]);
+    assert.deepEqual([positivo.codigo, positivo.registro.resultado, positivo.registro.valor_aplicado], [0, 'exito', 'no'], 'control positivo: «Nein (1)» claro se aplica');
+    assert.equal((await api()).find(d => d.codigo_iso === 'DE').requisitos[0].obligatorio, 'no');
 
     // C. Concurrencia: dos altas simultáneas crean un solo destino y un solo registro.
     await sembrar();

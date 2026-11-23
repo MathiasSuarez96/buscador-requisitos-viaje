@@ -12,14 +12,15 @@
  *
  * - leerLista(): una consulta GET (lectura-http-oficial.js), host www.auswaertiges-amt.de.
  * - extraer(html): pura. Campos:
- *     visa:     'no' (Nein) | 'si' (Ja), de la única fila «Uruguay» bajo el encabezado
- *               «Visumpflicht für Deutschland: Ja/Nein».
- *     estancia: con «Nein», las notas citadas deben ser EXACTAMENTE la 1), y su texto debe decir que
- *               los titulares de pasaportes nacionales no pueden quedarse más de N días por período de
- *               M días ni ejercer una actividad remunerada → {dias, periodo_dias,
- *               actividad_remunerada:'no_permitida'}. Otra nota (pasaporte biométrico, acuerdos,
- *               etc.) es una condición particular que no se generaliza: ambiguo ('condicionada').
- *               Con «Ja», null.
+ *     visa:     de la única fila «Uruguay» bajo el encabezado «Visumpflicht für Deutschland: Ja/Nein».
+ *               Formas admitidas, y solo con la celda del país EXACTAMENTE «Uruguay» (sin notas):
+ *                 «Ja» sin notas → 'si' (estancia null);
+ *                 «Nein (1)»     → 'no', con la nota 1) en su redacción oficial COMPLETA (anclada):
+ *                                  pasaportes nacionales, hasta N días por período de M, sin actividad
+ *                                  remunerada → estancia {dias, periodo_dias, actividad_remunerada}.
+ *               Cualquier otra nota (en la celda del país o en la del valor, con Ja o con Nein), una
+ *               nota 1) restringida o con texto agregado, u otro valor: los DOS campos quedan ambiguos
+ *               ('condicionada' o 'no_reconocido'). Una condición particular nunca se generaliza.
  * - normalizarHechos(lectura): pura. 'auswaertiges-amt-visumpflicht-hechos-v1'.
  */
 const { createHash } = require('node:crypto');
@@ -34,6 +35,14 @@ const CAMPOS = Object.freeze(['visa', 'estancia']);
 const NACIONALIDAD = 'Uruguay';
 const CONTEXTO = Object.freeze({ nacionalidad: 'UY', documento: 'pasaporte_nacional', motivo: 'turismo' });
 const NOTAS_ADMITIDAS = Object.freeze(['1']);
+// Redacción oficial completa de la nota 1) (texto normalizado: espacios simples). Días y período se
+// capturan y deben repetirse igual en la oración de los acuerdos bilaterales.
+const NOTA_1_ADMITIDA = new RegExp('^Inhaber von Nationalpässen der Staaten, die zur Einreise nach Deutschland kein Visum benötigen '
+  + '\\(Angabe: [„"“]Nein[“"”]\\), dürfen sich ohne Visum grundsätzlich nicht länger als (\\d{1,3}) Tage je Zeitraum von (\\d{1,3}) Tagen '
+  + 'im Bundesgebiet aufhalten\\. Zudem dürfen sie während dieses Zeitraums keine Erwerbstätigkeit aufnehmen\\. '
+  + 'Mit bestimmten Staaten hat Deutschland bilaterale Visumbefreiungsabkommen abgeschlossen, die unter Umständen einen längeren '
+  + 'Aufenthalt in Deutschland über (\\d{1,3}) Tage je Zeitraum von (\\d{1,3}) Tagen hinaus ermöglichen\\. '
+  + 'Nähere Informationen hierzu enthalten die Websites der deutschen Auslandsvertretungen in den betroffenen Staaten\\.$');
 
 const ambiguo = (motivo, ev = []) => ({ estado: 'ambiguo', valor: null, evidencia: ev.map(recortar), motivo });
 const definido = (valor, ev) => ({ estado: 'ok', valor, evidencia: ev.map(recortar) });
@@ -62,27 +71,36 @@ function extraerCampos(main) {
   const fs = filas(tablas[0]);
   const encabezado = fs.find(f => f.length === 2 && /visumpflicht\s+f[üu]r\s+deutschland/i.test(f[1]) && /ja\s*\/\s*nein/i.test(f[1]));
   if (!encabezado) return { visa: ambiguo('sin_evidencia: la tabla no tiene el encabezado «Visumpflicht für Deutschland: Ja/Nein»'), estancia: ambiguo('sin_evidencia: sin encabezado') };
+  // La fila se ubica por el nombre con o sin notas, pero solo se interpreta si la celda del país es
+  // EXACTAMENTE «Uruguay»: una nota del país es una condición que no se generaliza.
   const propias = fs.filter(f => f.length >= 1 && f[0].replace(/\s*\(\d+(?:\s*,\s*\d+)*\)\s*$/, '') === NACIONALIDAD);
   if (propias.length !== 1) return { visa: ambiguo(`sin_evidencia: la fila «${NACIONALIDAD}» aparece ${propias.length} veces`), estancia: ambiguo('sin_evidencia: sin fila') };
   const fila = propias[0];
   const evFila = `${fila.join(': ')} (${encabezado[1]})`;
-  if (fila.length !== 2) return { visa: ambiguo('no_reconocido: la fila no tiene dos celdas', [evFila]), estancia: ambiguo('sin_evidencia: sin fila', [evFila]) };
+  // Sin hechos confirmados: los dos campos quedan ambiguos, nunca uno solo.
+  const ambos = (motivo, ev = [evFila]) => ({ visa: ambiguo(motivo, ev), estancia: ambiguo(motivo, ev) });
+  if (fila.length !== 2) return ambos('no_reconocido: la fila no tiene dos celdas');
+  if (fila[0] !== NACIONALIDAD) return ambos(`condicionada: la celda del país cita notas («${fila[0]}»); no se interpretan`);
   const m = fila[1].match(/^(Ja|Nein)\s*(?:\(\s*(\d{1,2}(?:\s*,\s*\d{1,2})*)\s*\))?$/);
-  if (!m) return { visa: ambiguo('no_reconocido: el valor no es «Ja» ni «Nein (notas)»', [evFila]), estancia: ambiguo('sin_evidencia: valor no reconocido', [evFila]) };
-  const visa = definido(m[1] === 'Ja' ? 'si' : 'no', [evFila]);
-  if (m[1] === 'Ja') return { visa, estancia: definido(null, [evFila]) };
-
+  if (!m) return ambos('no_reconocido: el valor no es «Ja» ni «Nein (notas)»');
   const citadas = (m[2] ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  // Únicas formas admitidas: «Ja» sin notas y «Nein (1)».
+  if (m[1] === 'Ja') {
+    if (citadas.length) return ambos(`condicionada: «Ja» cita las notas (${citadas.join(', ')}); no se interpretan`);
+    return { visa: definido('si', [evFila]), estancia: definido(null, [evFila]) };
+  }
   if (citadas.join(',') !== NOTAS_ADMITIDAS.join(',')) {
-    return { visa, estancia: ambiguo(`condicionada: la fila cita las notas (${citadas.join(', ') || 'ninguna'}); solo se interpreta la nota 1`, [evFila]) };
+    return ambos(`condicionada: la fila cita las notas (${citadas.join(', ') || 'ninguna'}); solo se interpreta la nota 1`);
   }
   const textos = notas(main).get('1') ?? [];
-  if (textos.length !== 1) return { visa, estancia: ambiguo(`sin_evidencia: la nota 1) aparece ${textos.length} veces`, [evFila]) };
+  if (textos.length !== 1) return ambos(`sin_evidencia: la nota 1) aparece ${textos.length} veces`);
   const t = textos[0];
-  const plazo = t.match(/Inhaber von Nationalpässen\b[\s\S]*?nicht länger als (\d{1,3}) Tage je Zeitraum von (\d{1,3}) Tagen/);
-  const sinTrabajo = /keine Erwerbstätigkeit aufnehmen/.test(t);
-  if (!plazo || !sinTrabajo) return { visa, estancia: ambiguo('no_reconocido: la nota 1) no tiene la redacción de estadía y actividad admitida', [evFila, `1) ${t}`]) };
+  // La nota 1) se acepta solo con la redacción oficial COMPLETA (anclada): cualquier restricción o
+  // agregado (p. ej. «Nur … mit biometrischen Pässen») la deja sin interpretar.
+  const plazo = t.match(NOTA_1_ADMITIDA);
+  if (!plazo || plazo[1] !== plazo[3] || plazo[2] !== plazo[4]) return ambos('no_reconocido: la nota 1) no tiene la redacción completa admitida', [evFila, `1) ${t}`]);
   const oracion = t.split(/(?<=\.)\s+/).slice(0, 2).join(' ');
+  const visa = definido('no', [evFila]);
   return { visa, estancia: definido({ dias: Number(plazo[1]), periodo_dias: Number(plazo[2]), actividad_remunerada: 'no_permitida' }, [evFila, `1) ${oracion}`]) };
 }
 
