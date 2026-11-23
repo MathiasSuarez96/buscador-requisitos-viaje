@@ -1,17 +1,19 @@
 /**
  * Ejecución REAL del ciclo (tarea diaria). Define qué la habilita y cómo se registra la identidad
- * del proceso. No lee .env: el proceso recibe sus variables del entorno (Render).
+ * del proceso. No lee .env: el proceso recibe sus variables del entorno (secretos de GitHub Actions).
  *
  *  MONGODB_URI_CICLO            Credencial PROPIA del proceso: un usuario de Atlas del ciclo,
  *                               distinto del de la app (MONGODB_URI) y del operador de índices.
  *  OPERADORES_AUTORIZADOS_JSON  Allowlist de operadores-autorizados.js. Debe incluir al usuario
  *                               del proceso: connectionStatus lo identifica (no hay identidad
  *                               declarada a mano).
- *  CICLO_V2_AUTORIZACION_JSON   Habilita la política automática. Exactamente:
+ *  CICLO_V2_AUTORIZACION_JSON   Habilita políticas automáticas. Un objeto (forma original) o una
+ *                               LISTA de objetos, uno por política, cada uno exactamente:
  *                               { "politica": "checkmig-colombia-obligatoriedad@1",
  *                                 "autorizada_por": "<persona que la autoriza>",
  *                                 "autorizada_en": "<ISO UTC>", "vence_en": "<ISO UTC>" }
- *                               Vigencia de 90 días como máximo. Sin ella, o vencida, el ciclo
+ *                               Vigencia de 90 días como máximo por entrada. Cada perfil usa
+ *                               SOLO la entrada de su política: sin ella, o vencida, ese perfil
  *                               lee y compara, pero solo informa: no propone ni escribe.
  *
  * Identidades en la ejecución real:
@@ -29,20 +31,21 @@ const { esFechaIsoUtcExacta } = require('../canonicalizacion-propuestas');
 const { verificarConjuntoIndices, INDICES_DECISION, INDICES_APLICACION } = require('../indices-propuestas');
 const { INDICE_TRANSVERSAL } = require('../aplicar-propuesta-v2');
 const { crearDepsAplicacion } = require('./ciclo-revalidacion-v2');
-const perfilCheckmig = require('./perfil-checkmig-colombia');
+const { PERFILES, PERFIL_POR_DEFECTO, clavePolitica, perfilPorNombre } = require('./perfiles');
 
 class ErrorConfiguracionCiclo extends Error {}
 class ErrorObjetivoCiclo extends Error {}
 
-const POLITICAS = Object.freeze({ [`${perfilCheckmig.politica.nombre}@${perfilCheckmig.politica.version}`]: perfilCheckmig });
+// Política → perfiles que cubre (una política puede cubrir varios requisitos del mismo destino).
+const POLITICAS = Object.freeze(PERFILES.reduce((m, p) => ({ ...m, [clavePolitica(p)]: [...(m[clavePolitica(p)] ?? []), p] }), {}));
 const VIGENCIA_MAXIMA_MS = 90 * 24 * 60 * 60 * 1000;
 const IDENTIDADES_PILOTO = ['piloto.local', 'piloto-local'];
 const CLAVES_AUTORIZACION = ['autorizada_en', 'autorizada_por', 'politica', 'vence_en'];
 const esTexto = v => typeof v === 'string' && v.trim() !== '' && v === v.trim() && v.length <= 120 && !/[\x00-\x1f]/.test(v);
+const falla = m => { throw new ErrorConfiguracionCiclo(`ciclo real: ${m}`); };
 
-// Pura. Los mensajes nunca repiten el contenido de las variables.
-function cargarConfigCicloReal(env, ahora) {
-  const falla = m => { throw new ErrorConfiguracionCiclo(`ciclo real: ${m}`); };
+// Pura. Conexión e identidad del proceso (comunes a ciclo y altas).
+function cargarBaseCiclo(env) {
   const uri = env.MONGODB_URI_CICLO;
   if (typeof uri !== 'string' || !/^mongodb(\+srv)?:\/\//.test(uri)) falla('MONGODB_URI_CICLO ausente o sin esquema mongodb.');
   if (env.MONGODB_URI && uri === env.MONGODB_URI) falla('MONGODB_URI_CICLO debe ser una credencial propia del proceso, no la de la app.');
@@ -50,22 +53,44 @@ function cargarConfigCicloReal(env, ahora) {
   try { operadores = cargarOperadoresAutorizados(env.OPERADORES_AUTORIZADOS_JSON); }
   catch (e) { falla(`allowlist inválida (${e.message.replace(/^.*?: /, '')})`); }
   if (operadores.some(o => IDENTIDADES_PILOTO.includes(o.identificador) || IDENTIDADES_PILOTO.includes(o.usuario_atlas))) falla('la identidad del piloto solo vale en Mongo efímero.');
+  return { uri, operadores };
+}
 
-  let autorizacion = null, perfil = null, motivoSinPolitica = 'CICLO_V2_AUTORIZACION_JSON ausente';
-  if (env.CICLO_V2_AUTORIZACION_JSON !== undefined) {
-    let a;
-    try { a = JSON.parse(env.CICLO_V2_AUTORIZACION_JSON); } catch { falla('CICLO_V2_AUTORIZACION_JSON no es JSON.'); }
+/**
+ * Pura. CICLO_V2_AUTORIZACION_JSON: un objeto (forma original, una política) o una lista de objetos
+ * con políticas distintas. TODAS las entradas se validan aunque esta corrida use una sola; la
+ * corrida toma únicamente la entrada de `clave`. Devuelve { autorizacion | null, motivo | null }.
+ */
+function leerAutorizacion(env, ahora, clave) {
+  if (env.CICLO_V2_AUTORIZACION_JSON === undefined) return { autorizacion: null, motivo: 'CICLO_V2_AUTORIZACION_JSON ausente' };
+  let crudo;
+  try { crudo = JSON.parse(env.CICLO_V2_AUTORIZACION_JSON); } catch { falla('CICLO_V2_AUTORIZACION_JSON no es JSON.'); }
+  const lista = Array.isArray(crudo) ? crudo : [crudo];
+  if (lista.length === 0 || lista.length > 20) falla('la lista de autorizaciones debe tener entre 1 y 20 entradas.');
+  for (const a of lista) {
     if (a === null || typeof a !== 'object' || Array.isArray(a) || Object.keys(a).sort().join(',') !== CLAVES_AUTORIZACION.join(',')) falla(`la autorización debe tener exactamente ${CLAVES_AUTORIZACION.join(', ')}.`);
     if (!Object.hasOwn(POLITICAS, a.politica)) falla('política desconocida.');
     if (!esTexto(a.autorizada_por) || IDENTIDADES_PILOTO.includes(a.autorizada_por)) falla('autorizada_por inválido.');
     if (!esFechaIsoUtcExacta(a.autorizada_en) || !esFechaIsoUtcExacta(a.vence_en)) falla('autorizada_en y vence_en deben ser ISO UTC exactas.');
-    const desde = Date.parse(a.autorizada_en), hasta = Date.parse(a.vence_en), t = ahora.getTime();
+    const desde = Date.parse(a.autorizada_en), hasta = Date.parse(a.vence_en);
     if (!(hasta > desde) || hasta - desde > VIGENCIA_MAXIMA_MS) falla('la vigencia debe ser positiva y de 90 días como máximo.');
-    if (t < desde) motivoSinPolitica = 'la autorización todavía no rige';
-    else if (t >= hasta) motivoSinPolitica = 'la autorización venció';
-    else { autorizacion = Object.freeze({ ...a }); perfil = POLITICAS[a.politica]; motivoSinPolitica = null; }
   }
-  return Object.freeze({ uri, operadores, autorizacion, perfil: perfil ?? perfilCheckmig, politica_habilitada: autorizacion !== null, motivo_sin_politica: motivoSinPolitica });
+  if (new Set(lista.map(a => a.politica)).size !== lista.length) falla('una política aparece más de una vez.');
+  const a = lista.find(x => x.politica === clave);
+  if (!a) return { autorizacion: null, motivo: `CICLO_V2_AUTORIZACION_JSON no incluye ${clave}` };
+  const t = ahora.getTime();
+  if (t < Date.parse(a.autorizada_en)) return { autorizacion: null, motivo: 'la autorización todavía no rige' };
+  if (t >= Date.parse(a.vence_en)) return { autorizacion: null, motivo: 'la autorización venció' };
+  return { autorizacion: Object.freeze({ ...a }), motivo: null };
+}
+
+// Pura. Los mensajes nunca repiten el contenido de las variables. Sin `perfil`, Colombia.
+function cargarConfigCicloReal(env, ahora, { perfil: nombre = PERFIL_POR_DEFECTO } = {}) {
+  const { uri, operadores } = cargarBaseCiclo(env);
+  let perfil;
+  try { perfil = perfilPorNombre(nombre); } catch (e) { falla(e.message); }
+  const { autorizacion, motivo } = leerAutorizacion(env, ahora, clavePolitica(perfil));
+  return Object.freeze({ uri, operadores, autorizacion, perfil, politica_habilitada: autorizacion !== null, motivo_sin_politica: motivo });
 }
 
 /**
@@ -86,7 +111,7 @@ async function prepararEjecucionReal(config, { conexion, usuariosAutenticados, f
   const destinos = await conexion.db.collection('destinos').find({ codigo_iso: perfil.destino.codigo_iso }).toArray();
   if (destinos.length !== 1) throw new ErrorObjetivoCiclo(`ciclo real: se esperaba un destino ${perfil.destino.codigo_iso} (hay ${destinos.length}).`);
   const candidatos = (destinos[0].requisitos ?? []).filter(r => r?.tipo === perfil.requisito.tipo && r?.nombre === perfil.requisito.nombre);
-  if (candidatos.length !== 1 || !candidatos[0]._id) throw new ErrorObjetivoCiclo(`ciclo real: se esperaba un requisito ${perfil.requisito.nombre} con _id (hay ${candidatos.length}).`);
+  if (candidatos.length !== 1 || !candidatos[0]._id) throw new ErrorObjetivoCiclo(`ciclo real: se esperaba un requisito ${perfil.requisito.nombre ?? perfil.requisito.tipo} con _id (hay ${candidatos.length}).`);
 
   const a = config.autorizacion;
   return {
@@ -108,4 +133,5 @@ async function prepararEjecucionReal(config, { conexion, usuariosAutenticados, f
   };
 }
 
-module.exports = { ErrorConfiguracionCiclo, ErrorObjetivoCiclo, POLITICAS, cargarConfigCicloReal, prepararEjecucionReal };
+module.exports = { ErrorConfiguracionCiclo, ErrorObjetivoCiclo, POLITICAS, IDENTIDADES_PILOTO, cargarBaseCiclo, leerAutorizacion,
+  cargarConfigCicloReal, prepararEjecucionReal };

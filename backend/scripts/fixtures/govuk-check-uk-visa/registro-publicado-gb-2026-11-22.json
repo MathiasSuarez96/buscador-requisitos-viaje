@@ -1,0 +1,25 @@
+{
+  "nota": "Copia de solo lectura (Atlas, cuenta buscador-prechequeo-lectura, 2026-11-22) de los requisitos visa y UK ETA de GB, con tipos BSON reales (fechas como texto). Solo para pruebas.",
+  "destino": { "_id": "6a87828da8282a4aa6ddfbda", "pais": "Reino Unido", "codigo_iso": "GB" },
+  "visa": {
+    "tipo": "visa",
+    "obligatorio": "si",
+    "descripcion": "No requiere visa para estadías de hasta 6 meses, pero sí es obligatorio tramitar la Electronic Travel Authorization (eTA) antes de embarcar.",
+    "fuente": "https://www.iatatravelcentre.com/",
+    "fecha_verificacion": "2026-08-20",
+    "estado": "confirmado",
+    "_id": "6aaddd0e9f54309f9d8272db"
+  },
+  "eta": {
+    "tipo": "formulario_digital",
+    "nombre": "UK ETA",
+    "obligatorio": "si",
+    "descripcion": "Autorización electrónica de viaje obligatoria, se tramita antes de embarcar.",
+    "fuente": "https://www.iatatravelcentre.com/",
+    "link": "https://www.gov.uk/eta",
+    "fecha_verificacion": "2026-08-20",
+    "estado": "confirmado",
+    "_id": "6aaddd0e9f54309f9d8272dc",
+    "costo": "£20"
+  }
+}

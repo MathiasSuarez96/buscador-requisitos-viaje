@@ -122,8 +122,11 @@ const RESULTADOS_LECTURAS_OPCIONALES = ['revalidacion_vencida'];
 const RESULTADOS_SIN_REVALIDACIONES = ['fuente_temporalmente_no_disponible', 'extraccion_ambigua'];
 const TIPOS_LECTURA = ['hechos', 'ambiguo', 'no_disponible'];
 const CODIGOS_FALLO_LECTURA = ['red', 'tiempo_agotado', 'http', 'redireccion_fuera_del_sitio', 'redireccion_sin_destino', 'demasiadas_redirecciones', 'no_html', 'cuerpo_ilegible', 'demasiado_grande'];
-const CAMPOS_LECTURA = ['obligatoriedad', 'alcance', 'ventana_horas_antes'];
-const MOTIVOS_CAMPO_LECTURA = ['sin_evidencia', 'contradiccion', 'condicionada', 'no_atribuible', 'exclusion', 'fuera_de_dominio'];
+// Campos y motivos de cada adaptador 2.0 (listas cerradas; ampliarlas no cambia documentos guardados).
+//   CheckMig: obligatoriedad, alcance, ventana_horas_antes.   GOV.UK check-uk-visa: resultado, contexto.
+const CAMPOS_LECTURA = ['obligatoriedad', 'alcance', 'ventana_horas_antes', 'resultado', 'contexto'];
+const MOTIVOS_CAMPO_LECTURA = ['sin_evidencia', 'contradiccion', 'condicionada', 'no_atribuible', 'exclusion', 'fuera_de_dominio',
+  'contexto_no_coincide', 'no_reconocido'];
 const CATEGORIAS_CONFLICTO_V2 = {
   identidad_requisito_cambio: ['destino_no_encontrado', 'requisito_id_no_encontrado', 'requisito_id_duplicado', 'identidad_semantica_no_coincide'],
   valor_actual_cambio: ['claves_desconocidas', 'valor_no_capturable', 'instantanea_no_coincide']

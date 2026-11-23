@@ -95,6 +95,16 @@ function lecturaDesdeResultado(r, orden) {
   throw new ErrorInconsistencia('aplicación 2.0: el adaptador devolvió un tipo fuera de contrato.');
 }
 
+// Pura. Con varios adaptadores registrados, los que no reconocen la fuente ('fuente_no_soportada')
+// no explican por qué la propuesta es incompatible: el código es el de los demás si coinciden.
+function codigoIncompatibilidad(incompatibilidades) {
+  const codigos = incompatibilidades.map(i => i.codigo);
+  const relevantes = new Set(codigos.filter(c => c !== 'fuente_no_soportada'));
+  if (relevantes.size === 1) return [...relevantes][0];
+  if (relevantes.size === 0 && codigos.length > 0) return 'fuente_no_soportada';
+  return 'sin_adaptador_unico';
+}
+
 const describirAmbiguo = l => l.campos_sin_confirmar.map(c => `${c.campo}:${c.motivo}`).join(',');
 
 // Pura. ¿La lectura con hechos coincide con lo aprobado? Usa el único punto de comparación
@@ -117,7 +127,7 @@ async function aplicarConRevalidacionV2(entrada, credencial, deps) {
     if (!(e instanceof ErrorSinAdaptadorV2)) throw e;
     // Sin adaptador único no hay intento: nada se consulta ni se escribe.
     return { resultado: 'adaptador_incompatible', propuesta_id: entrada.propuesta_id, intento_id: null, lecturas: 0,
-      codigo: e.incompatibilidades.length === 1 ? e.incompatibilidades[0].codigo : 'sin_adaptador_unico', incompatibilidades: e.incompatibilidades };
+      codigo: codigoIncompatibilidad(e.incompatibilidades), incompatibilidades: e.incompatibilidades };
   }
 
   const evento = typeof propuesta.decision_aprobacion_id === 'string' ? await deps.leerEvento(propuesta.decision_aprobacion_id, null) : null;
@@ -165,4 +175,4 @@ async function aplicarConRevalidacionV2(entrada, credencial, deps) {
   return registrar('fuente_cambio', [l1, l2], 'La fuente cambió: dos lecturas vigentes confirmaron los mismos hechos nuevos.');
 }
 
-module.exports = { ErrorPermisoAplicacionV2, resolverAuditoria, lecturaDesdeResultado, aplicarConRevalidacionV2 };
+module.exports = { ErrorPermisoAplicacionV2, resolverAuditoria, lecturaDesdeResultado, codigoIncompatibilidad, aplicarConRevalidacionV2 };

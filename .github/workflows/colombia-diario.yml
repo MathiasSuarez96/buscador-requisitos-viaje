@@ -1,5 +1,10 @@
-name: Colombia - CheckMig diario
+name: Ciclo diario de requisitos oficiales
 
+# Mismo workflow gratuito que activó Colombia (archivo y concurrencia sin cambios).
+# Perfiles: variable de repositorio PERFILES_CICLO (lista separada por espacios, p. ej.
+# "checkmig-colombia govuk-gb-visa govuk-gb-eta"). Sin la variable, solo Colombia, como hasta ahora.
+# Cada perfil escribe únicamente con una autorización vigente de SU política en
+# CICLO_V2_AUTORIZACION_JSON; sin ella, informa. Sin disparadores de pull requests.
 on:
   schedule:
     - cron: '0 11 * * *' # 08:00 America/Montevideo (puede demorarse en GitHub)
@@ -23,7 +28,7 @@ jobs:
     # No ejecutar ni generar consumo en un repositorio privado o desde otra rama.
     if: github.event.repository.private == false && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
@@ -37,12 +42,13 @@ jobs:
           node-version: '24.14.1'
       - name: Instalar dependencias de producción
         run: npm ci --omit=dev --ignore-scripts
-      - name: Consultar y comparar CheckMig
+      - name: Consultar y comparar fuentes oficiales
         env:
           MONGODB_URI_CICLO: ${{ secrets.MONGODB_URI_CICLO }}
           OPERADORES_AUTORIZADOS_JSON: ${{ secrets.OPERADORES_AUTORIZADOS_JSON }}
           CICLO_V2_AUTORIZACION_JSON: ${{ secrets.CICLO_V2_AUTORIZACION_JSON }}
           SOLO_INFORME: ${{ github.event_name == 'workflow_dispatch' && inputs.solo_informe }}
+          PERFILES_CICLO: ${{ vars.PERFILES_CICLO }}
         run: |
           if [ -z "$MONGODB_URI_CICLO" ] || [ -z "$OPERADORES_AUTORIZADOS_JSON" ]; then
             echo '::error::Faltan los secretos de conexión o de identidad del ciclo.'
@@ -51,4 +57,24 @@ jobs:
           if [ "$SOLO_INFORME" = 'true' ] || [ -z "$CICLO_V2_AUTORIZACION_JSON" ]; then
             unset CICLO_V2_AUTORIZACION_JSON
           fi
-          node scripts/ciclo-checkmig-v2.js --ejecutar
+          perfiles="${PERFILES_CICLO:-checkmig-colombia}"
+          echo '### Ciclo diario de requisitos' >> "$GITHUB_STEP_SUMMARY"
+          node -e 'console.log(require("./scripts/ciclo-checkmig-v2").ENCABEZADO_RESUMEN)' >> "$GITHUB_STEP_SUMMARY"
+          peor=0
+          for perfil in $perfiles; do
+            if ! [[ "$perfil" =~ ^[a-z0-9-]{1,64}$ ]]; then
+              echo '::error::PERFILES_CICLO contiene un nombre inválido.'
+              exit 1
+            fi
+            # Un perfil que falla no impide correr los demás; el job falla al final (aviso por correo de GitHub).
+            set +e
+            node scripts/ciclo-checkmig-v2.js --ejecutar --perfil "$perfil"
+            codigo=$?
+            set -e
+            echo "perfil=$perfil exit=$codigo"
+            if [ "$codigo" -ne 0 ]; then
+              echo "::warning::Perfil $perfil terminó con exit $codigo (2 cambio sin política, 3 revisión humana, 4 fuente caída, 1 error)."
+              peor=1
+            fi
+          done
+          exit "$peor"

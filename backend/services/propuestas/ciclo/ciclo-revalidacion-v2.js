@@ -50,7 +50,7 @@ function evaluarFecha(requisito, accion, perfil, hoy, conHechos = false) {
   }
   if (accion === 'sin_cambio') {
     return { ...base, efecto: 'no_se_renueva', renovacion_soportada: false,
-      detalle: `Los valores no cambian. Renovar la fecha no está soportado en esta versión: la ficha confirma la obligatoriedad, pero no ${perfil.campos_sin_evidencia.join(', ')}.` };
+      detalle: `Los valores no cambian. Renovar la fecha no está soportado en esta versión: la fuente confirma la obligatoriedad, pero no ${perfil.campos_sin_evidencia.join(', ')}.` };
   }
   if (conHechos) return { ...base, efecto: 'no_se_renueva', renovacion_soportada: false, detalle: 'Hay hechos confirmados, pero el caso va a revisión humana: la fecha no se toca hasta resolverla.' };
   return { ...base, efecto: 'sin_efecto', detalle: 'Sin hechos confirmados no se toca la fecha.' };
@@ -63,7 +63,9 @@ function clasificar(requisito, lectura, perfil, { hoy }) {
   if (!esDelPerfil(requisito, perfil)) return informe('revision_humana')({ motivo: 'requisito_fuera_de_perfil' });
   if (lectura?.tipo === 'no_disponible') return informe('fuente_no_disponible')({ motivo: lectura.motivo, pendiente: { tipo: 'reintentar', motivo: lectura.motivo } });
   if (lectura?.tipo === 'ambiguo') return informe('revision_humana')({ motivo: 'lectura_ambigua', pendiente: { tipo: 'revision_humana', url: lectura.url, campos: camposPendientes(lectura) } });
-  if (lectura?.tipo !== 'hechos' || lectura.fuente_nombre !== perfil.adaptador.FUENTE_NOMBRE || !(lectura.evidencia?.obligatoriedad?.length > 0)) {
+  // El perfil dice qué campo de la lectura sostiene su decisión (CheckMig: obligatoriedad).
+  const campoEvidencia = perfil.campo_evidencia ?? 'obligatoriedad';
+  if (lectura?.tipo !== 'hechos' || lectura.fuente_nombre !== perfil.adaptador.FUENTE_NOMBRE || !(lectura.evidencia?.[campoEvidencia]?.length > 0)) {
     return informe('revision_humana')({ motivo: 'sin_evidencia_confirmada' });
   }
   const ev = perfil.evaluar(requisito, lectura.hechos);

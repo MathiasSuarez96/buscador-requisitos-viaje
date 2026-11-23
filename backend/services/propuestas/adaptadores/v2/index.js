@@ -1,12 +1,15 @@
 /**
  * Registro de adaptadores 2.0 (H3.2). Separado del registro 1.0 (../index.js) para que
- * elegirAdaptador de 1.0 nunca los vea. Sin callers: la orquestación de H3 lo usará después.
+ * elegirAdaptador de 1.0 nunca los vea. Lo usa la orquestación H3.3 (orquestar-aplicacion-v2.js).
+ * Cada adaptador acepta solo propuestas cuya única fuente es SU URL: las compatibilidades no se
+ * superponen.
  *
  * INTERFAZ (objeto congelado): nombre y version (texto técnico), compatibilidad(propuesta) pura,
  * soporta(propuesta) pura, revalidar(propuesta, opciones) y proyectarRevalidacion(resultado).
  * elegirAdaptadorV2 exige que EXACTAMENTE uno sea compatible; si no, ErrorSinAdaptadorV2.
  */
 const checkmig = require('./migracion-colombia-checkmig');
+const govukCheckUkVisa = require('./govuk-check-uk-visa');
 
 class ErrorSinAdaptadorV2 extends Error {
   constructor(mensaje, incompatibilidades) {
@@ -26,7 +29,7 @@ function validarAdaptadorV2(a) {
   return a;
 }
 
-const ADAPTADORES_V2 = Object.freeze([checkmig].map(validarAdaptadorV2));
+const ADAPTADORES_V2 = Object.freeze([checkmig, govukCheckUkVisa].map(validarAdaptadorV2));
 
 function elegirAdaptadorV2(propuesta, adaptadores = ADAPTADORES_V2) {
   const evaluados = adaptadores.map(validarAdaptadorV2).map(a => ({ a, c: a.compatibilidad(propuesta) }));
