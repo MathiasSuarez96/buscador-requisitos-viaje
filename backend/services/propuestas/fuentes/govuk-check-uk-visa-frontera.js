@@ -9,14 +9,15 @@
  *     pasaporte: dentro del único bloque de resultado, el único <h2> «What you need at the UK border»
  *                y, hasta el <h2> siguiente, el párrafo EXACTO «You must provide a valid passport or
  *                travel document. Your passport should be valid for the whole of your stay in the
- *                UK.» → 'toda_la_estadia'. Otro párrafo de la sección que mencione el pasaporte o el
- *                documento de viaje (p. ej. un mínimo de meses) → ambiguo ('condicionada').
+ *                UK.» → 'toda_la_estadia'. Se analiza TODO el texto de la sección (p, li, div o texto
+ *                suelto): otra frase que mencione el pasaporte, el documento de viaje o su validez
+ *                (p. ej. un mínimo de meses) → ambiguo ('condicionada').
  *     contexto:  las tres respuestas del resumen (misma regla que govuk-check-uk-visa.js).
  * - normalizarHechos(valores): pura. 'govuk-check-uk-visa-frontera-hechos-v1'.
  * Contenido bajo la Open Government Licence v3.0.
  */
 const { createHash } = require('node:crypto');
-const { leerPaginaOficial, marcadoPrincipal, texto, recortar } = require('./lectura-http-oficial');
+const { leerPaginaOficial, marcadoPrincipal, texto, recortar, segmentosTexto } = require('./lectura-http-oficial');
 const V = require('./govuk-check-uk-visa');
 
 const AGENTE = 'buscador-requisitos-viaje/adaptador-govuk-check-uk-visa-frontera';
@@ -35,7 +36,9 @@ function campoPasaporte(main) {
   const desde = propios[0].index + propios[0][0].length;
   const siguiente = titulos.find(t => t.index > propios[0].index);
   const seccion = bloque.slice(desde, siguiente ? siguiente.index : undefined);
-  const parrafos = [...seccion.matchAll(/<(p|li)\b[^>]*>([\s\S]*?)<\/\1\s*>/gi)].map(m => norm(texto(m[2])));
+  // TODO el texto de la sección, en cualquier etiqueta (p, li, div, texto suelto): ninguna frase queda
+  // afuera por cómo está marcada.
+  const parrafos = segmentosTexto(seccion).map(norm);
   const exactos = parrafos.filter(p => p === norm(PARRAFO));
   if (exactos.length !== 1) return ambiguo('no_reconocido: la sección no tiene el párrafo admitido sobre la validez del pasaporte', parrafos.slice(0, 2));
   const otros = parrafos.filter(p => p !== norm(PARRAFO) && /passport|travel document|valid/i.test(p));

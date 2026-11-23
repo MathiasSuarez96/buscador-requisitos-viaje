@@ -73,6 +73,35 @@ const P2_INICIO = 'Los residentes en Uruguay que sean ciudadanos legales uruguay
       assert.equal(x.estado, 'ambiguo', nombre);
       for (const c of FI.CAMPOS) assert.equal(x.campos[c].motivo.split(':')[0], motivo, `${nombre}/${c}: ${x.campos[c].motivo}`);
     }
+    // Revisión Codex: una condición en lista, div o después de un div anidado no se ignora; un
+    // contenedor que no cierra no se interpreta.
+    const COND_IT = 'Los pasaportes uruguayos deben ser biométricos para esta exención.';
+    const conCondicionIt = envoltura => IT.replace('<p>Para todos', `${envoltura}<p>Para todos`);
+    const MUT_IT = [
+      ['condición en lista', conCondicionIt(`<ul><li>${COND_IT}</li></ul>`), 'condicionada'],
+      ['condición en div', conCondicionIt(`<div>${COND_IT}</div>`), 'condicionada'],
+      ['condición después de un div anidado', conCondicionIt(`<div class="nota"><p>Aviso.</p></div><p>${COND_IT}</p>`), 'condicionada'],
+      ['condición como texto suelto', conCondicionIt(COND_IT), 'condicionada'],
+      ['contenedor sin cierre', IT.replace('</div><!-- .entry-content -->', ''), 'no_reconocido']
+    ];
+    for (const [nombre, h, motivo] of MUT_IT) {
+      const x = FI.extraer(h);
+      assert.equal(x.estado, 'ambiguo', nombre);
+      for (const c of FI.CAMPOS) assert.equal(x.campos[c].motivo.split(':')[0], motivo, `${nombre}/${c}: ${x.campos[c].motivo}`);
+    }
+    const COND_GB = 'Your passport must be valid for at least six months after your stay.';
+    const conCondicionGb = envoltura => GBH.replace('valid for the whole of your stay in the UK.</p>', `valid for the whole of your stay in the UK.</p>${envoltura}`);
+    const MUT_GB = [
+      ['condición en div', conCondicionGb(`<div>${COND_GB}</div>`)],
+      ['condición en p', conCondicionGb(`<p>${COND_GB}</p>`)],
+      ['condición en lista', conCondicionGb(`<ul><li>${COND_GB}</li></ul>`)],
+      ['condición después de un div anidado', conCondicionGb(`<div><div><p>Note.</p></div></div><div>${COND_GB}</div>`)],
+      ['condición como texto suelto', conCondicionGb(COND_GB)]
+    ];
+    for (const [nombre, h] of MUT_GB) {
+      const x = FG.extraer(h);
+      assert.deepEqual([x.estado, x.campos.pasaporte.motivo.split(':')[0]], ['ambiguo', 'condicionada'], `GB ${nombre}`);
+    }
     const eg = FG.extraer(GBH);
     assert.deepEqual([eg.estado, eg.campos.pasaporte.valor, eg.campos.contexto.valor.nacionalidad], ['ok', 'toda_la_estadia', 'UY']);
     for (const [nombre, h, campo, motivo] of [
@@ -216,6 +245,14 @@ const P2_INICIO = 'Los residentes en Uruguay que sean ciudadanos legales uruguay
     const a2 = await correr('govuk-gb-pasaporte', conLote, { [GOV]: [caida] });
     assert.deepEqual([a2.codigo, a2.registro.resultado, a2.registro.fuente.http_status], [4, 'fuente_no_disponible', 503]);
     assert.equal(await huella(), h, 'ambigua o caída: cero escrituras');
+    // Condiciones en listas, divs o tras divs anidados, por el ciclo real con la política vigente.
+    for (const [perfil, url, mutaciones] of [['embajada-it-visa', ITU, MUT_IT], ['embajada-it-pasaporte', ITU, MUT_IT], ['govuk-gb-pasaporte', GOV, MUT_GB]]) {
+      for (const [nombre, pag] of mutaciones) {
+        const r = await correr(perfil, conLote, { [url]: [okHtml(pag)] });
+        assert.deepEqual([r.codigo, r.registro.resultado, r.registro.motivo], [3, 'revision_humana', 'lectura_ambigua'], `${perfil} / ${nombre}`);
+      }
+    }
+    assert.equal(await huella(), h, 'condiciones no admitidas: cero escrituras');
 
     // Fuente → clasificación → aplicación (detección + revalidación H3.3) → GET /api/destinos.
     const hoy = fechaMontevideo(new Date());
@@ -270,8 +307,14 @@ const P2_INICIO = 'Los residentes en Uruguay que sean ciudadanos legales uruguay
     const d1 = await correr('embajada-it-pasaporte', conLote, { [ITU]: [okHtml(IT), okHtml(IT.replace('no necesitan de visa', 'necesitan de visa'))] });
     assert.deepEqual([d1.codigo, d1.registro.estado_propuesta, d1.registro.pendiente?.tipo], [3, 'revision_requerida', 'revision_humana'], d1.lineas.join('\n'));
     assert.equal(await itDoc(), antes, 'ambigua en H3.3: nada publicado');
+    // La condición aparece recién en la revalidación de H3.3 (en un div): tampoco se publica.
+    const gbDoc = async () => JSON.stringify(await col('destinos').findOne({ codigo_iso: 'GB' }));
+    const gbAntes = await gbDoc();
+    const d1b = await correr('govuk-gb-pasaporte', conLote, { [GOV]: [okHtml(GBH), okHtml(MUT_GB[0][1])] });
+    assert.deepEqual([d1b.codigo, d1b.registro.estado_propuesta], [3, 'revision_requerida'], d1b.lineas.join('\n'));
+    assert.equal(await gbDoc(), gbAntes, 'condición en la revalidación: nada publicado');
     const d2 = await correr('embajada-it-pasaporte', conLote, {});
-    assert.deepEqual([d2.codigo, d2.registro.resultado, await col('propuestas_cambio').countDocuments()], [3, 'propuesta_activa_existente', 1], 'la siguiente corrida no duplica');
+    assert.deepEqual([d2.codigo, d2.registro.resultado, await col('propuestas_cambio').countDocuments({ destino_id: new ObjectId(PUB_IT.destino._id) })], [3, 'propuesta_activa_existente', 1], 'la siguiente corrida no duplica');
     // La fuente cambia entre detección y aplicación (dos lecturas con los mismos hechos nuevos): la
     // propuesta queda obsoleta sin publicar; la corrida siguiente propone con los hechos nuevos.
     await sembrar();

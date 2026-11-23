@@ -12,7 +12,8 @@
  *   P2 «Los residentes en Uruguay que sean ciudadanos legales uruguayos pueden necesitar de una visa,
  *      aunque sea por turismo, según su nacionalidad de origen. …» (condición de nacionalidad que la
  *      descripción publicada debe repetir).
- * Si P1 o P2 faltan, se repiten o cambian, o si OTRO párrafo menciona Uruguay, Schengen, pasaporte,
+ * Se analiza TODO el texto del contenedor (delimitado contando divs anidados), en cualquier etiqueta
+ * (párrafo, lista, div). Si P1 o P2 faltan, se repiten o cambian, o si OTRO segmento menciona Uruguay, Schengen, pasaporte,
  * turismo o estadías (una condición nueva que no se interpreta), los dos campos quedan ambiguos.
  * Nunca se deduce nada de la ausencia de un dato.
  *
@@ -25,7 +26,7 @@
  * - normalizarHechos(valores): pura. 'embajada-italia-montevideo-visas-hechos-v1'.
  */
 const { createHash } = require('node:crypto');
-const { leerPaginaOficial, marcadoPrincipal, texto, recortar } = require('./lectura-http-oficial');
+const { leerPaginaOficial, marcadoPrincipal, recortar, segmentosTexto, interiorDiv } = require('./lectura-http-oficial');
 
 const URL_PAGINA = 'https://ambmontevideo.esteri.it/es/servizi-consolari-e-visti/servizi-per-il-cittadino-straniero/visas/';
 const HOST_OFICIAL = 'ambmontevideo.esteri.it';
@@ -45,9 +46,12 @@ const definido = (valor, ev) => ({ estado: 'ok', valor, evidencia: ev.map(recort
 
 function extraerCampos(main) {
   const ambos = (motivo, ev = []) => ({ visa: ambiguo(motivo, ev), pasaporte: ambiguo(motivo, ev) });
-  const bloques = main.match(/<div\b[^>]*class="entry-content"[^>]*>[\s\S]*?<\/div\s*>/gi) ?? [];
-  if (bloques.length !== 1) return ambos(`sin_evidencia: hay ${bloques.length} bloques de contenido (se esperaba uno)`);
-  const parrafos = [...bloques[0].matchAll(/<p\b[^>]*>([\s\S]*?)<\/p\s*>/gi)].map(m => texto(m[1]).normalize('NFC'));
+  const aperturas = [...main.matchAll(/<div\b[^>]*class="entry-content"[^>]*>/gi)];
+  if (aperturas.length !== 1) return ambos(`sin_evidencia: hay ${aperturas.length} bloques de contenido (se esperaba uno)`);
+  // Límite real del contenedor (con divs anidados) y TODO su texto, en cualquier etiqueta.
+  const interior = interiorDiv(main, aperturas[0].index);
+  if (interior === null) return ambos('no_reconocido: el bloque de contenido no cierra; no se puede delimitar');
+  const parrafos = segmentosTexto(interior).map(t => t.normalize('NFC'));
   const p1 = parrafos.filter(p => /naturales uruguayos/i.test(p));
   const p2 = parrafos.filter(p => /ciudadanos legales uruguayos/i.test(p));
   if (p1.length !== 1) return ambos(`sin_evidencia: el párrafo de los uruguayos naturales aparece ${p1.length} veces`);

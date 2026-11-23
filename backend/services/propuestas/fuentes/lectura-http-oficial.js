@@ -138,4 +138,28 @@ const texto = marcado => decodificar(String(marcado).replace(/<[^>]*>/g, ' ')).r
 const LARGO_EVIDENCIA = 240;
 const recortar = t => (t.length > LARGO_EVIDENCIA ? `${t.slice(0, LARGO_EVIDENCIA - 1)}…` : t);
 
-module.exports = { leerPaginaOficial, marcadoPrincipal, decodificar, texto, recortar, MAX_REDIRECCIONES };
+// Todo el texto de un marcado, partido en segmentos por CUALQUIER límite de bloque (párrafos, listas,
+// contenedores, títulos, tablas, saltos). Ningún texto queda afuera por su etiqueta: lo que no está en
+// un <p> también es un segmento.
+const LIMITE_BLOQUE = /<\/?(?:p|li|ul|ol|dl|dt|dd|div|section|article|aside|header|footer|nav|h[1-6]|table|thead|tbody|tfoot|tr|td|th|caption|br|hr|blockquote|details|summary|figure|figcaption|form|fieldset|pre|address|main)\b[^>]*>/gi;
+function segmentosTexto(marcado) {
+  return String(marcado).split(LIMITE_BLOQUE).map(texto).filter(Boolean);
+}
+
+// Marcado interior del <div> que se abre en `inicio` (índice del '<'), contando el anidamiento de <div>.
+// null si el div no cierra (estructura que no se puede delimitar con confianza).
+function interiorDiv(marcado, inicio) {
+  const apertura = marcado.slice(inicio).match(/^<div\b[^>]*>/i);
+  if (!apertura) return null;
+  const desde = inicio + apertura[0].length;
+  const etiqueta = /<(\/?)div\b[^>]*>/gi;
+  etiqueta.lastIndex = desde;
+  let profundidad = 1;
+  for (let m; (m = etiqueta.exec(marcado)) !== null;) {
+    profundidad += m[1] ? -1 : 1;
+    if (profundidad === 0) return marcado.slice(desde, m.index);
+  }
+  return null;
+}
+
+module.exports = { leerPaginaOficial, marcadoPrincipal, decodificar, texto, recortar, segmentosTexto, interiorDiv, MAX_REDIRECCIONES };
