@@ -78,3 +78,21 @@ jobs:
             fi
           done
           exit "$peor"
+      # Altas de destinos ausentes (config/altas-destinos.json). Solo con la variable de repositorio
+      # ALTAS_ACTIVAS=true; corre aunque algún perfil del paso anterior haya fallado.
+      - name: Altas de destinos desde fuentes oficiales
+        if: ${{ !cancelled() && vars.ALTAS_ACTIVAS == 'true' }}
+        env:
+          MONGODB_URI_CICLO: ${{ secrets.MONGODB_URI_CICLO }}
+          OPERADORES_AUTORIZADOS_JSON: ${{ secrets.OPERADORES_AUTORIZADOS_JSON }}
+          CICLO_V2_AUTORIZACION_JSON: ${{ secrets.CICLO_V2_AUTORIZACION_JSON }}
+          SOLO_INFORME: ${{ github.event_name == 'workflow_dispatch' && inputs.solo_informe }}
+        run: |
+          if [ -z "$MONGODB_URI_CICLO" ] || [ -z "$OPERADORES_AUTORIZADOS_JSON" ]; then
+            echo '::error::Faltan los secretos de conexión o de identidad del ciclo.'
+            exit 1
+          fi
+          if [ "$SOLO_INFORME" = 'true' ] || [ -z "$CICLO_V2_AUTORIZACION_JSON" ]; then
+            unset CICLO_V2_AUTORIZACION_JSON
+          fi
+          node scripts/alta-destinos-v1.js --ejecutar

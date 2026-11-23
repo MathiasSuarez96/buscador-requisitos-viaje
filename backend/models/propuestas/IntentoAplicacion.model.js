@@ -124,7 +124,8 @@ const TIPOS_LECTURA = ['hechos', 'ambiguo', 'no_disponible'];
 const CODIGOS_FALLO_LECTURA = ['red', 'tiempo_agotado', 'http', 'redireccion_fuera_del_sitio', 'redireccion_sin_destino', 'demasiadas_redirecciones', 'no_html', 'cuerpo_ilegible', 'demasiado_grande'];
 // Campos y motivos de cada adaptador 2.0 (listas cerradas; ampliarlas no cambia documentos guardados).
 //   CheckMig: obligatoriedad, alcance, ventana_horas_antes.   GOV.UK check-uk-visa: resultado, contexto.
-const CAMPOS_LECTURA = ['obligatoriedad', 'alcance', 'ventana_horas_antes', 'resultado', 'contexto'];
+//   Auswärtiges Amt (Staatenliste zur Visumpflicht): visa, estancia.
+const CAMPOS_LECTURA = ['obligatoriedad', 'alcance', 'ventana_horas_antes', 'resultado', 'contexto', 'visa', 'estancia'];
 const MOTIVOS_CAMPO_LECTURA = ['sin_evidencia', 'contradiccion', 'condicionada', 'no_atribuible', 'exclusion', 'fuera_de_dominio',
   'contexto_no_coincide', 'no_reconocido'];
 const CATEGORIAS_CONFLICTO_V2 = {

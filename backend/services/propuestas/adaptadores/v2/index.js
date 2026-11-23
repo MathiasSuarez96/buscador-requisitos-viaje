@@ -10,6 +10,7 @@
  */
 const checkmig = require('./migracion-colombia-checkmig');
 const govukCheckUkVisa = require('./govuk-check-uk-visa');
+const auswaertigesAmt = require('./auswaertiges-amt-visumpflicht');
 
 class ErrorSinAdaptadorV2 extends Error {
   constructor(mensaje, incompatibilidades) {
@@ -29,7 +30,7 @@ function validarAdaptadorV2(a) {
   return a;
 }
 
-const ADAPTADORES_V2 = Object.freeze([checkmig, govukCheckUkVisa].map(validarAdaptadorV2));
+const ADAPTADORES_V2 = Object.freeze([checkmig, govukCheckUkVisa, auswaertigesAmt].map(validarAdaptadorV2));
 
 function elegirAdaptadorV2(propuesta, adaptadores = ADAPTADORES_V2) {
   const evaluados = adaptadores.map(validarAdaptadorV2).map(a => ({ a, c: a.compatibilidad(propuesta) }));

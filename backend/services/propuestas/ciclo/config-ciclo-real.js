@@ -32,6 +32,7 @@ const { verificarConjuntoIndices, INDICES_DECISION, INDICES_APLICACION } = requi
 const { INDICE_TRANSVERSAL } = require('../aplicar-propuesta-v2');
 const { crearDepsAplicacion } = require('./ciclo-revalidacion-v2');
 const { PERFILES, PERFIL_POR_DEFECTO, clavePolitica, perfilPorNombre } = require('./perfiles');
+const { POLITICAS_ALTA } = require('../altas/perfiles-alta');
 
 class ErrorConfiguracionCiclo extends Error {}
 class ErrorObjetivoCiclo extends Error {}
@@ -69,7 +70,8 @@ function leerAutorizacion(env, ahora, clave) {
   if (lista.length === 0 || lista.length > 20) falla('la lista de autorizaciones debe tener entre 1 y 20 entradas.');
   for (const a of lista) {
     if (a === null || typeof a !== 'object' || Array.isArray(a) || Object.keys(a).sort().join(',') !== CLAVES_AUTORIZACION.join(',')) falla(`la autorización debe tener exactamente ${CLAVES_AUTORIZACION.join(', ')}.`);
-    if (!Object.hasOwn(POLITICAS, a.politica)) falla('política desconocida.');
+    // Las políticas de alta (scripts/alta-destinos-v1.js) conviven en la misma variable.
+    if (!Object.hasOwn(POLITICAS, a.politica) && !POLITICAS_ALTA.includes(a.politica)) falla('política desconocida.');
     if (!esTexto(a.autorizada_por) || IDENTIDADES_PILOTO.includes(a.autorizada_por)) falla('autorizada_por inválido.');
     if (!esFechaIsoUtcExacta(a.autorizada_en) || !esFechaIsoUtcExacta(a.vence_en)) falla('autorizada_en y vence_en deben ser ISO UTC exactas.');
     const desde = Date.parse(a.autorizada_en), hasta = Date.parse(a.vence_en);

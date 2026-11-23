@@ -5,8 +5,9 @@
  */
 const checkmig = require('./perfil-checkmig-colombia');
 const gb = require('./perfil-govuk-reino-unido');
+const alemania = require('./perfil-auswaertiges-amt-alemania');
 
-const PERFILES = Object.freeze([checkmig, gb.visa, gb.eta]);
+const PERFILES = Object.freeze([checkmig, gb.visa, gb.eta, alemania]);
 const clavePolitica = p => `${p.politica.nombre}@${p.politica.version}`;
 
 if (new Set(PERFILES.map(p => p.nombre)).size !== PERFILES.length) throw new Error('perfiles: nombres repetidos.');

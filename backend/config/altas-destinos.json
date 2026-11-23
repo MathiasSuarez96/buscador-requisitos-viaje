@@ -1,0 +1,6 @@
+{
+  "version": "altas-destinos-v1",
+  "destinos": [
+    { "codigo_iso": "DE", "pais": "Alemania", "perfil_alta": "auswaertiges-amt-alemania" }
+  ]
+}
