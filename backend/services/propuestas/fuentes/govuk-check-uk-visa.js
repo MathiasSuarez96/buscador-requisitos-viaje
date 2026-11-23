@@ -109,4 +109,5 @@ function leerResultado({ fetch, ahora, timeoutMs } = {}) {
   return leerPaginaOficial({ url: URL_RESULTADO, hosts: [HOST_OFICIAL], agente: AGENTE, fetch, ahora, ...(timeoutMs === undefined ? {} : { timeoutMs }) });
 }
 
-module.exports = { URL_RESULTADO, HOST_OFICIAL, FUENTE_NOMBRE, ESQUEMA_HECHOS, CAMPOS, CONTEXTO, RESULTADOS, extraer, normalizarHechos, leerResultado };
+// campoContexto lo reutiliza la fuente de la misma página para la frontera (govuk-check-uk-visa-frontera.js).
+module.exports = { URL_RESULTADO, HOST_OFICIAL, FUENTE_NOMBRE, ESQUEMA_HECHOS, CAMPOS, CONTEXTO, RESULTADOS, extraer, normalizarHechos, leerResultado, campoContexto };
