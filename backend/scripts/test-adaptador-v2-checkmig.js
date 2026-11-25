@@ -223,7 +223,9 @@ async function revalidarCon(respuestas, propuesta = PILOTO, opciones = {}) {
   assert.throws(() => elegirAdaptadorV2(casosIncompatibles[0][1]), e => e instanceof ErrorSinAdaptadorV2
     && JSON.stringify(e.incompatibilidades) === JSON.stringify([{ adaptador: 'migracion-colombia-checkmig', codigo: 'varias_fuentes' }, { adaptador: 'govuk-check-uk-visa', codigo: 'varias_fuentes' }, { adaptador: 'auswaertiges-amt-visumpflicht', codigo: 'varias_fuentes' },
       { adaptador: 'govuk-check-uk-visa-frontera', codigo: 'varias_fuentes' }, { adaptador: 'embajada-italia-montevideo', codigo: 'varias_fuentes' },
-      { adaptador: 'comision-europea-etias', codigo: 'varias_fuentes' }]));
+      { adaptador: 'comision-europea-etias', codigo: 'varias_fuentes' }, { adaptador: 'argentina-extranjeros-turismo', codigo: 'varias_fuentes' },
+      { adaptador: 'argentina-migraciones-documentacion-turista', codigo: 'varias_fuentes' }, { adaptador: 'itamaraty-qgrv', codigo: 'varias_fuentes' },
+      { adaptador: 'consulado-chile-visas', codigo: 'varias_fuentes' }]));
   // El otro adaptador del registro nunca acepta una propuesta de la ficha de CheckMig.
   assert.equal(ADAPTADORES_V2.filter(a => a.soporta(PILOTO)).length, 1);
   assert.ok(ADAPTADORES_V2.includes(adaptador) && !ADAPTADORES_V1.some(x => x.nombre === adaptador.nombre));

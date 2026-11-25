@@ -1,0 +1,1820 @@
+[
+   {
+      "visa_simple_estadia" : "30",
+      "visa_simple_arancel" : "30",
+      "visa_multiple_arancel" : "68",
+      "pais" : "AFGANISTÁN",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "60",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "pais" : "ALBANIA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "ALEMANIA",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "ANDORRA",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_multiple_arancel" : "108",
+      "pais" : "ANGOLA",
+      "visa_simple_arancel" : "80",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI"
+   },
+   {
+      "pais" : "ANTIGUA Y BARBUDA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "pais" : "ANTILLAS HOLANDESAS",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,3,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "pais" : "APÁTRIDAS, ASILADOS Y REFUGIADOS",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa_multiple_arancel" : "93",
+      "visa_simple_arancel" : "28",
+      "pais" : "ARABIA SAUDITA",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "pais" : "ARGELIA",
+      "visa_multiple_arancel" : "48",
+      "visa_simple_arancel" : "40",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "ARGENTINA",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "pais" : "ARMENIA",
+      "visa_multiple_arancel" : "58",
+      "visa_simple_arancel" : "37",
+      "visa_simple_estadia" : "21"
+   },
+   {
+      "notas" : "1,2,4",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "AUSTRALIA",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "AUSTRIA",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "pais" : "AZERBAIYÁN",
+      "visa_multiple_arancel" : "88",
+      "visa_simple_arancel" : "40"
+   },
+   {
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "BAHAMAS",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "75",
+      "visa_simple_arancel" : "15",
+      "pais" : "BAHREIN, REINO DE",
+      "visa_multiple_estadia" : "30",
+      "visa" : "SI",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "10",
+      "visa_multiple_arancel" : "18",
+      "pais" : "BANGLADESH"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "BARBADOS",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,5,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "pais" : "BELARÚS",
+      "visa_multiple_arancel" : "128",
+      "visa_simple_arancel" : "60",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "BÉLGICA",
+      "visa_simple_arancel" : "0"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "pais" : "BELICE",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "68",
+      "pais" : "BENIN",
+      "visa_simple_arancel" : "54",
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "108",
+      "pais" : "BHUTAN",
+      "visa_simple_arancel" : "50"
+   },
+   {
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "BOLIVIA",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "BOSNIA Y HERZEGOVINA",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "pais" : "BOTSWANA",
+      "visa_multiple_arancel" : "146",
+      "visa_simple_arancel" : "92",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,5,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "BRASIL",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "33",
+      "pais" : "BRUNEI DARUSSALAM",
+      "visa_simple_arancel" : "16",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,5,17"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "BULGARIA",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "notas" : "1,2,5,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "pais" : "BURKINA FASO",
+      "visa_multiple_arancel" : "108",
+      "visa_simple_arancel" : "50",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "pais" : "BURUNDI",
+      "visa_multiple_arancel" : "128",
+      "visa_simple_arancel" : "90",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_simple_arancel" : "50",
+      "visa_multiple_arancel" : "108",
+      "pais" : "CABO VERDE",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "30",
+      "notas" : "1,2,5,17",
+      "visa_simple_estadia" : "30",
+      "pais" : "CAMBOYA",
+      "visa_multiple_arancel" : "44",
+      "visa_simple_arancel" : "30"
+   },
+   {
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "58",
+      "visa_simple_arancel" : "25",
+      "pais" : "CAMERÚN"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "CANADÁ",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "35",
+      "visa_simple_arancel" : "27",
+      "pais" : "CATAR"
+   },
+   {
+      "pais" : "CHAD",
+      "visa_multiple_arancel" : "108",
+      "visa_simple_arancel" : "50",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "CHINA, REP. POPULAR",
+      "visa_simple_arancel" : "0",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,6,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_multiple_arancel" : "0",
+      "pais" : "CHIPRE",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "COLOMBIA",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "visa_multiple_arancel" : "78",
+      "pais" : "CONGO, REP. DEMOCRÁTICA",
+      "visa_simple_arancel" : "70",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "50",
+      "visa_simple_arancel" : "25",
+      "pais" : "CONGO, REPÚBLICA"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "visa_multiple_arancel" : "48",
+      "pais" : "COREA, REPÚBLICA POPULAR DEMOCRÁTICA",
+      "visa_simple_arancel" : "40",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "pais" : "COREA, REPÚBLICA DE",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "COSTA RICA",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "---",
+      "notas" : "1,2,5,17",
+      "visa_simple_estadia" : "90",
+      "pais" : "COSTA DE MARFIL",
+      "visa_multiple_arancel" : "---",
+      "visa_simple_arancel" : "66"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "pais" : "CROACIA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0"
+   },
+   {
+      "visa_multiple_arancel" : "108",
+      "pais" : "CUBA",
+      "visa_simple_arancel" : "15",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,5,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "30"
+   },
+   {
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "DINAMARCA",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "---",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "visa_simple_arancel" : "50",
+      "visa_multiple_arancel" : "---",
+      "pais" : "DJIBUTI"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,5,17",
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "82",
+      "visa_simple_arancel" : "74",
+      "pais" : "DOMINICA"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "ECUADOR",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_arancel" : "30",
+      "visa_multiple_arancel" : "58",
+      "pais" : "EGIPTO",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "30"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_multiple_arancel" : "0",
+      "pais" : "EL SALVADOR",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "EMIRATOS ÁRABES UNIDOS",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "68",
+      "pais" : "ERITREA",
+      "visa_simple_arancel" : "30",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "ESLOVAQUIA",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "ESLOVENIA",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "ESPAÑA",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "pais" : "ESTADOS UNIDOS DE AMÉRICA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "ESTONIA"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "6",
+      "visa_multiple_arancel" : "27",
+      "pais" : "ESWATINI"
+   },
+   {
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "58",
+      "pais" : "ETIOPÍA",
+      "visa_simple_arancel" : "20",
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "FEDERACIÓN DE RUSIA"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "FIJI"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "60",
+      "visa_multiple_arancel" : "88",
+      "pais" : "FILIPINAS",
+      "visa_simple_arancel" : "40"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "FINLANDIA",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "notas" : "1,2,7,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "FRANCIA",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "68",
+      "pais" : "GABÓN",
+      "visa_simple_arancel" : "60",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,5,17"
+   },
+   {
+      "visa_multiple_estadia" : "---",
+      "visa" : "SI",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "pais" : "GAMBIA",
+      "visa_multiple_arancel" : "---",
+      "visa_simple_arancel" : "50"
+   },
+   {
+      "pais" : "GEORGIA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "51",
+      "visa_simple_arancel" : "22",
+      "pais" : "GHANA",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,5,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "pais" : "GRENADA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "pais" : "GRECIA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "GUATEMALA",
+      "visa_simple_arancel" : "0",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "60",
+      "visa_multiple_arancel" : "12",
+      "visa_simple_arancel" : "4",
+      "pais" : "GUINEA, REPÚBLICA DE",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "60",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "---",
+      "pais" : "GUINEA - BISSAU",
+      "visa_simple_arancel" : "50",
+      "visa_multiple_estadia" : "---",
+      "visa" : "SI",
+      "notas" : "1,2,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "60",
+      "pais" : "GUINEA ECUATORIAL",
+      "visa_multiple_arancel" : "58",
+      "visa_simple_arancel" : "25",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "GUYANA",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "---",
+      "pais" : "HAITÍ",
+      "visa_multiple_arancel" : "---",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "HONDURAS",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,8,17",
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "HONG KONG"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "HUNGRÍA",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "pais" : "INDIA",
+      "visa_multiple_arancel" : "76",
+      "visa_simple_arancel" : "42",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,9,17"
+   },
+   {
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,10,17",
+      "visa_simple_estadia" : "60",
+      "pais" : "INDONESIA",
+      "visa_multiple_arancel" : "123",
+      "visa_simple_arancel" : "0"
+   },
+   {
+      "visa_simple_estadia" : "30",
+      "pais" : "IRAQ",
+      "visa_multiple_arancel" : "--",
+      "visa_simple_arancel" : "40",
+      "visa_multiple_estadia" : "--",
+      "visa" : "SI",
+      "notas" : "1,2,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "visa_multiple_arancel" : "154",
+      "pais" : "IRÁN",
+      "visa_simple_arancel" : "100",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "IRLANDA",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "pais" : "ISLANDIA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_multiple_arancel" : "---",
+      "pais" : "ISLAS COMORAS",
+      "visa_simple_arancel" : "50",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "---"
+   },
+   {
+      "notas" : "1,2,11,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "pais" : "ISLAS COOK",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "pais" : "ISLAS MARSHALL",
+      "visa_multiple_arancel" : "43",
+      "visa_simple_arancel" : "35",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,5,17"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "---",
+      "notas" : "1,2,5,17",
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "---",
+      "visa_simple_arancel" : "40",
+      "pais" : "ISLAS SALOMÓN"
+   },
+   {
+      "pais" : "ISRAEL",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "pais" : "ITALIA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "JAMAICA",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "JAPÓN",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "visa_simple_arancel" : "56",
+      "visa_multiple_arancel" : "178",
+      "pais" : "JORDANIA",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "KAZAJSTAN",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "pais" : "KENIA",
+      "visa_multiple_arancel" : "108",
+      "visa_simple_arancel" : "51",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "36",
+      "visa_multiple_arancel" : "68",
+      "pais" : "KIRGUISTÁN",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,17"
+   },
+   {
+      "notas" : "1,2,5,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "visa_simple_arancel" : "23",
+      "visa_multiple_arancel" : "48",
+      "pais" : "KIRIBATI",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "KOSOVO",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,12,17"
+   },
+   {
+      "visa_simple_estadia" : "30",
+      "visa_simple_arancel" : "55",
+      "visa_multiple_arancel" : "63",
+      "pais" : "KUWAIT",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "30",
+      "notas" : "1,2,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "---",
+      "visa" : "SI",
+      "visa_multiple_arancel" : "---",
+      "visa_simple_arancel" : "30",
+      "pais" : "LAOS, REP. DEM. POPULAR",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "pais" : "LESOTO, REINO DE",
+      "visa_multiple_arancel" : "258",
+      "visa_simple_arancel" : "150",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "LETONIA",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "visa_simple_arancel" : "84",
+      "visa_multiple_arancel" : "125",
+      "pais" : "LÍBANO",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "pais" : "LIBERIA",
+      "visa_multiple_arancel" : "58",
+      "visa_simple_arancel" : "25"
+   },
+   {
+      "visa_multiple_arancel" : "---",
+      "visa_simple_arancel" : "63",
+      "pais" : "LIBIA",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "---",
+      "visa" : "SI"
+   },
+   {
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "LIECHTENSTEIN"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_multiple_arancel" : "0",
+      "pais" : "LITUANIA",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "pais" : "LUXEMBURGO",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "MACAO",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,13,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "30"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "MACEDONIA DEL NORTE",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,5,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "60",
+      "visa_multiple_arancel" : "58",
+      "pais" : "MADAGASCAR",
+      "visa_simple_arancel" : "25",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "30",
+      "pais" : "MALASIA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "83",
+      "pais" : "MALAWI",
+      "visa_simple_arancel" : "75",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,5,17"
+   },
+   {
+      "visa_multiple_arancel" : "38",
+      "visa_simple_arancel" : "15",
+      "pais" : "MALDIVAS",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,5,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_multiple_arancel" : "58",
+      "pais" : "MALÍ",
+      "visa_simple_arancel" : "25",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "MALTA",
+      "visa_simple_arancel" : "0",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "MARRUECOS",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "MAURICIO",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "visa_simple_arancel" : "25",
+      "visa_multiple_arancel" : "33",
+      "pais" : "MAURITANIA",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "MÉXICO",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "30",
+      "pais" : "MICRONESIA, ESTADOS FEDERADOS",
+      "visa_multiple_arancel" : "58",
+      "visa_simple_arancel" : "25",
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI",
+      "notas" : "1,2,5,17"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "MOLDAVIA, REPÚBLICA DE"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "MÓNACO",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "MONGOLIA",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "MONTENEGRO",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "pais" : "MOZAMBIQUE",
+      "visa_multiple_arancel" : "246",
+      "visa_simple_arancel" : "128",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa_multiple_arancel" : "61",
+      "visa_simple_arancel" : "29",
+      "pais" : "MYANMAR",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI"
+   },
+   {
+      "visa_simple_arancel" : "71",
+      "visa_multiple_arancel" : "---",
+      "pais" : "NAMIBIA",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "---"
+   },
+   {
+      "visa_multiple_arancel" : "---",
+      "visa_simple_arancel" : "0",
+      "pais" : "NAURU",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,5,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "---"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "visa_multiple_arancel" : "108",
+      "pais" : "NEPAL",
+      "visa_simple_arancel" : "40",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "pais" : "NICARAGUA",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "---",
+      "pais" : "NÍGER",
+      "visa_simple_arancel" : "50",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "---",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "30",
+      "visa_simple_arancel" : "200",
+      "visa_multiple_arancel" : "208",
+      "pais" : "NIGERIA",
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "NIUE",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,10,17"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "pais" : "NORUEGA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,14,17",
+      "visa_simple_estadia" : "90",
+      "pais" : "NUEVA ZELANDA",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "60",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "visa_simple_arancel" : "14",
+      "visa_multiple_arancel" : "138",
+      "pais" : "OMÁN, SULTANÍA DE"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "pais" : "PAÍSES BAJOS",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "visa_multiple_arancel" : "202",
+      "pais" : "PAKISTÁN",
+      "visa_simple_arancel" : "122",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,5,17",
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "PALAOS"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "PALESTINA",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "PANAMÁ"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "pais" : "PAPUA NUEVA GUINEA",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "60",
+      "notas" : "1,2,5,17",
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI"
+   },
+   {
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "PARAGUAY",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "pais" : "PERÚ",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "POLONIA"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "PORTUGAL",
+      "visa_simple_arancel" : "0",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "REINO UNIDO",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,15"
+   },
+   {
+      "visa_multiple_arancel" : "---",
+      "pais" : "REPÚBLICA CENTROAFRICANA",
+      "visa_simple_arancel" : "50",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "---",
+      "visa" : "SI"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "pais" : "REPÚBLICA CHECA",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "30",
+      "pais" : "REPÚBLICA DOMINICANA",
+      "visa_multiple_arancel" : "18",
+      "visa_simple_arancel" : "10",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "30",
+      "notas" : "1,2,18,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_multiple_arancel" : "0",
+      "pais" : "RUMANIA",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "visa_simple_arancel" : "50",
+      "visa_multiple_arancel" : "68",
+      "pais" : "RUANDA",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "notas" : "1,2,5,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "30",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "SAMOA",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "SAN CRISTÓBAL Y NIEVES"
+   },
+   {
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "SAN MARINO"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "SAN VICENTE Y LAS GRANADINAS",
+      "visa_simple_arancel" : "0"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "SANTA LUCÍA",
+      "visa_simple_arancel" : "0",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "pais" : "SANTA SEDE",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "58",
+      "pais" : "SANTO TOMÉ Y PRÍNCIPE",
+      "visa_simple_arancel" : "25"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI",
+      "visa_multiple_arancel" : "58",
+      "pais" : "SENEGAL",
+      "visa_simple_arancel" : "25",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "SERBIA",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "pais" : "SEYCHELLES",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,5,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_multiple_arancel" : "---",
+      "visa_simple_arancel" : "50",
+      "pais" : "SIERRA LEONA",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "---",
+      "visa" : "SI"
+   },
+   {
+      "visa_multiple_estadia" : "30",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "SINGAPUR"
+   },
+   {
+      "visa_simple_arancel" : "80",
+      "visa_multiple_arancel" : "153",
+      "pais" : "SIRIA, REPÚBLICA ÁRABE",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_multiple_estadia" : "---",
+      "visa" : "SI",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "---",
+      "pais" : "SOMALIA",
+      "visa_simple_arancel" : "50"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "30",
+      "pais" : "SRI LANKA",
+      "visa_simple_arancel" : "30"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "---",
+      "pais" : "SUDÁFRICA",
+      "visa_multiple_estadia" : "---",
+      "visa" : "NO",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "35",
+      "visa_multiple_arancel" : "78",
+      "pais" : "SUDÁN"
+   },
+   {
+      "visa_multiple_arancel" : "78",
+      "pais" : "SUDÁN DEL SUR",
+      "visa_simple_arancel" : "35",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "SUECIA"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "SUIZA"
+   },
+   {
+      "notas" : "1,2,16,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "SURINAM",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "pais" : "TAILANDIA",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "TAIWÁN",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO",
+      "notas" : "1,2,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "visa_simple_arancel" : "50",
+      "visa_multiple_arancel" : "108",
+      "pais" : "TANZANIA, REPÚBLICA UNIDA DE",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_multiple_arancel" : "68",
+      "visa_simple_arancel" : "50",
+      "pais" : "TAYIKISTÁN",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "30",
+      "visa" : "SI"
+   },
+   {
+      "visa_multiple_arancel" : "43",
+      "pais" : "TIMOR ORIENTAL",
+      "visa_simple_arancel" : "35",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,5,17",
+      "visa_multiple_estadia" : "60",
+      "visa" : "SI"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "---",
+      "visa" : "SI",
+      "visa_multiple_arancel" : "---",
+      "pais" : "TOGO",
+      "visa_simple_arancel" : "50",
+      "visa_simple_estadia" : "30"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "TONGA",
+      "visa_simple_arancel" : "0",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "visa_multiple_arancel" : "0",
+      "pais" : "TRINIDAD Y TOBAGO",
+      "visa_simple_arancel" : "0",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "pais" : "TÚNEZ",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_multiple_arancel" : "159",
+      "pais" : "TURKMENISTÁN",
+      "visa_simple_arancel" : "5",
+      "visa_simple_estadia" : "30",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "pais" : "TURQUÍA",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,5,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "TUVALU",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "visa_multiple_arancel" : "0",
+      "pais" : "UCRANIA",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "pais" : "UGANDA",
+      "visa_multiple_arancel" : "108",
+      "visa_simple_arancel" : "50",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90"
+   },
+   {
+      "visa_simple_arancel" : "0",
+      "visa_multiple_arancel" : "0",
+      "pais" : "URUGUAY",
+      "visa_simple_estadia" : "90",
+      "notas" : "1,2,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "NO"
+   },
+   {
+      "visa_simple_estadia" : "90",
+      "pais" : "UZBEKISTÁN",
+      "visa_multiple_arancel" : "88",
+      "visa_simple_arancel" : "60",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "90",
+      "notas" : "1,2,17"
+   },
+   {
+      "visa_multiple_estadia" : "30",
+      "visa" : "SI",
+      "notas" : "1,2,5,17",
+      "visa_simple_estadia" : "30",
+      "visa_multiple_arancel" : "31",
+      "pais" : "VANUATU",
+      "visa_simple_arancel" : "23"
+   },
+   {
+      "visa" : "SI",
+      "visa_multiple_estadia" : "---",
+      "notas" : "1,2,17",
+      "visa_simple_estadia" : "90",
+      "visa_simple_arancel" : "50",
+      "visa_multiple_arancel" : "---",
+      "pais" : "VENEZUELA"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "NO",
+      "visa_multiple_estadia" : "90",
+      "pais" : "VIETNAM, REPÚBLICA SOCIALISTA DE",
+      "visa_multiple_arancel" : "0",
+      "visa_simple_arancel" : "0",
+      "visa_simple_estadia" : "90"
+   },
+   {
+      "notas" : "1,2,17",
+      "visa" : "SI",
+      "visa_multiple_estadia" : "---",
+      "pais" : "YEMEN",
+      "visa_multiple_arancel" : "---",
+      "visa_simple_arancel" : "80",
+      "visa_simple_estadia" : "60"
+   },
+   {
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "notas" : "1,2,5,17",
+      "visa_simple_estadia" : "90",
+      "pais" : "ZAMBIA",
+      "visa_multiple_arancel" : "88",
+      "visa_simple_arancel" : "50"
+   },
+   {
+      "notas" : "1,2,5,17",
+      "visa_multiple_estadia" : "90",
+      "visa" : "SI",
+      "pais" : "ZIMBABWE",
+      "visa_multiple_arancel" : "32",
+      "visa_simple_arancel" : "16",
+      "visa_simple_estadia" : "90"
+   }
+]

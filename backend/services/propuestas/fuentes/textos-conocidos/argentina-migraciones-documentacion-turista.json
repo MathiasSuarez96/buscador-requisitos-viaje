@@ -1,0 +1,20 @@
+{
+ "fuente": "argentina-migraciones-documentacion-turista",
+ "url": "https://www.argentina.gob.ar/migraciones/documentacion-para-ingresar-al-pais-como-turista",
+ "capturado": "2026-11-25",
+ "metodo": "sha256 del texto de cada segmento (segmentosTexto, NFC), primeros 16 hex",
+ "nota": "Todos los textos de <main> fuera del cuerpo (navegación, título, compartir). Uno nuevo o cambiado deja la lectura ambigua.",
+ "huellas": [
+  "193f7de7da420981",
+  "1d63ff6b6a79d2a8",
+  "3cf69c7307d4f34b",
+  "58fcc9468fe1f607",
+  "5e9fe6834298bf18",
+  "6be86080885b820f",
+  "77ff7d32fc22835a",
+  "8fdd01708a624ed6",
+  "96f4719751a0cf07",
+  "aad61f39974cd2b4",
+  "ffd7205aa59f85fb"
+ ]
+}
