@@ -175,6 +175,19 @@ reintentar, el ciclo solo lee (`find`) y exige todo lo siguiente:
 5. El último intento terminó en `fuente_temporalmente_no_disponible` y todas sus lecturas
    fallidas son transitorias: red, tiempo agotado, HTTP 5xx, 408 o 429. Un 404, una redirección
    fuera del sitio o un cuerpo ilegible quedan para revisión humana (`fallo_no_admitido`).
+6. Quedan reintentos: como máximo **3 automáticos después del intento inicial**. Se cuentan con
+   los registros existentes: todo intento terminado de la propuesta en `intentos_aplicacion`.
+   - Si el tercer reintento vuelve a fallar, la corrida ya informa revisión humana con el motivo
+     `reintentos_agotados`.
+   - Las corridas siguientes no consultan ni escriben: devuelven `propuesta_activa_existente`
+     con ese motivo y exit 3, así que el job falla y llega el aviso existente.
+   - El resumen del job muestra «REINTENTOS AGOTADOS (3 de 3)».
+   - No se persiste ningún estado nuevo: la propuesta sigue `aprobada` y una persona decide si la
+     cancela o la aplica a mano.
+
+Con HTTP 200 y hechos distintos de los aprobados, H3.3 hace dos lecturas reales y nunca aplica el
+contenido anterior. Si las dos lecturas dan los mismos hechos nuevos, la propuesta queda
+`obsoleta`; si dan hechos distintos entre sí, queda en revisión.
 
 Las propuestas pendientes, en revisión, rechazadas, canceladas, obsoletas o aplicadas nunca se
 reintentan. Si una persona rechazó o canceló una propuesta con los **mismos** hechos y cambios,

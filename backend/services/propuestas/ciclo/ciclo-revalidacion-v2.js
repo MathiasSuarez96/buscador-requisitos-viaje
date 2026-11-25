@@ -105,17 +105,24 @@ const hoyMontevideo = ahora => fechaMontevideo(ahora);
  *  - no hay ningún intento en curso (inicio sin intento terminado) ni un éxito;
  *  - el último intento terminó en fuente_temporalmente_no_disponible y TODAS sus lecturas fallidas
  *    son transitorias (red, tiempo agotado, HTTP 5xx, 408 o 429). Una redirección fuera del sitio,
- *    un 404 o un cuerpo ilegible no son caídas: quedan para revisión humana.
+ *    un 404 o un cuerpo ilegible no son caídas: quedan para revisión humana;
+ *  - quedan reintentos: como máximo MAX_REINTENTOS_AUTOMATICOS (3) intentos automáticos DESPUÉS del
+ *    intento inicial. Se cuentan con los registros existentes: todo intento terminado de la propuesta
+ *    en intentos_aplicacion (el primero es el inicial). Agotados, no se vuelve a aplicar sola: la
+ *    corrida devuelve revisión humana con el motivo cerrado 'reintentos_agotados' (exit 3, aviso de
+ *    fallo del workflow). No se persiste ningún estado nuevo: la propuesta sigue 'aprobada' y una
+ *    persona decide (cancelarla o aplicarla a mano).
  * Pendiente, en revisión, rechazada, cancelada, obsoleta o aplicada nunca llegan acá: solo 'aprobada'.
  * La evaluación solo lee (find); con la política ausente o vencida se informa y no se escribe.
  */
 const CODIGOS_TRANSITORIOS = Object.freeze(['red', 'tiempo_agotado']);
 const HTTP_TRANSITORIOS = Object.freeze([408, 429]);
+const MAX_REINTENTOS_AUTOMATICOS = 3;
 const lecturaTransitoria = l => l?.tipo === 'no_disponible' && (CODIGOS_TRANSITORIOS.includes(l.codigo_fallo)
   || (l.codigo_fallo === 'http' && Number.isInteger(l.http_status) && (HTTP_TRANSITORIOS.includes(l.http_status) || (l.http_status >= 500 && l.http_status <= 599))));
 const MOTIVOS_REINTENTO = Object.freeze(['politica_no_habilitada', 'objetivo_no_coincide', 'requisito_fuera_de_perfil', 'propuesta_no_integra', 'identidad_no_coincide',
   'campo_no_autorizado', 'adaptador_no_coincide', 'aprobacion_fuera_de_la_autorizacion_vigente', 'autorizacion_vencida', 'intento_en_curso', 'ya_aplicada',
-  'sin_intento_previo', 'fallo_no_admitido']);
+  'sin_intento_previo', 'fallo_no_admitido', 'reintentos_agotados']);
 const igualCanonico = (a, b) => { try { return JSON.stringify(canonicalizarValor(a)) === JSON.stringify(canonicalizarValor(b)); } catch { return false; } };
 const instante = v => (v instanceof Date ? v.getTime() : Number.NaN);
 
@@ -157,7 +164,9 @@ function evaluarReintento({ propuesta, evento, intentos, inicios, requisito, obj
   if (ultimo.resultado !== 'fuente_temporalmente_no_disponible' || fallidas.length === 0 || !fallidas.every(lecturaTransitoria)) {
     return no('fallo_no_admitido', { resultado: ultimo.resultado ?? null, codigos: fallidas.map(l => l?.codigo_fallo ?? l?.tipo ?? null) });
   }
-  return { admitido: true, entrada, payload, intento_previo_id: ultimo.intento_id, intentos_previos: intentos.length };
+  const reintentosHechos = intentos.length - 1;
+  if (reintentosHechos >= MAX_REINTENTOS_AUTOMATICOS) return no('reintentos_agotados', { reintentos: reintentosHechos, maximo: MAX_REINTENTOS_AUTOMATICOS });
+  return { admitido: true, entrada, payload, intento_previo_id: ultimo.intento_id, intentos_previos: intentos.length, numero: reintentosHechos + 1 };
 }
 
 // Pura. Valor de obligatorio que queda publicado si el payload se aplica.
@@ -192,7 +201,11 @@ async function reintentarAprobada(activa, requisito, objetivo, perfil, c) {
       pendiente: { tipo, motivo: ev.motivo, propuesta_id: activa.propuesta_id }, reintento: { admitido: false, motivo: ev.motivo, detalle: ev.detalle } };
   }
   const r = await aplicarConRevalidacionV2(ev.entrada, c.credencialAplicacion, c.depsAplicacion());
-  const { propuesta, intento, ultima, pendiente } = await cerrarAplicacion(col, activa.propuesta_id, r);
+  const cierre = await cerrarAplicacion(col, activa.propuesta_id, r);
+  const { propuesta, intento, ultima } = cierre;
+  // Último reintento admitido y sigue sin aplicarse: no habrá otro automático.
+  const agotados = propuesta.estado === 'aprobada' && r.resultado !== 'exito' && ev.numero >= MAX_REINTENTOS_AUTOMATICOS;
+  const pendiente = agotados ? { tipo: 'revision_humana', motivo: 'reintentos_agotados', propuesta_id: activa.propuesta_id, intento_id: r.intento_id } : cierre.pendiente;
   const revalidada = intento?.revalidaciones?.[0];
   const fuente = ultima ? { url: ultima.url, tipo: ultima.tipo, consultado_en: isoODefecto(ultima.consultado_en), http_status: ultima.http_status ?? null,
     hechos_hash: ultima.hechos_hash ?? null, contenido_sha256: ultima.contenido_sha256 ?? null, motivo: ultima.codigo_fallo ?? null }
@@ -202,7 +215,7 @@ async function reintentarAprobada(activa, requisito, objetivo, perfil, c) {
   return { resultado: r.resultado, propuesta_id: activa.propuesta_id, decision_evento_id: activa.decision_aprobacion_id, intento_id: r.intento_id,
     estado_propuesta: propuesta.estado, lecturas: r.lecturas ?? 0, valor_aplicado: r.resultado === 'exito' ? obligatorioResultante(ev.payload) : null, pendiente, fuente,
     campos_propuestos: campos, tipo_cambio: perfil.tipo === 'procedencia' ? (campos.includes('obligatorio') ? 'valor' : 'procedencia') : null,
-    reintento: { admitido: true, intento_previo_id: ev.intento_previo_id, intentos_previos: ev.intentos_previos } };
+    reintento: { admitido: true, numero: ev.numero, maximo: MAX_REINTENTOS_AUTOMATICOS, agotados, intento_previo_id: ev.intento_previo_id, intentos_previos: ev.intentos_previos } };
 }
 
 function crearDepsAplicacion(conexion, { fetch, ahora, uuid, listados }) {
@@ -295,4 +308,4 @@ async function ejecutarCicloV2({ destinoId, requisitoId }, perfil, c) {
 }
 
 module.exports = { ACCIONES, clasificar, evaluarFecha, crearDepsAplicacion, ejecutarCicloV2, esDelPerfil, resumenLectura,
-  evaluarReintento, lecturaTransitoria, MOTIVOS_REINTENTO };
+  evaluarReintento, lecturaTransitoria, MOTIVOS_REINTENTO, MAX_REINTENTOS_AUTOMATICOS };

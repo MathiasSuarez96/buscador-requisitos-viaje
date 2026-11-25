@@ -116,13 +116,16 @@ function registroEjecucion({ iniciado_en, terminado_en, config, proceso, objetiv
 // Pura. Una fila Markdown para el resumen del job (GITHUB_STEP_SUMMARY). Solo campos ya saneados
 // del registro: nunca la URI ni mensajes crudos de Mongo.
 function lineaResumen(g) {
-  const reintento = g.reintento?.admitido ? `REINTENTO de la propuesta aprobada (intento previo ${g.reintento.intento_previo_id}); ` : '';
+  const reintento = g.reintento?.admitido ? `REINTENTO ${g.reintento.numero} de ${g.reintento.maximo} de la propuesta aprobada (intento previo ${g.reintento.intento_previo_id}); ` : '';
+  // Reintentos automáticos agotados: queda a la vista en el resumen del job (y la corrida sale con exit ≠ 0).
+  const agotados = g.reintento?.motivo === 'reintentos_agotados' || g.reintento?.agotados === true
+    ? `REINTENTOS AGOTADOS (${g.reintento.detalle?.maximo ?? g.reintento.maximo} de ${g.reintento.detalle?.maximo ?? g.reintento.maximo}): no se aplica sola, requiere revisión humana (propuesta ${g.propuesta_id})` : '';
   const aplicado = g.resultado !== 'exito' ? '' : reintento + (g.tipo_cambio === 'procedencia'
     ? `APLICADO: cambio de procedencia (${(g.campos_propuestos ?? []).join(', ')}; obligatorio sigue ${JSON.stringify(g.valor_aplicado)}) (propuesta ${g.propuesta_id})`
     : `APLICADO: obligatorio → ${JSON.stringify(g.valor_aplicado)} (propuesta ${g.propuesta_id})`);
   const pendiente = g.pendiente ? `pendiente: ${g.pendiente.tipo}${g.pendiente.motivo ? ` (${g.pendiente.motivo})` : ''}` : '';
   const celdas = [g.perfil ?? '-', g.objetivo?.codigo_iso ?? '-', g.modo ?? '-', g.resultado + (g.motivo ? ` (${g.motivo})` : ''), String(g.codigo_salida),
-    g.fuente ? `HTTP ${g.fuente.http_status ?? '-'} ${g.fuente.consultado_en ?? ''}` : '-', [aplicado, pendiente].filter(Boolean).join('; ') || '-'];
+    g.fuente ? `HTTP ${g.fuente.http_status ?? '-'} ${g.fuente.consultado_en ?? ''}` : '-', [agotados, aplicado, pendiente].filter(Boolean).join('; ') || '-'];
   return `| ${celdas.map(c => String(c).replace(/[|\r\n]/g, ' ')).join(' | ')} |`;
 }
 const ENCABEZADO_RESUMEN = '| Perfil | Destino | Modo | Resultado | Exit | Fuente | Aplicación / pendiente |\n|---|---|---|---|---|---|---|';

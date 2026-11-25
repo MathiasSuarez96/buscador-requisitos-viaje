@@ -86,6 +86,7 @@ const COMANDOS_ESCRITURA = ['insert', 'update', 'delete', 'findAndModify', 'crea
     const conTodas = env(TODAS);
     const otras = TODAS.filter(a => a.politica !== 'embajada-italia-it-pasaporte-uy@1');
     const conVencida = env([...otras, aut('embajada-italia-it-pasaporte-uy@1', new Date(Date.now() - 3 * 86_400_000).toISOString(), new Date(Date.now() - 86_400_000).toISOString())]);
+    const conOtroAutorizante = env([...otras, { ...aut('embajada-italia-it-pasaporte-uy@1'), autorizada_por: 'otra.persona' }]);
     const conRenovada = env([...otras, aut('embajada-italia-it-pasaporte-uy@1', new Date(Date.now() - 30_000).toISOString(), new Date(Date.now() + 2 * 86_400_000).toISOString())]);
     const sinPolitica = env(otras);
 
@@ -136,12 +137,17 @@ const COMANDOS_ESCRITURA = ['insert', 'update', 'delete', 'findAndModify', 'crea
     assert.deepEqual([r2.codigo, r2.registro.resultado, r2.registro.propuesta_id, r2.registro.estado_propuesta, r2.registro.reintento?.intento_previo_id, r2.registro.reintento?.intentos_previos,
       r2.registro.tipo_cambio, r2.registro.campos_propuestos, r2.registro.valor_aplicado, f2.consultas],
     [0, 'exito', r0.propuesta_id, 'aplicada', r1.registro.intento_id, 2, 'procedencia', ['descripcion', 'fuente'], 'si', 1], r2.lineas.join('\n'));
-    assert.match(r2.resumen[0], /^\| embajada-it-pasaporte \| IT \| politica_automatica \| exito \| 0 \| .* \| REINTENTO de la propuesta aprobada \(intento previo [0-9a-f-]{36}\); APLICADO: cambio de procedencia/);
+    assert.match(r2.resumen[0], /^\| embajada-it-pasaporte \| IT \| politica_automatica \| exito \| 0 \| .* \| REINTENTO 2 de 3 de la propuesta aprobada \(intento previo [0-9a-f-]{36}\); APLICADO: cambio de procedencia/);
     assert.deepEqual(await cuenta(), { propuestas: 1, aprobaciones: 1, aplicaciones: 1, intentos: 3, exitos: 1, historial: 1 });
     const intento = await col('intentos_aplicacion').findOne({ intento_id: r2.registro.intento_id });
     assert.deepEqual([intento.auditoria.operador, intento.revalidaciones[0].url, intento.aprobacion.evento_id], ['proceso.ciclo', ITU, r0.decision_evento_id ?? intento.aprobacion.evento_id]);
     const evAprob = await col('eventos_propuesta').findOne({ tipo_evento: 'aprobacion' });
     assert.equal(intento.aprobacion.evento_id, evAprob.evento_id, 'el reintento usa la aprobación original');
+    // Revalidación real de H3.3: el intento exitoso guarda la lectura con los hechos APROBADOS.
+    const aprobada = await col('propuestas_cambio').findOne({ propuesta_id: r0.propuesta_id });
+    assert.deepEqual([intento.revalidaciones.length, intento.revalidaciones[0].hechos_hash], [1, aprobada.payload.fuentes[0].hechos_hash]);
+    const intentoCaido = await col('intentos_aplicacion').findOne({ intento_id: r1.registro.intento_id });
+    assert.deepEqual([intentoCaido.resultado, intentoCaido.lecturas_fuente.map(x => x.codigo_fallo)], ['fuente_temporalmente_no_disponible', ['red']], 'cada reintento deja su intento auditado');
     const itp = await reqApi('IT', 'validez_pasaporte');
     assert.deepEqual([itp.obligatorio, itp.fuente, itp.descripcion, String(itp.fecha_verificacion).slice(0, 10)], ['si', ITU, P.descripcionItPasaporte(li.hechos), hoy], 'API');
     assert.equal(JSON.stringify(await reqApi('IT', 'visa')), itVisaAntes, 'el otro requisito de IT no se toca');
@@ -158,7 +164,8 @@ const COMANDOS_ESCRITURA = ['insert', 'update', 'delete', 'findAndModify', 'crea
     for (const [nombre, e, motivo, pendiente, modo] of [
       ['vencida', conVencida, 'politica_no_habilitada', 'autorizacion', 'informe'],
       ['ausente', sinPolitica, 'politica_no_habilitada', 'autorizacion', 'informe'],
-      ['renovada (otra autorización)', conRenovada, 'aprobacion_fuera_de_la_autorizacion_vigente', 'revision_humana', 'politica_automatica']
+      ['renovada (otra autorización)', conRenovada, 'aprobacion_fuera_de_la_autorizacion_vigente', 'revision_humana', 'politica_automatica'],
+      ['distinta (otro autorizante, mismas fechas)', conOtroAutorizante, 'aprobacion_fuera_de_la_autorizacion_vigente', 'revision_humana', 'politica_automatica']
     ]) {
       await aprobadaCaida();
       h = await huella();
@@ -172,6 +179,49 @@ const COMANDOS_ESCRITURA = ['insert', 'update', 'delete', 'findAndModify', 'crea
     // Recuperada la autorización ORIGINAL (vigente), la misma propuesta se reintenta y aplica.
     const rv = await correr(conTodas, cola(okHtml(IT)));
     assert.deepEqual([rv.codigo, rv.registro.resultado, rv.registro.reintento.admitido], [0, 'exito', true]);
+
+    // B2. HTTP 200 con hechos DISTINTOS de los aprobados: H3.3 revalida (dos lecturas) y nunca aplica
+    // el contenido anterior. Mismos hechos nuevos dos veces → obsoleta; distintos entre sí → revisión.
+    const IT6 = IT.replace('de 3 meses', 'de 6 meses'), IT9 = IT.replace('de 3 meses', 'de 9 meses');
+    for (const [nombre, l1, l2, resultado, estado] of [['mismos hechos nuevos', IT6, IT6, 'fuente_cambio', 'obsoleta'], ['hechos nuevos distintos entre sí', IT6, IT9, 'extraccion_ambigua', 'revision_requerida']]) {
+      const prev = await aprobadaCaida();
+      const antesIT = await itDoc();
+      const f = cola(okHtml(l1), okHtml(l2));
+      const r = await correr(conTodas, f);
+      assert.deepEqual([r.codigo, r.registro.resultado, r.registro.estado_propuesta, r.registro.propuesta_id, r.registro.reintento?.admitido, f.consultas], [3, resultado, estado, prev.propuesta_id, true, 2], `${nombre}\n${r.lineas.join('\n')}`);
+      assert.equal(await itDoc(), antesIT, `${nombre}: el destino no cambia`);
+      const c = await cuenta();
+      assert.deepEqual([c.propuestas, c.aprobaciones, c.aplicaciones, c.historial, c.exitos], [1, 1, 0, 0, 0], nombre);
+      const lecturas = (await col('intentos_aplicacion').findOne({ intento_id: r.registro.intento_id })).lecturas_fuente;
+      const aprobadoHash = (await col('propuestas_cambio').findOne({ propuesta_id: prev.propuesta_id })).payload.fuentes[0].hechos_hash;
+      assert.ok(lecturas.length === 2 && lecturas.every(x => x.tipo === 'hechos' && x.hechos_hash !== aprobadoHash), `${nombre}: dos lecturas reales de H3.3 con otros hechos`);
+    }
+
+    // B3. Límite: como máximo 3 reintentos automáticos después del intento inicial.
+    assert.equal(ciclo.MAX_REINTENTOS_AUTOMATICOS, 3);
+    const inicial = await aprobadaCaida();
+    for (const n of [1, 2, 3]) {
+      const f = cola(caida);
+      const r = await correr(conTodas, f);
+      assert.deepEqual([r.codigo, r.registro.resultado, r.registro.propuesta_id, r.registro.reintento.numero, r.registro.reintento.agotados, r.registro.pendiente.tipo, f.consultas],
+        [4, 'fuente_temporalmente_no_disponible', inicial.propuesta_id, n, n === 3, n === 3 ? 'revision_humana' : 'reintentar', 1], `reintento ${n}`);
+      if (n === 3) {
+        assert.equal(r.registro.pendiente.motivo, 'reintentos_agotados');
+        assert.match(r.resumen[0], /REINTENTOS AGOTADOS \(3 de 3\): no se aplica sola, requiere revisión humana/);
+      }
+    }
+    assert.deepEqual(await cuenta(), { propuestas: 1, aprobaciones: 1, aplicaciones: 0, intentos: 4, exitos: 0, historial: 0 }, 'inicial + 3 reintentos, cada uno auditado');
+    // Agotados: aunque la fuente ya responda, no se consulta ni se aplica; revisión humana, exit 3.
+    h = await huella();
+    for (let i = 0; i < 2; i++) {
+      const f = cola();
+      const r = await correr(conTodas, f);
+      assert.deepEqual([r.codigo, r.registro.resultado, r.registro.motivo, r.registro.pendiente.tipo, r.registro.reintento.detalle, f.consultas],
+        [3, 'propuesta_activa_existente', 'reintentos_agotados', 'revision_humana', { reintentos: 3, maximo: 3 }, 0]);
+      assert.match(r.resumen[0], /\| 3 \| - \| REINTENTOS AGOTADOS \(3 de 3\)/);
+      assert.deepEqual(r.comandos.filter(x => COMANDOS_ESCRITURA.includes(x)), []);
+    }
+    assert.equal(await huella(), h, 'agotados: cero escrituras');
 
     // C. Fallos que no son caídas transitorias: la propuesta queda para revisión, sin consultar ni escribir.
     for (const [nombre, fallo, codigo] of [['404', status(404), 'http'], ['redirección fuera del sitio', fuera, 'redireccion_fuera_del_sitio']]) {
@@ -238,7 +288,7 @@ const COMANDOS_ESCRITURA = ['insert', 'update', 'delete', 'findAndModify', 'crea
     assert.deepEqual([rrec.codigo, rrec.registro.motivo, rrec.registro.estado_propuesta], [3, 'decision_humana_previa', 'rechazada']);
     assert.equal(await huella(), h, 'rechazada: cero escrituras');
     // Hechos nuevos en la fuente (6 meses): no es la misma decisión, se propone y aplica otra.
-    const IT6 = IT.replace('de 3 meses', 'de 6 meses');
+    // IT6: misma página con 6 meses (definida arriba).
     const rnue = await correr(conTodas, cola(okHtml(IT6), okHtml(IT6)));
     assert.deepEqual([rnue.codigo, rnue.registro.resultado, (await reqApi('IT', 'validez_pasaporte')).descripcion.includes('al menos 6 meses')], [0, 'exito', true]);
 
