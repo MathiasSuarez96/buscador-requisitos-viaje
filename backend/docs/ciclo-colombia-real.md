@@ -185,6 +185,32 @@ reintentar, el ciclo solo lee (`find`) y exige todo lo siguiente:
    - No se persiste ningún estado nuevo: la propuesta sigue `aprobada` y una persona decide si la
      cancela o la aplica a mano.
 
+### Resolver un agotamiento (operador humano)
+
+No borrar intentos ni cambiar el contador o el estado directamente en Mongo. El límite se conserva
+para esa propuesta. Primero revisar su ID, historial, último error y fuente actual en el resumen
+del workflow y el panel. La cancelación no publica el cambio pendiente.
+
+Para cancelarla con el comando administrativo existente, configurar localmente en
+`scripts/decidir-propuesta.js`: `OPERACION = 'cancelacion'`, el `PROPUESTA_ID` del aviso y un `MOTIVO`
+que explique la decisión. Mantener primero `MODO = 'solo_lectura'` y ejecutar desde `backend/`:
+
+```text
+node --require ./config/mongoose.js scripts/decidir-propuesta.js
+```
+
+El comando carga `.env`, exige la credencial personal `MONGODB_URI_DECISION` y su allowlist.
+Revisar identidad, propuesta, versión y filtro CAS mostrados. Solo si el operador decide cancelar,
+cambiar a `MODO = 'decision_real'`, repetir el comando y confirmar el hash que muestra. No commitear
+estas opciones operativas ni usar la credencial del proceso para decidir por una persona.
+Después dejar las opciones otra vez vacías y en `solo_lectura`.
+
+La siguiente corrida respeta la cancelación de los mismos hechos; puede seguir devolviendo
+`decision_humana_previa` para revisión. Si se necesita silenciar ese perfil mientras se investiga,
+retirar únicamente su nombre de `PERFILES_CICLO`, conservando los demás. No cancelar ni aplicar
+automáticamente otra propuesta para esquivar el límite. La aplicación manual 2.0 exige un camino
+que vuelva a revalidar con H3.3; el comando antiguo de aplicación 1.0 no lo sustituye.
+
 Con HTTP 200 y hechos distintos de los aprobados, H3.3 hace dos lecturas reales y nunca aplica el
 contenido anterior. Si las dos lecturas dan los mismos hechos nuevos, la propuesta queda
 `obsoleta`; si dan hechos distintos entre sí, queda en revisión.

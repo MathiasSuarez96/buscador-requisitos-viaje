@@ -54,6 +54,22 @@ jobs:
             echo '::error::Faltan los secretos de conexión o de identidad del ciclo.'
             exit 1
           fi
+          # Comprobar la configuración real antes de desactivar escrituras para el informe.
+          node <<'NODE'
+          require('./config/mongoose');
+          const { leerAutorizacion } = require('./services/propuestas/ciclo/config-ciclo-real');
+          const { createHash } = require('node:crypto');
+          const raw = process.env.CICLO_V2_AUTORIZACION_JSON;
+          const crudo = raw ? JSON.parse(raw) : [];
+          const lista = Array.isArray(crudo) ? crudo : [crudo];
+          const ahora = new Date();
+          const politicas = lista.map(a => ({
+            politica: a.politica,
+            vigente: leerAutorizacion(process.env, ahora, a.politica).autorizacion !== null,
+            sha256: createHash('sha256').update(JSON.stringify(a)).digest('hex')
+          }));
+          console.log('CONTROL_POLITICAS ' + JSON.stringify({ entradas: lista.length, politicas }));
+          NODE
           if [ "$SOLO_INFORME" = 'true' ] || [ -z "$CICLO_V2_AUTORIZACION_JSON" ]; then
             unset CICLO_V2_AUTORIZACION_JSON
           fi
