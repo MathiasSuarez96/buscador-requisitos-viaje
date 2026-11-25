@@ -13,6 +13,7 @@ const govukCheckUkVisa = require('./govuk-check-uk-visa');
 const auswaertigesAmt = require('./auswaertiges-amt-visumpflicht');
 const govukFrontera = require('./govuk-check-uk-visa-frontera');
 const embajadaItalia = require('./embajada-italia-montevideo');
+const comisionEtias = require('./comision-europea-etias');
 
 class ErrorSinAdaptadorV2 extends Error {
   constructor(mensaje, incompatibilidades) {
@@ -32,7 +33,7 @@ function validarAdaptadorV2(a) {
   return a;
 }
 
-const ADAPTADORES_V2 = Object.freeze([checkmig, govukCheckUkVisa, auswaertigesAmt, govukFrontera, embajadaItalia].map(validarAdaptadorV2));
+const ADAPTADORES_V2 = Object.freeze([checkmig, govukCheckUkVisa, auswaertigesAmt, govukFrontera, embajadaItalia, comisionEtias].map(validarAdaptadorV2));
 
 function elegirAdaptadorV2(propuesta, adaptadores = ADAPTADORES_V2) {
   const evaluados = adaptadores.map(validarAdaptadorV2).map(a => ({ a, c: a.compatibilidad(propuesta) }));

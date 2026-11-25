@@ -7,8 +7,9 @@ const checkmig = require('./perfil-checkmig-colombia');
 const gb = require('./perfil-govuk-reino-unido');
 const alemania = require('./perfil-auswaertiges-amt-alemania');
 const procedencia = require('./perfiles-procedencia-gb-it');
+const { PERFILES_ETIAS } = require('./perfiles-etias-schengen');
 
-const PERFILES = Object.freeze([checkmig, gb.visa, gb.eta, alemania, procedencia.gbPasaporte, procedencia.itVisa, procedencia.itPasaporte]);
+const PERFILES = Object.freeze([checkmig, gb.visa, gb.eta, alemania, procedencia.gbPasaporte, procedencia.itVisa, procedencia.itPasaporte, ...PERFILES_ETIAS]);
 const clavePolitica = p => `${p.politica.nombre}@${p.politica.version}`;
 
 if (new Set(PERFILES.map(p => p.nombre)).size !== PERFILES.length) throw new Error('perfiles: nombres repetidos.');

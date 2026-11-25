@@ -1,0 +1,108 @@
+{
+  "consultado_en": "2026-11-24, ~22:15 hora de Montevideo",
+  "origen": "GET https://buscador-requisitos-viaje.onrender.com/api/destinos",
+  "requisitos": [
+    {
+      "destino": {
+        "_id": "6a87828da8282a4aa6ddfbdd",
+        "pais": "Austria",
+        "codigo_iso": "AT"
+      },
+      "requisito": {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": "no",
+        "descripcion": "Aún no está vigente. Fecha estimada de entrada en vigor: 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18T00:00:00.000Z",
+        "estado": "verificar",
+        "_id": "6aaddd0e9f54309f9d82725d"
+      }
+    },
+    {
+      "destino": {
+        "_id": "6a87828da8282a4aa6ddfbdf",
+        "pais": "Croacia",
+        "codigo_iso": "HR"
+      },
+      "requisito": {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": "no",
+        "descripcion": "Aún no está vigente. Fecha estimada de entrada en vigor: 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18T00:00:00.000Z",
+        "estado": "verificar",
+        "_id": "6aaddd0e9f54309f9d827281"
+      }
+    },
+    {
+      "destino": {
+        "_id": "6a87828da8282a4aa6ddfbdc",
+        "pais": "Finlandia",
+        "codigo_iso": "FI"
+      },
+      "requisito": {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": "no",
+        "descripcion": "Aún no está vigente. Fecha estimada de entrada en vigor: 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18T00:00:00.000Z",
+        "estado": "verificar",
+        "_id": "6aaddd0e9f54309f9d827299"
+      }
+    },
+    {
+      "destino": {
+        "_id": "6a87828da8282a4aa6ddfbe2",
+        "pais": "Francia",
+        "codigo_iso": "FR"
+      },
+      "requisito": {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": "no",
+        "descripcion": "Aún no está vigente. Fecha estimada de entrada en vigor: 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18T00:00:00.000Z",
+        "estado": "verificar",
+        "_id": "6aaddd0e9f54309f9d82729f"
+      }
+    },
+    {
+      "destino": {
+        "_id": "6a87828da8282a4aa6ddfbe1",
+        "pais": "Italia",
+        "codigo_iso": "IT"
+      },
+      "requisito": {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": "no",
+        "descripcion": "Aún no está vigente. Fecha estimada de entrada en vigor: 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18T00:00:00.000Z",
+        "estado": "verificar",
+        "_id": "6aaddd0e9f54309f9d8272ac"
+      }
+    },
+    {
+      "destino": {
+        "_id": "6a87828da8282a4aa6ddfbde",
+        "pais": "Portugal",
+        "codigo_iso": "PT"
+      },
+      "requisito": {
+        "tipo": "formulario_digital",
+        "nombre": "ETIAS (Schengen)",
+        "obligatorio": "no",
+        "descripcion": "Aún no está vigente. Fecha estimada de entrada en vigor: 2027. Cuando entre en vigor, será obligatorio para uruguayos.",
+        "fuente": "https://en.wikipedia.org/wiki/European_Travel_Information_and_Authorisation_System",
+        "fecha_verificacion": "2026-08-18T00:00:00.000Z",
+        "estado": "verificar",
+        "_id": "6aaddd0e9f54309f9d8272d6"
+      }
+    }
+  ]
+}
