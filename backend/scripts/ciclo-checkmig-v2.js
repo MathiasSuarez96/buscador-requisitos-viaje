@@ -103,7 +103,9 @@ function registroEjecucion({ iniciado_en, terminado_en, config, proceso, objetiv
     resultado: error ? 'error' : r.resultado, motivo: error ? null : r.motivo ?? null, error: error ? sinUri(error.message ?? error) : null,
     codigo_salida: codigo,
     propuesta_id: r?.propuesta_id ?? null, intento_id: r?.intento_id ?? null, estado_propuesta: r?.estado_propuesta ?? null, valor_aplicado: r?.valor_aplicado ?? null,
-    tipo_cambio: r?.informe?.tipo_cambio ?? null, campos_propuestos: r?.informe?.cambios ? r.informe.cambios.map(c => c.campo) : null,
+    tipo_cambio: r?.informe?.tipo_cambio ?? r?.tipo_cambio ?? null,
+    campos_propuestos: r?.informe?.cambios ? r.informe.cambios.map(c => c.campo) : r?.campos_propuestos ? [...r.campos_propuestos] : null,
+    reintento: r?.reintento ?? null,
     pendiente: r?.pendiente ?? null,
     observaciones: (r?.informe?.observaciones ?? []).map(o => o.codigo),
     fecha_verificacion: f ? { actual: f.actual, hoy: f.hoy, dias_desde_verificacion: f.dias_desde_verificacion, efecto: f.efecto, renovacion_soportada: f.renovacion_soportada ?? null } : null,
@@ -114,9 +116,10 @@ function registroEjecucion({ iniciado_en, terminado_en, config, proceso, objetiv
 // Pura. Una fila Markdown para el resumen del job (GITHUB_STEP_SUMMARY). Solo campos ya saneados
 // del registro: nunca la URI ni mensajes crudos de Mongo.
 function lineaResumen(g) {
-  const aplicado = g.resultado !== 'exito' ? '' : g.tipo_cambio === 'procedencia'
+  const reintento = g.reintento?.admitido ? `REINTENTO de la propuesta aprobada (intento previo ${g.reintento.intento_previo_id}); ` : '';
+  const aplicado = g.resultado !== 'exito' ? '' : reintento + (g.tipo_cambio === 'procedencia'
     ? `APLICADO: cambio de procedencia (${(g.campos_propuestos ?? []).join(', ')}; obligatorio sigue ${JSON.stringify(g.valor_aplicado)}) (propuesta ${g.propuesta_id})`
-    : `APLICADO: obligatorio → ${JSON.stringify(g.valor_aplicado)} (propuesta ${g.propuesta_id})`;
+    : `APLICADO: obligatorio → ${JSON.stringify(g.valor_aplicado)} (propuesta ${g.propuesta_id})`);
   const pendiente = g.pendiente ? `pendiente: ${g.pendiente.tipo}${g.pendiente.motivo ? ` (${g.pendiente.motivo})` : ''}` : '';
   const celdas = [g.perfil ?? '-', g.objetivo?.codigo_iso ?? '-', g.modo ?? '-', g.resultado + (g.motivo ? ` (${g.motivo})` : ''), String(g.codigo_salida),
     g.fuente ? `HTTP ${g.fuente.http_status ?? '-'} ${g.fuente.consultado_en ?? ''}` : '-', [aplicado, pendiente].filter(Boolean).join('; ') || '-'];

@@ -151,6 +151,38 @@ proceso; si la URI fuera de otro usuario, el prechequeo se detiene sin escribir.
 
 **Casos que se reintentan al día siguiente:** fuente no disponible y revalidación vencida.
 
+### Reintento de una propuesta aprobada (`evaluarReintento`, ciclo-revalidacion-v2.js)
+
+Si la aplicación de H3.3 falla por una caída de la fuente, la propuesta queda `aprobada`. La
+corrida siguiente del mismo perfil vuelve a aplicar **esa misma** propuesta. No crea otra
+propuesta ni otra aprobación: H3.3 registra un intento nuevo con su inicio durable, revalida la
+fuente y escribe solo si los hechos siguen siendo los aprobados. El CAS de versión, la
+transacción y el índice de un único éxito por propuesta evitan una escritura doble. Antes de
+reintentar, el ciclo solo lee (`find`) y exige todo lo siguiente:
+
+1. La propuesta está `aprobada` y corresponde al destino y al requisito del perfil. También deben
+   coincidir el adaptador que elegiría H3.3 y los campos autorizados.
+2. La propuesta está íntegra: el hash se recalcula, la aprobación es coherente y el sobre 2.0 es
+   válido. La identidad del requisito tiene que ser la del payload.
+3. La aprobación se hizo por `politica_automatica` con **la misma** autorización vigente hoy:
+   igual política, autorizante, `autorizada_en` y `vence_en`.
+   - Con la autorización vencida o ausente, la corrida queda en modo informe: no reintenta y
+     solo lee. Exit 3, pendiente `autorizacion`.
+   - Si la autorización se renovó, la aprobación anterior no se reutiliza sola: queda para
+     revisión humana.
+4. No hay un intento en curso, es decir, un inicio sin su intento terminado (`intento_en_curso`).
+   Tampoco hay un éxito previo.
+5. El último intento terminó en `fuente_temporalmente_no_disponible` y todas sus lecturas
+   fallidas son transitorias: red, tiempo agotado, HTTP 5xx, 408 o 429. Un 404, una redirección
+   fuera del sitio o un cuerpo ilegible quedan para revisión humana (`fallo_no_admitido`).
+
+Las propuestas pendientes, en revisión, rechazadas, canceladas, obsoletas o aplicadas nunca se
+reintentan. Si una persona rechazó o canceló una propuesta con los **mismos** hechos y cambios,
+el ciclo no vuelve a proponerla: devuelve `revision_humana` con el motivo
+`decision_humana_previa` y no escribe. Si la fuente publica hechos nuevos, se propone de nuevo.
+El registro de la corrida incluye `reintento` (admitido, motivo e intento previo). Pruebas:
+`scripts/test-reintento-aprobada-v2.js`.
+
 ## Sin cambio ≠ renovar la fecha de verificación
 
 - **Sin cambio:** los valores guardados coinciden con la ficha. No se escribe nada y **la fecha
