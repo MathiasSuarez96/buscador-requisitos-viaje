@@ -51,10 +51,20 @@ async function leerCuerpoLimitado(res, maximo) {
 }
 
 /**
- * opciones: { url, hosts (lista de hosts oficiales), agente, timeoutMs, bytesMaximos, fetch, ahora }
+ * opciones: { url, hosts (lista de hosts oficiales), agente, timeoutMs, bytesMaximos, fetch, ahora, contenido }
+ * contenido: 'html' (por defecto, como siempre), 'json' o 'pdf'. Cada uno exige SU content-type; si no
+ * coincide, el motivo sigue siendo 'no_html' (código cerrado de H3.3: «no es el contenido esperado»).
+ * El PDF se devuelve en latin1 (un carácter por byte: no se pierde ningún byte del original).
  */
+const CONTENIDOS = Object.freeze({
+  html: { accept: 'text/html', tipo: /^text\/html\b/i, decodificar: b => new TextDecoder('utf-8').decode(b) },
+  json: { accept: 'application/json', tipo: /^application\/json\b/i, decodificar: b => new TextDecoder('utf-8').decode(b) },
+  pdf: { accept: 'application/pdf', tipo: /^application\/pdf\b/i, decodificar: b => Buffer.from(b).toString('latin1') }
+});
 async function leerPaginaOficial({ url: inicial, hosts, agente, timeoutMs = 20000, bytesMaximos = 3 * 1024 * 1024,
-  fetch: f = globalThis.fetch, ahora = () => new Date() }) {
+  fetch: f = globalThis.fetch, ahora = () => new Date(), contenido = 'html' }) {
+  const c = CONTENIDOS[contenido];
+  if (!c) throw new TypeError(`leerPaginaOficial: contenido desconocido ${JSON.stringify(contenido)}.`);
   const oficial = u => u !== null && u.protocol === 'https:' && hosts.includes(u.hostname) && !u.username && !u.password && u.port === '';
   const consultadoEn = ahora().toISOString();
   const signal = AbortSignal.timeout(timeoutMs);
@@ -66,7 +76,7 @@ async function leerPaginaOficial({ url: inicial, hosts, agente, timeoutMs = 2000
   for (let saltos = 0; ; saltos++) {
     let res;
     try {
-      res = await f(url, { method: 'GET', redirect: 'manual', signal, headers: { 'user-agent': agente, accept: 'text/html' } });
+      res = await f(url, { method: 'GET', redirect: 'manual', signal, headers: { 'user-agent': agente, accept: c.accept } });
     } catch (e) {
       return fallo(motivoTransporte(e));
     }
@@ -89,7 +99,7 @@ async function leerPaginaOficial({ url: inicial, hosts, agente, timeoutMs = 2000
       await descartar(res);
       return fallo(`http_${status}`, { http_status: status });
     }
-    if (!/^text\/html\b/i.test(res.headers.get('content-type') ?? '')) {
+    if (!c.tipo.test(res.headers.get('content-type') ?? '')) {
       await descartar(res);
       return fallo('no_html', { http_status: status });
     }
@@ -100,7 +110,7 @@ async function leerPaginaOficial({ url: inicial, hosts, agente, timeoutMs = 2000
     }
     const cuerpo = await leerCuerpoLimitado(res, bytesMaximos);
     if (cuerpo.error) return fallo(cuerpo.error, { http_status: status });
-    const html = new TextDecoder('utf-8').decode(cuerpo.bytes);
+    const html = c.decodificar(cuerpo.bytes);
     return { tipo: 'respuesta', html, recibida_en: ahora(), diagnostico: diagnostico({ http_status: status, bytes: cuerpo.bytes.length }) };
   }
 }
