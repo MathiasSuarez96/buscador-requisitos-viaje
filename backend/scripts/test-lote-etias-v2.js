@@ -67,8 +67,17 @@ const reqPub = iso => PUB.requisitos.find(x => x.destino.codigo_iso === iso);
       ['dos bloques de aviso', ET.replace('</main>', '<div class="ecl"><h2>Important notice</h2></div></main>'), 'sin_evidencia'],
       ['sin bloque de aviso', ET.replace('<h2>Important notice</h2>', '<h2>Notice</h2>'), 'sin_evidencia'],
       ['dos <main>', ET.replace('</main>', '</main><main></main>'), 'sin_evidencia'],
-      ['bloque sin cierre', ET.replace(/<\/div>\s*<\/main>/, '</main>'), 'no_reconocido']
+      ['bloque sin cierre', ET.replace(/<\/div>\s*<\/main>/, '</main>'), 'no_reconocido'],
+      // Revisión Codex: texto no validado dentro del párrafo de definición (antes daba ok) y fuera del bloque.
+      ['obligatoriedad al comienzo del resto de la definición', ET.replace('It aims to identify', 'ETIAS will become mandatory on 1 May 2027. It aims to identify'), 'condicionada'],
+      ['inicio en medio de la definición', ET.replace('while respecting', 'from 2027 onwards, while respecting'), 'condicionada'],
+      ['fecha al final de la definición', ET.replace('who do not pose such risks.</p>', 'who do not pose such risks. Operations start in 2027.</p>'), 'condicionada'],
+      ['obligatoriedad al final de la definición', ET.replace('who do not pose such risks.</p>', 'who do not pose such risks. Travellers must apply before departure.</p>'), 'condicionada'],
+      ['inicio anunciado fuera del bloque', ET.replace('<h1>ETIAS</h1>', '<h1>ETIAS</h1><p>ETIAS will start operations on 1 May 2027.</p>'), 'condicionada'],
+      ['aviso duplicado fuera del bloque', ET.replace('<h1>ETIAS</h1>', `<h1>ETIAS</h1><p>${AVISO} The European Union will inform about the specific date for the start of ETIAS several months prior to its launch.</p>`), 'sin_evidencia'],
+      ['definición repetida con otra duración', ET.replace('<h1>ETIAS</h1>', '<h1>ETIAS</h1><p>ETIAS is a new travel requirement for visa-free travellers visiting 30 European countries for a short stay (i.e. for up to 60 days within any 180-day period). See below.</p>'), 'sin_evidencia']
     ];
+    for (const [nombre, h] of MUT.slice(-7)) assert.notEqual(h, ET, `${nombre}: la mutación se aplicó`);
     for (const [nombre, h, motivo] of MUT) {
       const x = FE.extraer(h);
       assert.equal(x.estado, 'ambiguo', nombre);
@@ -94,7 +103,7 @@ const reqPub = iso => PUB.requisitos.find(x => x.destino.codigo_iso === iso);
     assert.deepEqual(E.PERFILES_ETIAS.map(p => p.destino.codigo_iso), ['AT', 'HR', 'FI', 'FR', 'IT', 'PT']);
     assert.ok(E.PERFILES_ETIAS.every(p => PERFILES.includes(p) && clavePolitica(p) === 'comision-europea-etias-uy@1'));
     const desc = E.descripcionEtias(le.hechos);
-    for (const t of ['todavía no está en funcionamiento', 'no se reciben solicitudes', '90 días', '180 días', 'exentos de visa', 'anunciará la fecha de inicio']) assert.ok(desc.includes(t), t);
+    assert.equal(desc, 'A la fecha de verificación indicada, según la Comisión Europea, el ETIAS todavía no está en funcionamiento y no recibe solicitudes, por lo que no había que tramitarlo. No es una exención permanente: el ETIAS es un requisito previsto para los viajeros exentos de visa en estadías cortas (hasta 90 días en cualquier período de 180 días), y la Unión Europea anunciará la fecha de inicio con varios meses de antelación. Para viajes futuros, consultar la información oficial actualizada.', 'descripción canónica exacta');
     assert.ok(!/2027|2026|obligatorio para uruguayos/.test(desc), 'sin la fecha estimada ni la afirmación que la fuente no da');
     for (const p of E.PERFILES_ETIAS) {
       const r = ciclo.clasificar(reqPub(p.destino.codigo_iso).requisito, le, p, { hoy: HOY });
@@ -234,6 +243,23 @@ const reqPub = iso => PUB.requisitos.find(x => x.destino.codigo_iso === iso);
     // Segunda lectura de H3.3 ambigua: revisión, sin publicar.
     const d1 = await correr('comision-etias-it', conLote, [okHtml(ET), okHtml(MUT[5][1])]);
     assert.deepEqual([d1.codigo, d1.registro.estado_propuesta, (await etiasApi('IT')).estado], [3, 'revision_requerida', 'verificar']);
+    // La obligatoriedad aparece recién en la segunda lectura, dentro del párrafo de definición: nada se publica.
+    const ptAntes = JSON.stringify(await etiasApi('PT'));
+    const d2 = await correr('comision-etias-pt', conLote, [okHtml(ET), okHtml(MUT.find(m => m[0] === 'obligatoriedad al comienzo del resto de la definición')[1])]);
+    assert.deepEqual([d2.codigo, d2.registro.resultado, d2.registro.estado_propuesta], [3, 'extraccion_ambigua', 'revision_requerida'], d2.lineas.join('\n'));
+    assert.equal(JSON.stringify(await etiasApi('PT')), ptAntes, 'segunda lectura con condición: nada publicado');
+    // Caso de Codex en los seis perfiles: primera lectura ambigua y condición en la segunda lectura, sin publicar.
+    const CODEX = MUT.find(m => m[0] === 'obligatoriedad al comienzo del resto de la definición')[1];
+    await sembrar();
+    const publicadoAntes = JSON.stringify(await Promise.all(E.PERFILES_ETIAS.map(p => etiasApi(p.destino.codigo_iso))));
+    for (const p of E.PERFILES_ETIAS) {
+      const r1 = await correr(p.nombre, conLote, [okHtml(CODEX)]);
+      assert.deepEqual([r1.codigo, r1.registro.resultado, r1.registro.motivo, r1.registro.propuesta_id], [3, 'revision_humana', 'lectura_ambigua', null], `${p.nombre}: primera lectura`);
+      const r2 = await correr(p.nombre, conLote, [okHtml(ET), okHtml(CODEX)]);
+      assert.deepEqual([r2.codigo, r2.registro.resultado, r2.registro.estado_propuesta], [3, 'extraccion_ambigua', 'revision_requerida'], `${p.nombre}: segunda lectura`);
+    }
+    assert.equal(JSON.stringify(await Promise.all(E.PERFILES_ETIAS.map(p => etiasApi(p.destino.codigo_iso)))), publicadoAntes, 'caso de Codex: ningún cambio publicado en los seis');
+    assert.deepEqual([await col('historial_cambios').countDocuments(), await col('propuestas_cambio').countDocuments({ estado: 'revision_requerida' })], [0, 6]);
 
     assert.equal(globalThis.__SOLO_LOOPBACK__.bloqueados.length, 0, 'ninguna conexión externa');
     process.exitCode = 0;

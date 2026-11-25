@@ -26,7 +26,9 @@ const NOMBRE_REQUISITO = 'ETIAS (Schengen)';
 const DESTINOS = Object.freeze(['AT', 'HR', 'FI', 'FR', 'IT', 'PT']);
 
 // Pura. Descripción canónica (también la usan las pruebas).
-const descripcionEtias = h => `El ETIAS, la autorización de viaje que la Unión Europea exigirá a los viajeros exentos de visa para estadías cortas (hasta ${h.estancia_corta.dias} días en cualquier período de ${h.estancia_corta.periodo_dias} días), todavía no está en funcionamiento y no se reciben solicitudes: hoy no hay que tramitarlo. La Unión Europea anunciará la fecha de inicio con varios meses de antelación.`;
+// La afirmación queda atada a la fecha de verificación del requisito (no lleva la fecha en el texto:
+// así la repetición no cambia la descripción). No es una exención permanente ni da fecha de inicio.
+const descripcionEtias = h => `A la fecha de verificación indicada, según la Comisión Europea, el ETIAS todavía no está en funcionamiento y no recibe solicitudes, por lo que no había que tramitarlo. No es una exención permanente: el ETIAS es un requisito previsto para los viajeros exentos de visa en estadías cortas (hasta ${h.estancia_corta.dias} días en cualquier período de ${h.estancia_corta.periodo_dias} días), y la Unión Europea anunciará la fecha de inicio con varios meses de antelación. Para viajes futuros, consultar la información oficial actualizada.`;
 
 const PERFILES_ETIAS = Object.freeze(DESTINOS.map(iso => crearPerfilProcedencia({
   nombre: `comision-etias-${iso.toLowerCase()}`,

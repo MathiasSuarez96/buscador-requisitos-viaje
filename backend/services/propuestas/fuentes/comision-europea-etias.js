@@ -15,10 +15,12 @@
  *      prior to its launch.»
  *   E «ETIAS is a new travel requirement for visa-free travellers visiting N European countries for
  *      a short stay (i.e. for up to D days within any P-day period). …» (alcance de la estadía corta).
- * Cualquier OTRO segmento del bloque (en cualquier etiqueta) que hable de funcionamiento, inicio,
- * fechas, años, solicitudes u obligatoriedad y no sea uno de los textos conocidos de abajo deja el
- * campo ambiguo: puede anunciar la fecha de inicio o la obligatoriedad. Si N falta, se repite o cambia,
- * también es ambiguo. Nunca se deduce nada de la ausencia de un dato.
+ * Cualquier OTRO texto de <main> (dentro o fuera del bloque, en cualquier etiqueta) que hable de
+ * funcionamiento, inicio, fechas, años, solicitudes u obligatoriedad y no sea uno de los textos
+ * conocidos de abajo deja el campo ambiguo: puede anunciar la fecha de inicio o la obligatoriedad.
+ * De E solo se da por validada la primera oración: el resto del párrafo se revisa igual que cualquier
+ * otro texto. Si N o E faltan, se repiten (en cualquier lugar de <main>) o cambian, también es
+ * ambiguo. Nunca se deduce nada de la ausencia de un dato.
  *
  * Reutilización: el contenido de la Comisión se puede reutilizar citando la fuente (Decisión
  * 2011/833/UE). Igual se publica redacción propia, se enlaza la página y se guardan fragmentos breves.
@@ -57,19 +59,28 @@ function extraerCampo(main) {
   if (aperturas.length !== 1) return ambiguo(`sin_evidencia: hay ${aperturas.length} bloques «Important notice» (se esperaba uno)`);
   const interior = interiorDiv(main, aperturas[0].index);
   if (interior === null) return ambiguo('no_reconocido: el bloque del aviso no cierra; no se puede delimitar');
-  const segmentos = segmentosTexto(interior).map(t => t.normalize('NFC'));
-  const avisos = segmentos.filter(s => /not in operation|in operation/i.test(s) && /ETIAS/.test(s));
-  if (avisos.length !== 1) return ambiguo(`sin_evidencia: el aviso sobre el funcionamiento aparece ${avisos.length} veces`, avisos.slice(0, 3));
+  const enBloque = segmentosTexto(interior).map(t => t.normalize('NFC'));
+  // Todo el texto de <main> (también el que rodea al bloque). Las exclusiones son por POSICIÓN: un
+  // texto igual al aviso en otro lugar no se omite, y del párrafo de definición solo se excluye lo
+  // que la gramática consumió.
+  const segmentos = segmentosTexto(main).map(t => t.normalize('NFC'));
+  const esAviso = s => /in operation/i.test(s) && /ETIAS/.test(s);
+  const esAlcance = s => /^ETIAS is a new travel requirement/.test(s);
+  const avisos = segmentos.filter(esAviso);
+  if (avisos.length !== 1 || enBloque.filter(esAviso).length !== 1) return ambiguo(`sin_evidencia: el aviso sobre el funcionamiento aparece ${avisos.length} veces`, avisos.slice(0, 3));
   if (!N.test(avisos[0])) return ambiguo('no_reconocido: el aviso sobre el funcionamiento no tiene la redacción admitida', avisos);
-  const alcances = segmentos.filter(s => /^ETIAS is a new travel requirement/.test(s));
-  if (alcances.length !== 1) return ambiguo(`sin_evidencia: la definición de la estadía corta aparece ${alcances.length} veces`, avisos);
+  const alcances = segmentos.filter(esAlcance);
+  if (alcances.length !== 1 || enBloque.filter(esAlcance).length !== 1) return ambiguo(`sin_evidencia: la definición de la estadía corta aparece ${alcances.length} veces`, avisos);
   const m = alcances[0].match(E);
   if (!m) return ambiguo('no_reconocido: la definición de la estadía corta no tiene la redacción admitida', [avisos[0], alcances[0]]);
-  const otros = segmentos.filter(s => s !== avisos[0] && s !== alcances[0] && SENSIBLE.test(s) && !CONOCIDOS.includes(s));
-  if (otros.length) return ambiguo(`condicionada: otro texto del aviso menciona funcionamiento, fechas u obligatoriedad (${otros.length}); no se interpreta`, [avisos[0], ...otros]);
-  const [oracion] = alcances[0].split(/(?<=\))\.\s+/);
+  const iAviso = segmentos.indexOf(avisos[0]), iAlcance = segmentos.indexOf(alcances[0]);
+  // Lo que sigue a la primera oración de la definición no está validado: se revisa como cualquier otro texto.
+  const resto = alcances[0].slice(m[0].length);
+  const otros = segmentos.map((s, i) => (i === iAviso ? '' : i === iAlcance ? resto : s))
+    .filter(s => s !== '' && SENSIBLE.test(s) && !CONOCIDOS.includes(s));
+  if (otros.length) return ambiguo(`condicionada: otro texto de la página menciona funcionamiento, fechas u obligatoriedad (${otros.length}); no se interpreta`, [avisos[0], ...otros]);
   return { estado: 'ok', valor: { en_funcionamiento: 'no', paises: Number(m[1]), estancia_dias: Number(m[2]), periodo_dias: Number(m[3]) },
-    evidencia: [avisos[0], `${oracion}.`].map(recortar) };
+    evidencia: [avisos[0], m[0].trim()].map(recortar) };
 }
 
 // Pura.
