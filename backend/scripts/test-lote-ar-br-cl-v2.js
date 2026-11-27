@@ -1,13 +1,15 @@
 // Lote AR/BR/CL (IATA → fuentes oficiales del destino): AR visa, AR documento (cédula), BR visa, CL visa.
 //  1. Extracción determinista con fixtures reales y mutaciones: condición dentro del texto admitido y al
 //     final, listas, divs, texto suelto, contenedores anidados, duplicados, secciones faltantes y contexto
-//     distinto. Una condición no interpretada da ambiguo, nunca confirmado.
+//     distinto. Una condición no interpretada da ambiguo, nunca confirmado. BR: texto del PDF escrito con
+//     operadores que no se leen (' y ", fuera de BT, Do, anotaciones).
 //  2. Adaptadores: hechos, caída y redirección sin lanzar; compatibilidades disjuntas.
 //  3. Perfiles: requisito completo, cédula representada (pasaporte no obligatorio), sin cambio sin renovar.
 //  4. Autorizaciones: cada perfil exige SU política.
 //  5. Mongo efímero sembrado con la API pública del 25/11 + GET /api/destinos: fuente → clasificación →
 //     aplicación → API; repetición sin escrituras; caída y recuperación (reintento); segunda lectura
-//     distinta o ambigua sin publicar; regresión de los 13 perfiles activos.
+//     distinta o ambigua sin publicar (incluida una nota PDF que aparece en la segunda lectura); regresión
+//     de los 13 perfiles activos.
 // Nada toca Atlas ni la red (preload solo-loopback). exitCode = 1 hasta la última aserción.
 const assert = require('node:assert/strict');
 if (!globalThis.__SOLO_LOOPBACK__) throw new Error('Se requiere preload-solo-loopback');
@@ -145,12 +147,27 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
       ['fila con otro nombre', mutarPdf(URUGUAI, t => t.replace(URUGUAI, '[(Uruguai e Paraguai)] TJ')), 'no_reconocido'],
       ['nota general nueva en la leyenda', mutarPdf('(In)-2(gresso)', t => t.replace('[(#)] TJ', '[(#)] TJ\r\nET\r\nBT\r\n1 0 0 1 36.48 60.5 Tm\r\n[(Todos os visitantes devem apresentar seguro sa\\372de.)] TJ')), 'condicionada'],
       ['nota nueva en la página de la tabla', mutarPdf(URUGUAI, t => t.replace(URUGUAI, `${URUGUAI}\r\nET\r\nBT\r\n1 0 0 1 28.44 60.5 Tm\r\n[(Obs: exige-se comprovante de hospedagem.)] TJ`)), 'condicionada'],
-      ['PDF ilegible', Buffer.from('%PDF-1.7\n1 0 obj << >> endobj\n'), 'no_reconocido']
+      ['PDF ilegible', Buffer.from('%PDF-1.7\n1 0 obj << >> endobj\n'), 'no_reconocido'],
+      // Texto escrito con formas que el lector no interpreta: nunca desaparece, siempre ambiguo.
+      ['nota con el operador \' (bloque propio)', mutarPdf(URUGUAI, t => t.replace(URUGUAI, `${URUGUAI}\r\nET\r\nBT\r\n1 0 0 1 28.44 60.5 Tm\r\n(Somente portadores de passaporte biometrico.) '`)), 'no_reconocido'],
+      ['nota con el operador "', mutarPdf(URUGUAI, t => t.replace(URUGUAI, `${URUGUAI}\r\nET\r\nBT\r\n1 0 0 1 28.44 60.5 Tm\r\n0 0 (Somente portadores de passaporte biometrico.) "`)), 'no_reconocido'],
+      ['nota con \' dentro del bloque de la fila', mutarPdf(URUGUAI, t => t.replace(URUGUAI, `${URUGUAI}\r\n(Somente portadores de passaporte biometrico.) '`)), 'no_reconocido'],
+      ['nota con posición relativa (Td)', mutarPdf(URUGUAI, t => t.replace(URUGUAI, `${URUGUAI}\r\nET\r\nBT\r\n1 0 0 1 28.44 60.5 Tm\r\n0 -12 Td\r\n[(Somente portadores de passaporte biometrico.)] TJ`)), 'no_reconocido'],
+      ['texto fuera de un bloque BT…ET', mutarPdf(URUGUAI, t => t.replace(URUGUAI, `${URUGUAI}\r\nET\r\n(Somente portadores de passaporte biometrico.) Tj\r\nBT`)), 'no_reconocido'],
+      ['texto alternativo de una sección marcada', mutarPdf(URUGUAI, t => t.replace(URUGUAI, `${URUGUAI}\r\nET\r\n/Span <</ActualText (Somente portadores de passaporte biometrico.)>> BDC\r\nEMC\r\nBT`)), 'no_reconocido'],
+      ['objeto externo dibujado (Do)', mutarPdf(URUGUAI, t => t.replace(URUGUAI, `${URUGUAI}\r\nET\r\n/Fm1 Do\r\nBT`)), 'no_reconocido'],
+      ['operador desconocido en un bloque', mutarPdf(URUGUAI, t => t.replace(URUGUAI, `${URUGUAI}\r\n3 Tr`)), 'no_reconocido'],
+      ['cadena sin terminar', mutarPdf(URUGUAI, t => t.replace(URUGUAI, '[(Uruguai] TJ')), 'no_reconocido'],
+      ['anotación en una página', Buffer.from(PDF.toString('latin1').replace('/Type/Page/Parent', '/Type/Page/Annots[]/Parent'), 'latin1'), 'no_reconocido'],
+      // Paréntesis anidados: se leen completos y la nota nueva se detecta.
+      ['nota con paréntesis anidados', mutarPdf(URUGUAI, t => t.replace(URUGUAI, `${URUGUAI}\r\nET\r\nBT\r\n1 0 0 1 28.44 60.5 Tm\r\n[(Obs \\(1\\): somente (biometrico))] TJ`)), 'condicionada']
     ];
     for (const [nombre, b, motivo] of MUT_BR) {
+      assert.ok(!b.equals(PDF), `BR / ${nombre}: mutación aplicada`);
       const x = extraerBr(b).campos.visa;
       assert.deepEqual([x.estado, x.motivo?.split(':')[0]], ['ambiguo', motivo], `BR visa / ${nombre}: ${x.motivo}`);
     }
+    assert.match(extraerBr(MUT_BR.find(m => m[0].startsWith('nota con el operador \'')) [1]).campos.visa.motivo, /operador "'"/, 'BR: el motivo nombra el operador no leído');
     for (const [nombre, pagina] of [
       ['sin enlace al cuadro', BRP.replace(/Quadro Geral de Regime de Vistos \(QGRV\) - Versão em Português/, 'Quadro (arquivo)')],
       ['dos enlaces distintos', BRP.replace('</ul>', `<li><a href="${PDF_URL.replace('07out26', '01dez26')}">Quadro Geral de Regime de Vistos (QGRV) - Versão em Português</a></li></ul>`)],
@@ -281,6 +298,7 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
       assert.ok(!/SECRETO|mongodb\+srv/.test(lineas.join('\n')), 'sin credenciales en la salida');
       return { codigo, registro: JSON.parse(reg[0].slice('REGISTRO_EJECUCION '.length)), lineas, consultas: [...consultas] };
     };
+    const huellaDestinos = async () => JSON.stringify(await col('destinos').find({}).sort({ _id: 1 }).toArray());
     const huella = async () => JSON.stringify(await Promise.all(['destinos', 'propuestas_cambio', 'eventos_propuesta', 'intentos_aplicacion', 'inicios_intento_aplicacion', 'historial_cambios']
       .map(n => col(n).find({}).sort({ _id: 1 }).toArray())));
     const ACTIVOS = PERFILES.filter(p => !L.PERFILES_AR_BR_CL.includes(p)).map(p => p.nombre);
@@ -365,9 +383,24 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
     const d3 = await correr('consulado-cl-visa', conLote, { [FC.URL_TABLA]: [json(CL60), json(CL60)] });
     assert.deepEqual([d3.codigo, d3.registro.resultado, (await reqApi('CL', 'visa')).descripcion.includes('es de 60 días')], [0, 'exito', true]);
 
+    // Condición que aparece en la SEGUNDA lectura (revalidación de H3.3): una nota PDF con ' en Brasil.
+    // Revisión humana, nada publicado.
+    await sembrar();
+    const PDF_COMILLA = MUT_BR.find(m => m[0].startsWith('nota con el operador \''))[1];
+    for (const [perfil, iso, resp] of [
+      ['itamaraty-br-visa', 'BR', { [FB.URL_PAGINA]: [html(BRP), html(BRP)], [PDF_URL]: [pdf(PDF), pdf(PDF_COMILLA)] }]
+    ]) {
+      const antes = await huellaDestinos();
+      const r = await correr(perfil, conLote, resp);
+      assert.deepEqual([r.codigo, r.registro.resultado, r.registro.estado_propuesta], [3, 'extraccion_ambigua', 'revision_requerida'], `${perfil}: ${r.lineas.join('\n')}`);
+      assert.equal(await huellaDestinos(), antes, `${perfil}: segunda lectura con condición nueva, nada publicado`);
+      assert.equal((await reqApi(iso, 'visa')).fuente, 'https://www.iatatravelcentre.com/', `${perfil}: sigue la fuente anterior`);
+      assert.equal(await col('historial_cambios').countDocuments(), 0, perfil);
+    }
+
     assert.equal(globalThis.__SOLO_LOOPBACK__.bloqueados.length, 0, 'ninguna conexión externa');
     process.exitCode = 0;
-    console.log('Lote AR/BR/CL 2.0: extracción con mutaciones, adaptadores, perfiles (cédula), políticas propias, aplicación → API, repetición, caída y recuperación, segunda lectura distinta/ambigua y regresión de los 13 perfiles en Mongo efímero: OK');
+    console.log('Lote AR/BR/CL 2.0: extracción con mutaciones, adaptadores, perfiles (cédula), políticas propias, aplicación → API, repetición, caída y recuperación, segunda lectura distinta/ambigua (nota PDF incluida) y regresión de los 13 perfiles en Mongo efímero: OK');
   } catch (err) {
     process.exitCode = 1;
     console.error(err);

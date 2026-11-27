@@ -72,6 +72,16 @@ dependencias:
 - una cadena hexadecimal se lee como `�` (nunca como letra);
 - cualquier otra forma no reconocida deja la lectura ambigua.
 
+El lector usa una **lista cerrada**: separa el contenido de cada página en operadores con sus operandos
+(cadenas con paréntesis anidados y escapes, hexadecimales, arreglos, diccionarios) y dentro de BT…ET solo
+admite Tm, Tj, TJ y los de estado de este cuadro (Tf, Tc, g, G, gs). Cualquier otro operador lanza,
+aunque el bloque no tenga Tj/TJ: en particular `'` y `"`, que también muestran texto, y Td/TD/T*.
+Fuera de BT…ET no se admite texto (ni cadenas, salvo el idioma `/Lang` de una sección marcada) ni
+objetos externos (`Do`, imágenes en línea); una página con anotaciones también lanza. Antes, un bloque
+sin Tj/TJ se salteaba ANTES de rechazar los operadores no soportados: una nota escrita con `'` desaparecía
+y la lectura seguía confirmada (hallazgo de Codex del 25/11). No es un lector PDF general: un cuadro que
+use otras formas deja la lectura ambigua y va a revisión humana.
+
 La lectura de Brasil hace dos consultas: la página del cuadro, que debe tener un único enlace con el
 texto exacto, y el PDF de ese enlace. Así una versión nueva del PDF no se pierde por usar un nombre de
 archivo fijo.
