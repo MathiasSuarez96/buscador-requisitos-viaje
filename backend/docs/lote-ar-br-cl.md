@@ -11,7 +11,7 @@ Pruebas: `scripts/test-lote-ar-br-cl-v2.js`.
 | AR visa | listo | argentina.gob.ar «Extranjeros» › Turismo › Mercosur | **ciudadano** de Uruguay, turismo, hasta 90 días; no dice el documento |
 | AR validez_pasaporte | listo | Migraciones «Documentación para ingresar al país como turista» | documento del **país de origen** Uruguay: pasaporte vigente, cédula vigente o documento de viaje hábil vigente; turista = descanso o esparcimiento, sin tareas remuneradas |
 | BR visa | listo | Itamaraty, Quadro Geral de Regime de Vistos (PDF del 07/10/2026) | **nacional** de Uruguay, visa de visita con **pasaporte común**: dispensa por hasta 90 días (código 4); «#» = ingreso permitido con cédula de identidad civil |
-| CL visa | listo | Red Consular de Chile, tabla de visas (JSON que carga consulado.gob.cl) | **nacionalidad** Uruguay: «¿Requiere visa?» NO, plazo máximo de estadía 90 días; no dice motivo ni documento |
+| CL visa | listo | Red Consular de Chile, tabla de visas y texto de sus notas (los dos JSON que carga consulado.gob.cl) | **nacionalidad** Uruguay: «¿Requiere visa?» NO, plazo máximo de estadía 90 días; notas 1 y 2: visas de **permanencia transitoria** de una entrada y de varias («salvo excepciones»); nota 17: recargo sobre aranceles (los de Uruguay son 0); no dice documento |
 | BR validez_pasaporte | pendiente | — | El cuadro admite la cédula, pero no dice ninguna vigencia del documento. La página de la Polícia Federal que se probó respondió 404. El texto IATA actual («válido por la duración total de la estadía») no se respalda ni se reemplaza. |
 | CL validez_pasaporte | pendiente, **revisar a mano** | — | Solo el Consulado General de Chile en **Buenos Aires** nombra a Uruguay («documento de identidad… mínimo 6 meses de vigencia»), en una página para quien viaja **desde Argentina**. SERMIG dice «Mercosur y Bolivia» sin nombrar a Uruguay. No se generaliza. Atención: el texto IATA publicado («válido al momento de llegada, sin mínimo de meses») contradice esa regla de 6 meses para la cédula. |
 
@@ -44,9 +44,14 @@ Pruebas: `scripts/test-lote-ar-br-cl-v2.js`.
 - Antes: «No requiere visa, estadía máxima 90 días. Se puede extender 90 días adicionales. Requiere
   pasaje de regreso/continuación.»
 - Después: «Según la tabla de visas de la Red Consular de Chile, los nacionales de Uruguay no requieren
-  visa para ingresar a Chile; el plazo máximo de estadía indicado es de 90 días. Para residir o
-  trabajar en Chile, consultar la fuente oficial.»
+  visa de permanencia transitoria para ingresar a Chile. La tabla indica un plazo máximo de estadía de
+  90 días, para una entrada o para varias; para varias entradas aclara «salvo excepciones». Para residir
+  o trabajar en Chile, consultar la fuente oficial.»
 - Se retiran la extensión de 90 días y el pasaje de regreso.
+- «permanencia transitoria», «una entrada o varias» y «salvo excepciones» salen del texto de las notas 1
+  y 2 que la fila de Uruguay referencia (ver «Chile: notas referenciadas»). La nota 17 (recargo del 10 %
+  sobre el valor base si se cobra en moneda local) solo modifica un arancel y los de Uruguay son 0: no se
+  publica.
 
 Ninguna regla retirada se declara falsa: solo deja de publicarse porque la fuente nueva no la respalda.
 Las cuatro aplicaciones fijan `estado: confirmado` (ya lo estaban), la fuente oficial y la fecha del
@@ -86,6 +91,23 @@ La lectura de Brasil hace dos consultas: la página del cuadro, que debe tener u
 texto exacto, y el PDF de ese enlace. Así una versión nueva del PDF no se pierde por usar un nombre de
 archivo fijo.
 
+## Chile: notas referenciadas
+
+El script oficial de la página (`/consulados/js-local/v1/ArancelesVisas.class.js`) carga dos JSON: la
+tabla (`info_visas.json`) y el texto de las notas (`/consulados/site/edic/base/port/notas_visas.json`),
+y debajo de la fila muestra el texto de cada nota que la fila referencia. Si una nota no existe, la
+página la omite en silencio; el adaptador no: la lectura queda ambigua.
+
+Una lectura hace dos consultas (tabla y notas; si alguna falla, la fuente no está disponible). La fila de
+Uruguay referencia `1,2,17`. Cada una tiene que estar y decir EXACTAMENTE el texto interpretado; en las
+notas 1 y 2 el plazo tiene que ser igual al de la fila. El significado se toma del texto de la nota,
+nunca de la fila de otro país. Nota ausente, cambiada (aunque sea una palabra o un espacio), con otro
+plazo, vacía o que no es texto → ambiguo. Las notas que Uruguay NO referencia no se interpretan ni cuentan.
+
+El texto de las tres notas forma parte de los hechos (`consulado-chile-visas-hechos-v2`, adaptador
+`consulado-chile-visas@2`): si cambia entre la detección y la revalidación de H3.3, no se publica. Los
+hechos v1 (sin notas) no son compatibles; ninguno se guardó fuera de las pruebas.
+
 ## Cómo se evita un falso confirmado
 
 Cada fuente ancla completo el texto que respalda el dato. Fuera de ese texto, **cada** segmento de la
@@ -98,14 +120,22 @@ Consecuencia operativa: un cambio de texto en esas páginas, aunque sea irreleva
 ambigua y el caso va a revisión humana sin publicar. Para reanudar hay que revisar el texto nuevo y
 actualizar la gramática o las huellas.
 
-Pruebas: 52 mutaciones de fuente que deben dar ambiguo:
-- 16 AR visa, 12 AR documento, 11 BR PDF, 3 BR enlace y 10 CL;
+Pruebas: 74 mutaciones de fuente que deben dar ambiguo:
+- 16 AR visa, 12 AR documento, 22 BR PDF, 3 BR enlace y 21 CL;
+- BR: nota escrita con `'` o `"` (en un bloque propio o en el de la fila), con Td, fuera de BT…ET,
+  como texto alternativo de una sección marcada, con `Do`, operador desconocido, cadena sin terminar,
+  anotación y paréntesis anidados;
+- CL: fila idéntica con la nota 17 modificada, la 2 con una condición agregada, la 1 con otra entrada,
+  las notas 1 o 2 con otro plazo que la fila, nota 1 o 17 ausente, vacía, que no es texto, y notas que
+  no son JSON o vienen en una lista;
 - condición dentro del texto admitido y al final;
 - listas, divs, texto suelto y contenedores anidados;
 - duplicados, secciones faltantes y contexto distinto (residencia en lugar de origen, otra rama,
   otro motivo).
 
-Las 18 mutaciones de código sobre las guardas se detectan todas.
+Las 18 mutaciones de código sobre las guardas se detectan todas. De las 14 de la corrección del 26/11
+(texto-pdf.js de antes incluido) se detectan 13; la que queda es equivalente: admitir Tj/TJ fuera de
+BT…ET sigue rechazado por la guarda de cadenas fuera de un bloque de texto.
 
 ## Activación (pendiente de autorización; nada ejecutado)
 
@@ -138,7 +168,7 @@ programada del día.
    respaldo.
 6. **Aplicación:** `workflow_dispatch` con `solo_informe=false`. Se esperan 4 `exito`, uno de ellos
    con la advertencia `quita_obligatoriedad` (AR documento).
-7. **Verificación** en la API pública: los 4 textos de arriba, las fuentes oficiales, la fecha del día
+7. **Verificación** en la API pública: los 4 textos de arriba (CL con el texto nuevo de las notas), las fuentes oficiales, la fecha del día
    y AR validez con `obligatorio: no`. Los otros 25 destinos y el resto de los requisitos de AR/BR/CL,
    sin cambios.
 8. **Repetición:** otra corrida con `solo_informe=false`. Se esperan los 17 perfiles en `sin_cambio` y

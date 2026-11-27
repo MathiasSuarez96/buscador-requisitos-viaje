@@ -2,14 +2,15 @@
 //  1. Extracción determinista con fixtures reales y mutaciones: condición dentro del texto admitido y al
 //     final, listas, divs, texto suelto, contenedores anidados, duplicados, secciones faltantes y contexto
 //     distinto. Una condición no interpretada da ambiguo, nunca confirmado. BR: texto del PDF escrito con
-//     operadores que no se leen (' y ", fuera de BT, Do, anotaciones).
+//     operadores que no se leen (' y ", fuera de BT, Do, anotaciones). CL: notas referenciadas ausentes,
+//     cambiadas o con otro plazo, con la fila idéntica.
 //  2. Adaptadores: hechos, caída y redirección sin lanzar; compatibilidades disjuntas.
 //  3. Perfiles: requisito completo, cédula representada (pasaporte no obligatorio), sin cambio sin renovar.
 //  4. Autorizaciones: cada perfil exige SU política.
 //  5. Mongo efímero sembrado con la API pública del 25/11 + GET /api/destinos: fuente → clasificación →
 //     aplicación → API; repetición sin escrituras; caída y recuperación (reintento); segunda lectura
-//     distinta o ambigua sin publicar (incluida una nota PDF que aparece en la segunda lectura); regresión
-//     de los 13 perfiles activos.
+//     distinta o ambigua sin publicar (incluidas una nota PDF y una nota chilena que aparecen en la segunda
+//     lectura); regresión de los 13 perfiles activos.
 // Nada toca Atlas ni la red (preload solo-loopback). exitCode = 1 hasta la última aserción.
 const assert = require('node:assert/strict');
 if (!globalThis.__SOLO_LOOPBACK__) throw new Error('Se requiere preload-solo-loopback');
@@ -47,6 +48,8 @@ const ARD = fx('ar-br-cl', 'argentina-documentacion-turista-2026-11-25.html');
 const BRP = fx('ar-br-cl', 'itamaraty-qgrv-pagina-2026-11-25.html');
 const PDF = readFileSync(dir('ar-br-cl', 'qgrv-simples-port-07out26.pdf'));
 const CLJ = readFileSync(dir('ar-br-cl', 'consulado-chile-info-visas-2026-11-25.json'), 'utf8');
+const CLN = readFileSync(dir('ar-br-cl', 'consulado-chile-notas-visas-2026-11-26.json'), 'utf8');
+const sobreCl = (t, n = CLN) => JSON.stringify({ tabla: t, notas: n });
 const API = JSON.parse(readFileSync(dir('ar-br-cl', 'api-destinos-2026-11-25.json'), 'utf8'));
 const PDF_URL = 'https://www.gov.br/mre/pt-br/assuntos/portal-consular/vistos/qgrv-simples-port-07out26.pdf';
 const html = h => () => new Response(h, { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
@@ -80,11 +83,13 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
   let rs, servidor;
   try {
     // ---- 1. Extracción ----
-    const okA = FA.extraer(AR).campos.visa, okD = FD.extraer(ARD).campos.documento, okB = extraerBr(PDF).campos.visa, okC = FC.extraer(CLJ).campos.visa;
+    const okA = FA.extraer(AR).campos.visa, okD = FD.extraer(ARD).campos.documento, okB = extraerBr(PDF).campos.visa, okC = FC.extraer(sobreCl(CLJ)).campos.visa;
     assert.deepEqual([okA.estado, okA.valor], ['ok', { requerida: 'no', dias: 90 }]);
     assert.deepEqual([okD.estado, okD.valor], ['ok', { aceptados: ['pasaporte', 'cedula_identidad', 'documento_viaje_habil'], vigencia: 'vigente' }]);
     assert.deepEqual([okB.estado, okB.valor], ['ok', { requerida: 'no', dias: 90, cedula: 'ingreso_permitido' }]);
-    assert.deepEqual([okC.estado, okC.valor], ['ok', { requerida: 'no', dias: 90 }]);
+    assert.deepEqual([okC.estado, okC.valor.requerida, okC.valor.dias, okC.valor.notas.map(n => n.numero)], ['ok', 'no', 90, ['1', '2', '17']]);
+    const NOTAS_CL = JSON.parse(CLN);
+    assert.deepEqual(okC.valor.notas.map(n => n.texto), ['1', '2', '17'].map(n => NOTAS_CL[n]), 'CL: el texto de las notas es el publicado, sin cambios');
 
     // AR visa: rama Turismo › Mercosur.
     const V = 'puedes ingresar como turista sin visa por hasta 90 días.</p>';
@@ -180,28 +185,49 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
     // CL: fila URUGUAY de la tabla JSON.
     const tabla = JSON.parse(CLJ);
     const conFila = f => JSON.stringify(tabla.map(x => (x.pais === 'URUGUAY' ? f({ ...x }) : x)));
+    // Notas: el mismo archivo con una nota cambiada (la fila de Uruguay queda IDÉNTICA).
+    const conNotas = f => JSON.stringify(f({ ...NOTAS_CL }));
     const MUT_CL = [
-      ['requiere visa', conFila(x => ({ ...x, visa: 'SI' })), 'no_reconocido'],
-      ['nota particular nueva', conFila(x => ({ ...x, notas: '1,2,17,19' })), 'condicionada'],
-      ['columna nueva', conFila(x => ({ ...x, condicion: 'pasaporte' })), 'no_reconocido'],
-      ['plazo no numérico', conFila(x => ({ ...x, visa_simple_estadia: 'noventa' })), 'no_reconocido'],
-      ['arancel', conFila(x => ({ ...x, visa_simple_arancel: '30' })), 'no_reconocido'],
-      ['Uruguay duplicado', JSON.stringify([...tabla, tabla.find(x => x.pais === 'URUGUAY')]), 'sin_evidencia'],
-      ['sin Uruguay', JSON.stringify(tabla.filter(x => x.pais !== 'URUGUAY')), 'sin_evidencia'],
-      ['otro nombre de país', conFila(x => ({ ...x, pais: 'URUGUAY (RESIDENTES)' })), 'no_reconocido'],
-      ['no es JSON', '<html>', 'no_reconocido'],
-      ['no es una lista', JSON.stringify({ datos: tabla }), 'no_reconocido']
+      ['requiere visa', conFila(x => ({ ...x, visa: 'SI' })), CLN, 'no_reconocido'],
+      ['nota particular nueva', conFila(x => ({ ...x, notas: '1,2,17,19' })), CLN, 'condicionada'],
+      ['columna nueva', conFila(x => ({ ...x, condicion: 'pasaporte' })), CLN, 'no_reconocido'],
+      ['plazo no numérico', conFila(x => ({ ...x, visa_simple_estadia: 'noventa' })), CLN, 'no_reconocido'],
+      ['arancel', conFila(x => ({ ...x, visa_simple_arancel: '30' })), CLN, 'no_reconocido'],
+      ['Uruguay duplicado', JSON.stringify([...tabla, tabla.find(x => x.pais === 'URUGUAY')]), CLN, 'sin_evidencia'],
+      ['sin Uruguay', JSON.stringify(tabla.filter(x => x.pais !== 'URUGUAY')), CLN, 'sin_evidencia'],
+      ['otro nombre de país', conFila(x => ({ ...x, pais: 'URUGUAY (RESIDENTES)' })), CLN, 'no_reconocido'],
+      ['no es JSON', '<html>', CLN, 'no_reconocido'],
+      ['no es una lista', JSON.stringify({ datos: tabla }), CLN, 'no_reconocido'],
+      ['nota 17 modificada', CLJ, conNotas(n => ({ ...n, 17: n[17].replace('10 %', '20 %') })), 'condicionada'],
+      ['nota 2 con una condición agregada', CLJ, conNotas(n => ({ ...n, 2: `${n[2]} Se exige pasaporte con seis meses de vigencia.` })), 'condicionada'],
+      ['nota 1 con otra entrada', CLJ, conNotas(n => ({ ...n, 1: n[1].replace('una entrada', 'una entrada, solo por vía aérea') })), 'condicionada'],
+      ['nota 1 con otro plazo que la fila', CLJ, conNotas(n => ({ ...n, 1: n[1].replace('90 días', '60 días') })), 'condicionada'],
+      ['nota 2 con otro plazo que la fila', CLJ, conNotas(n => ({ ...n, 2: n[2].replace('90 días', '30 días') })), 'condicionada'],
+      ['nota 1 ausente', CLJ, conNotas(n => { delete n[1]; return n; }), 'sin_evidencia'],
+      ['nota 17 ausente', CLJ, conNotas(n => { delete n[17]; return n; }), 'sin_evidencia'],
+      ['nota vacía', CLJ, conNotas(n => ({ ...n, 2: '' })), 'condicionada'],
+      ['nota que no es texto', CLJ, conNotas(n => ({ ...n, 17: { texto: n[17] } })), 'no_reconocido'],
+      ['notas que no son JSON', CLJ, '<html>', 'no_reconocido'],
+      ['notas en una lista', CLJ, JSON.stringify(Object.values(NOTAS_CL)), 'no_reconocido']
     ];
-    for (const [nombre, t, motivo] of MUT_CL) {
-      const x = FC.extraer(t).campos.visa;
+    for (const [nombre, t, n, motivo] of MUT_CL) {
+      assert.ok(t !== CLJ || n !== CLN, `CL / ${nombre}: mutación aplicada`);
+      if (n !== CLN) assert.deepEqual(JSON.parse(t).find(x => x.pais === 'URUGUAY'), tabla.find(x => x.pais === 'URUGUAY'), `CL / ${nombre}: fila idéntica`);
+      const x = FC.extraer(sobreCl(t, n)).campos.visa;
       assert.deepEqual([x.estado, x.motivo?.split(':')[0]], ['ambiguo', motivo], `CL visa / ${nombre}: ${x.motivo}`);
     }
+    for (const sobre of [JSON.stringify({ tabla: CLJ }), CLJ, 'x']) assert.equal(FC.extraer(sobre).campos.visa.motivo.split(':')[0], 'no_reconocido', 'CL: lectura sin las dos partes');
+    // Controles positivos: otras notas (no referenciadas por Uruguay) cambiadas, y la tabla con otro orden
+    // de claves (el servidor lo cambia entre consultas): mismos hechos.
+    const mismo = (t, n, nombre) => assert.deepEqual(FC.extraer(sobreCl(t, n)).campos.visa.valor, okC.valor, nombre);
+    mismo(CLJ, conNotas(n => ({ ...n, 4: 'Otra nota.', 19: 'Nota nueva de otro país.' })), 'CL: notas no referenciadas no afectan');
+    mismo(JSON.stringify(tabla.map(x => Object.fromEntries(Object.entries(x).reverse()))), CLN, 'CL: orden de claves distinto');
 
     // ---- 2. Adaptadores y lector ----
     const ADS = { ar: require('../services/propuestas/adaptadores/v2/argentina-extranjeros-turismo'), ard: require('../services/propuestas/adaptadores/v2/argentina-migraciones-documentacion-turista'),
       br: require('../services/propuestas/adaptadores/v2/itamaraty-qgrv'), cl: require('../services/propuestas/adaptadores/v2/consulado-chile-visas') };
     const leerCon = (a, rutas) => a.leer({ fetch: async u => { const r = rutas[u]; if (!r?.length) throw new Error(`consulta no esperada a ${u}`); return r.shift()(); }, ahora: () => T0 });
-    const RUTAS = () => ({ [FA.URL_PAGINA]: [html(AR)], [FD.URL_PAGINA]: [html(ARD)], [FB.URL_PAGINA]: [html(BRP)], [PDF_URL]: [pdf(PDF)], [FC.URL_TABLA]: [json(CLJ)] });
+    const RUTAS = () => ({ [FA.URL_PAGINA]: [html(AR)], [FD.URL_PAGINA]: [html(ARD)], [FB.URL_PAGINA]: [html(BRP)], [PDF_URL]: [pdf(PDF)], [FC.URL_TABLA]: [json(CLJ)], [FC.URL_NOTAS]: [json(CLN)] });
     const lect = {};
     for (const [k, a] of Object.entries(ADS)) {
       lect[k] = await leerCon(a, RUTAS());
@@ -213,6 +239,22 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
     assert.equal(lect.br.diagnostico.http_status, 200);
     assert.deepEqual([(await leerCon(ADS.br, { [FB.URL_PAGINA]: [html(BRP)], [PDF_URL]: [caida] })).motivo, (await leerCon(ADS.br, { [FB.URL_PAGINA]: [caida] })).motivo], ['http_503', 'http_503'], 'BR: página o PDF caídos');
     assert.equal((await leerCon(ADS.cl, { [FC.URL_TABLA]: [html('<p>x</p>')] })).motivo, 'no_html', 'CL: contenido que no es JSON');
+    assert.deepEqual([(await leerCon(ADS.cl, { [FC.URL_TABLA]: [json(CLJ)], [FC.URL_NOTAS]: [caida] })).tipo, (await leerCon(ADS.cl, { [FC.URL_TABLA]: [json(CLJ)], [FC.URL_NOTAS]: [caida] })).motivo], ['no_disponible', 'http_503'], 'CL: notas caídas');
+    assert.equal((await leerCon(ADS.cl, { [FC.URL_TABLA]: [json(CLJ)], [FC.URL_NOTAS]: [html('<p>x</p>')] })).motivo, 'no_html', 'CL: notas que no son JSON');
+    // Hechos de Chile: incluyen el texto de las notas; un texto distinto (aun con hash recalculado) o el
+    // esquema anterior sin notas no son compatibles.
+    assert.deepEqual([lect.cl.hechos.esquema, lect.cl.hechos.categoria, lect.cl.hechos.notas.map(n => n.texto)], ['consulado-chile-visas-hechos-v2', 'permanencia_transitoria', ['1', '2', '17'].map(n => NOTAS_CL[n])]);
+    assert.deepEqual(lect.cl.evidencia.visa.slice(1).map(e => e.split(':')[0]), ['nota 1', 'nota 2', 'nota 17'], 'CL: la evidencia muestra las notas');
+    const { hashHechos } = require('../services/propuestas/payload-requisito-v2');
+    const propCl = hechos => ({ payload: { version_contrato: '2.0', campo: 'requisito', fuentes: [{ nombre: lect.cl.fuente_nombre, url: lect.cl.url, algoritmo_hechos_hash: lect.cl.algoritmo_hechos_hash, hechos, hechos_hash: hashHechos(hechos) }] } });
+    const notaOtra = { ...lect.cl.hechos, notas: lect.cl.hechos.notas.map(n => (n.numero === '17' ? { ...n, texto: n.texto.replace('10 %', '20 %') } : n)) };
+    const sinNotas = { esquema: 'consulado-chile-visas-hechos-v1', contexto: { nacionalidad: 'UY' }, visa_requerida: 'no', plazo_maximo_estadia_dias: 90 };
+    const { notas: _n, ...v2SinNotas } = lect.cl.hechos;
+    assert.deepEqual([ADS.cl.compatibilidad(propCl(notaOtra)).codigo, ADS.cl.compatibilidad(propCl(sinNotas)).codigo, ADS.cl.compatibilidad(propCl(v2SinNotas)).codigo, ADS.cl.compatibilidad(propCl(lect.cl.hechos)).compatible],
+      ['hechos_guardados_no_canonicos', 'esquema_hechos_no_soportado', 'hechos_guardados_no_canonicos', true]);
+    assert.equal(ADS.cl.version, '2');
+    assert.deepEqual([FC.normalizarHechos(notaOtra).ok, FC.normalizarHechos(v2SinNotas).ok, FC.normalizarHechos({ ...lect.cl.hechos, categoria: 'turismo' }).ok, FC.normalizarHechos(lect.cl.hechos).ok], [false, false, false, true], 'CL: normalizarHechos solo admite las notas interpretadas');
+    assert.ok(lect.cl.evidencia.visa.every(e => e.length <= 240), 'CL: evidencia dentro del límite de auditoría');
     assert.equal((await leerCon(ADS.ar, { [FA.URL_PAGINA]: [() => new Response(null, { status: 302, headers: { location: 'https://ejemplo.invalid/' } })] })).motivo, 'redireccion_fuera_del_sitio');
     assert.equal((await leerPaginaOficial({ url: PDF_URL, hosts: ['www.gov.br'], agente: 'x', contenido: 'pdf', fetch: async () => pdf(PDF)() })).html.length, PDF.length, 'el PDF se lee byte a byte');
     await assert.rejects(leerPaginaOficial({ url: PDF_URL, hosts: ['www.gov.br'], agente: 'x', contenido: 'otro', fetch: async () => pdf(PDF)() }), /contenido desconocido/);
@@ -241,8 +283,9 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
     // Cédula: el pasaporte deja de ser obligatorio y la descripción nombra las alternativas y su vigencia.
     const doc = ciclo.clasificar(sinT(pub('AR', 'validez_pasaporte')), lect.ard, L.arDocumento, { hoy: HOY });
     assert.deepEqual(doc.cambios.map(c => [c.campo, c.propuesto.valor]).find(c => c[0] === 'obligatorio'), ['obligatorio', 'no']);
+    for (const t of ['no requieren visa de permanencia transitoria', 'plazo máximo de estadía de 90 días', 'para una entrada o para varias', '«salvo excepciones»']) assert.ok(L.descripcionClVisa(lect.cl.hechos).includes(t), `CL: ${t}`);
     for (const t of ['no se exige pasaporte', 'pasaporte vigente', 'cédula de identidad vigente', 'documento de viaje hábil vigente', 'como turista']) assert.ok(L.DESCRIPCION_AR_DOCUMENTO.includes(t), t);
-    for (const [d, sin] of [[L.descripcionArVisa(lect.ar.hechos), ['pasaporte normal', 'extender', 'pasaje']], [L.descripcionBrVisa(lect.br.hechos), ['extensión']], [L.descripcionClVisa(lect.cl.hechos), ['extender', 'pasaje']], [L.DESCRIPCION_AR_DOCUMENTO, ['meses adicionales']]]) {
+    for (const [d, sin] of [[L.descripcionArVisa(lect.ar.hechos), ['pasaporte normal', 'extender', 'pasaje']], [L.descripcionBrVisa(lect.br.hechos), ['extensión']], [L.descripcionClVisa(lect.cl.hechos), ['extender', 'pasaje', 'recargo', 'arancel', 'turismo', 'pasaporte']], [L.DESCRIPCION_AR_DOCUMENTO, ['meses adicionales']]]) {
       for (const t of sin) assert.ok(!d.includes(t), `no se publica lo que la fuente no dice: ${t}`);
     }
     // Fuente de otro país u otro requisito: no respalda.
@@ -282,7 +325,7 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
       await col('destinos').insertMany(API.map(d => ({ ...d, _id: new ObjectId(d._id), requisitos: d.requisitos.map(sinT) })));
     };
     // Fuente simulada por URL: cada consulta toma la siguiente respuesta de su cola o la vigente por defecto.
-    const PORDEFECTO = { [FA.URL_PAGINA]: html(AR), [FD.URL_PAGINA]: html(ARD), [FB.URL_PAGINA]: html(BRP), [PDF_URL]: pdf(PDF), [FC.URL_TABLA]: json(CLJ),
+    const PORDEFECTO = { [FA.URL_PAGINA]: html(AR), [FD.URL_PAGINA]: html(ARD), [FB.URL_PAGINA]: html(BRP), [PDF_URL]: pdf(PDF), [FC.URL_TABLA]: json(CLJ), [FC.URL_NOTAS]: json(CLN),
       [URL_FICHA]: html(fx('checkmig', 'valida.html')), [FV.URL_RESULTADO]: html(fx('govuk-check-uk-visa', 'resultado-uy-turismo-2026-11-22.html')),
       [FDE.URL_LISTA]: html(fx('auswaertiges-amt', 'extracto-staatenliste-2026-11-22.html')), [FI.URL_PAGINA]: html(fx('embajada-italia-montevideo', 'extracto-visas-2026-11-23.html')),
       [FE.URL_PAGINA]: html(fx('comision-europea-etias', 'extracto-etias-2026-11-24.html')) };
@@ -318,14 +361,20 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
     }
     assert.equal(await huella(), h, 'regresión e informe: cero escrituras');
     // Con la política: caída, condiciones nuevas y ambigüedad no publican nada.
-    for (const [perfil, resp] of [['argentina-ar-visa', { [FA.URL_PAGINA]: [caida] }], ['itamaraty-br-visa', { [FB.URL_PAGINA]: [html(BRP)], [PDF_URL]: [caida] }], ['consulado-cl-visa', { [FC.URL_TABLA]: [caida] }]]) {
+    for (const [perfil, resp] of [['argentina-ar-visa', { [FA.URL_PAGINA]: [caida] }], ['itamaraty-br-visa', { [FB.URL_PAGINA]: [html(BRP)], [PDF_URL]: [caida] }], ['consulado-cl-visa', { [FC.URL_TABLA]: [caida] }], ['consulado-cl-visa', { [FC.URL_TABLA]: [json(CLJ)], [FC.URL_NOTAS]: [caida] }]]) {
       assert.equal((await correr(perfil, conLote, resp)).codigo, 4, perfil);
     }
-    for (const [perfil, url, muts, tipo] of [['argentina-ar-visa', FA.URL_PAGINA, MUT_AR, html], ['migraciones-ar-documento', FD.URL_PAGINA, MUT_ARD, html], ['consulado-cl-visa', FC.URL_TABLA, MUT_CL.map(([n, t, m]) => [n, t, m]), json]]) {
+    for (const [perfil, url, muts, tipo] of [['argentina-ar-visa', FA.URL_PAGINA, MUT_AR, html], ['migraciones-ar-documento', FD.URL_PAGINA, MUT_ARD, html]]) {
       for (const [nombre, contenido] of muts) {
         const r = await correr(perfil, conLote, { [url]: [tipo(contenido)] });
         assert.deepEqual([r.codigo, r.registro.resultado, r.registro.motivo], [3, 'revision_humana', 'lectura_ambigua'], `${perfil} / ${nombre}`);
       }
+    }
+    // Chile: fila idéntica con una nota modificada o ausente (y el resto de las mutaciones): nada se publica.
+    for (const [nombre, t, n] of MUT_CL) {
+      const r = await correr('consulado-cl-visa', conLote, { [FC.URL_TABLA]: [json(t)], [FC.URL_NOTAS]: [json(n)] });
+      assert.deepEqual([r.codigo, r.registro.resultado, r.registro.motivo], [3, 'revision_humana', 'lectura_ambigua'], `consulado-cl-visa / ${nombre}`);
+      assert.deepEqual(r.consultas, [FC.URL_TABLA, FC.URL_NOTAS], `consulado-cl-visa / ${nombre}: lee la tabla y las notas`);
     }
     for (const [nombre, b] of MUT_BR) {
       const r = await correr('itamaraty-br-visa', conLote, { [FB.URL_PAGINA]: [html(BRP)], [PDF_URL]: [pdf(b)] });
@@ -370,8 +419,11 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
     assert.deepEqual([await col('propuestas_cambio').countDocuments(), await col('historial_cambios').countDocuments(), await col('eventos_propuesta').countDocuments({ tipo_evento: 'aprobacion' })], [1, 1, 1]);
     // Segunda lectura distinta (la tabla de Chile pasa a 60 días en las dos lecturas de H3.3): obsoleta, nada publicado.
     const CL60 = conFila(x => ({ ...x, visa_simple_estadia: '60', visa_multiple_estadia: '60' }));
+    const N60 = conNotas(n => ({ ...n, 1: n[1].replace('90 días', '60 días'), 2: n[2].replace('90 días', '60 días') }));
+    assert.equal(FC.extraer(sobreCl(CL60, N60)).campos.visa.valor.dias, 60, 'CL: tabla y notas a 60 días se leen');
+    assert.equal(FC.extraer(sobreCl(CL60)).campos.visa.estado, 'ambiguo', 'CL: tabla a 60 con notas a 90 no se interpreta');
     const clAntes = JSON.stringify(await reqApi('CL', 'visa'));
-    const d1 = await correr('consulado-cl-visa', conLote, { [FC.URL_TABLA]: [json(CLJ), json(CL60), json(CL60)] });
+    const d1 = await correr('consulado-cl-visa', conLote, { [FC.URL_TABLA]: [json(CLJ), json(CL60), json(CL60)], [FC.URL_NOTAS]: [json(CLN), json(N60), json(N60)] });
     assert.deepEqual([d1.codigo, d1.registro.resultado, d1.registro.estado_propuesta], [3, 'fuente_cambio', 'obsoleta'], d1.lineas.join('\n'));
     assert.equal(JSON.stringify(await reqApi('CL', 'visa')), clAntes, 'segunda lectura distinta: nada publicado con los hechos viejos');
     // Segunda lectura ambigua (condición nueva en la rama de Argentina): revisión humana, nada publicado.
@@ -380,15 +432,17 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
     assert.deepEqual([d2.codigo, d2.registro.resultado, d2.registro.estado_propuesta], [3, 'extraccion_ambigua', 'revision_requerida'], d2.lineas.join('\n'));
     assert.equal(JSON.stringify(await reqApi('AR', 'visa')), arAntes, 'segunda lectura ambigua: nada publicado');
     // La siguiente corrida de Chile propone con los hechos nuevos (60 días) y aplica.
-    const d3 = await correr('consulado-cl-visa', conLote, { [FC.URL_TABLA]: [json(CL60), json(CL60)] });
-    assert.deepEqual([d3.codigo, d3.registro.resultado, (await reqApi('CL', 'visa')).descripcion.includes('es de 60 días')], [0, 'exito', true]);
+    const d3 = await correr('consulado-cl-visa', conLote, { [FC.URL_TABLA]: [json(CL60), json(CL60)], [FC.URL_NOTAS]: [json(N60), json(N60)] });
+    assert.deepEqual([d3.codigo, d3.registro.resultado, (await reqApi('CL', 'visa')).descripcion.includes('de 60 días')], [0, 'exito', true]);
 
-    // Condición que aparece en la SEGUNDA lectura (revalidación de H3.3): una nota PDF con ' en Brasil.
-    // Revisión humana, nada publicado.
+    // Condición que aparece en la SEGUNDA lectura (revalidación de H3.3): una nota PDF con ' en Brasil y
+    // la nota 17 de Chile cambiada con la fila idéntica. Revisión humana, nada publicado.
     await sembrar();
     const PDF_COMILLA = MUT_BR.find(m => m[0].startsWith('nota con el operador \''))[1];
+    const N17 = MUT_CL.find(m => m[0] === 'nota 17 modificada')[2];
     for (const [perfil, iso, resp] of [
-      ['itamaraty-br-visa', 'BR', { [FB.URL_PAGINA]: [html(BRP), html(BRP)], [PDF_URL]: [pdf(PDF), pdf(PDF_COMILLA)] }]
+      ['itamaraty-br-visa', 'BR', { [FB.URL_PAGINA]: [html(BRP), html(BRP)], [PDF_URL]: [pdf(PDF), pdf(PDF_COMILLA)] }],
+      ['consulado-cl-visa', 'CL', { [FC.URL_TABLA]: [json(CLJ), json(CLJ)], [FC.URL_NOTAS]: [json(CLN), json(N17)] }]
     ]) {
       const antes = await huellaDestinos();
       const r = await correr(perfil, conLote, resp);
@@ -400,7 +454,7 @@ const soloPagUruguai = f => t => (t.includes(URUGUAI) ? f(t) : t);
 
     assert.equal(globalThis.__SOLO_LOOPBACK__.bloqueados.length, 0, 'ninguna conexión externa');
     process.exitCode = 0;
-    console.log('Lote AR/BR/CL 2.0: extracción con mutaciones, adaptadores, perfiles (cédula), políticas propias, aplicación → API, repetición, caída y recuperación, segunda lectura distinta/ambigua (nota PDF incluida) y regresión de los 13 perfiles en Mongo efímero: OK');
+    console.log('Lote AR/BR/CL 2.0: extracción con mutaciones, adaptadores, perfiles (cédula), políticas propias, aplicación → API, repetición, caída y recuperación, segunda lectura distinta/ambigua (nota PDF y nota chilena incluidas) y regresión de los 13 perfiles en Mongo efímero: OK');
   } catch (err) {
     process.exitCode = 1;
     console.error(err);
